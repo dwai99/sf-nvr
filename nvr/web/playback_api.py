@@ -1,6 +1,6 @@
 """Playback API endpoints for video archive access"""
 
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, HTTPException, Query, Response, BackgroundTasks
 from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 from typing import Optional, List
@@ -160,6 +160,7 @@ async def get_all_motion_events(
 @router.get("/api/playback/video/{camera_name}")
 async def stream_video_segment(
     camera_name: str,
+    background_tasks: BackgroundTasks,
     start_time: str = Query(..., description="ISO format datetime"),
     end_time: Optional[str] = Query(None, description="ISO format datetime"),
 ):
@@ -201,7 +202,7 @@ async def stream_video_segment(
 
         # Multiple segments - concatenate using ffmpeg
         logger.info(f"Concatenating {len(segments)} segments for {camera_name}")
-        return await _concatenate_segments(camera_name, segments, start_dt)
+        return await _concatenate_segments(camera_name, segments, start_dt, background_tasks)
 
     except ValueError as e:
         logger.error(f"Invalid datetime format: {e}")
@@ -250,7 +251,7 @@ async def serve_recording_file(file_path: str = Query(..., description="Absolute
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def _concatenate_segments(camera_name: str, segments: List[dict], start_dt: datetime):
+async def _concatenate_segments(camera_name: str, segments: List[dict], start_dt: datetime, background_tasks: BackgroundTasks):
     """Concatenate multiple video segments using ffmpeg"""
     try:
         # Create temporary file list for ffmpeg concat
@@ -298,8 +299,18 @@ async def _concatenate_segments(camera_name: str, segments: List[dict], start_dt
             logger.error(f"ffmpeg command: {' '.join(cmd)}")
             raise Exception(f"Failed to concatenate video segments (returncode: {result.returncode})")
 
+        # Register cleanup function to delete temp file after response is sent
+        def cleanup_temp_file():
+            try:
+                if os.path.exists(output_path):
+                    os.unlink(output_path)
+                    logger.info(f"Cleaned up temp file: {output_path}")
+            except Exception as e:
+                logger.error(f"Error cleaning up temp file {output_path}: {e}")
+
+        background_tasks.add_task(cleanup_temp_file)
+
         # Return the concatenated file
-        # Note: Temp file will be cleaned up by OS eventually
         return FileResponse(
             output_path,
             media_type="video/mp4",
