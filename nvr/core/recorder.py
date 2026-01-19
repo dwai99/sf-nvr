@@ -163,6 +163,17 @@ class RTSPRecorder:
         consecutive_failures = 0
         max_consecutive_failures = 30  # Allow 30 consecutive failures before reconnecting
 
+        # CRITICAL: Determine recording dimensions BEFORE starting any segments
+        # Downscale to 1080p max to save memory (still high quality for recording)
+        recording_width = width
+        recording_height = height
+        if width > 1920:
+            scale = 1920 / width
+            recording_width = 1920
+            recording_height = int(height * scale)
+
+        logger.info(f"Recording dimensions: {recording_width}x{recording_height} (source: {width}x{height})")
+
         while self.is_recording:
             ret, frame = self.capture.read()
 
@@ -178,25 +189,20 @@ class RTSPRecorder:
             # Reset failure counter on successful read
             consecutive_failures = 0
 
-            # CRITICAL: Scale down frame IMMEDIATELY to reduce memory usage
-            # Downscale to 1080p max to save memory (still high quality for recording)
+            # CRITICAL: Scale down frame to recording dimensions if needed
             if width > 1920:
-                scale = 1920 / width
-                new_w = 1920
-                new_h = int(height * scale)
-                frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
-                # Update dimensions to match resized frame
-                width = new_w
-                height = new_h
+                frame = cv2.resize(frame, (recording_width, recording_height), interpolation=cv2.INTER_AREA)
 
             # Start new segment if needed
             if frames_since_start % frames_per_segment == 0:
-                self._start_new_segment(fps, width, height)
+                self._start_new_segment(fps, recording_width, recording_height)
                 frames_since_start = 0
 
             # Write frame to disk
             if self.writer:
-                self.writer.write(frame)
+                success = self.writer.write(frame)
+                if frames_since_start == 1:  # Log only first frame
+                    logger.info(f"First frame write result: {success}, frame shape: {frame.shape}")
 
             # Only compress and queue every 2nd frame for live viewing to reduce memory load
             # This gives us ~7-8 FPS for live view (good balance of smoothness and memory)
@@ -266,7 +272,9 @@ class RTSPRecorder:
         import platform
         if platform.system() == 'Darwin':  # macOS
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            logger.debug(f"Using mp4v codec for macOS compatibility")
+            logger.info(f"Using mp4v codec for macOS compatibility")
+
+        logger.info(f"Creating VideoWriter: {filepath}, fps={fps}, dimensions={width}x{height}, fourcc={fourcc}")
 
         self.writer = cv2.VideoWriter(
             str(filepath),
@@ -274,6 +282,8 @@ class RTSPRecorder:
             fps,
             (width, height)
         )
+
+        logger.info(f"VideoWriter created, isOpened={self.writer.isOpened()}")
 
         # Verify writer opened successfully
         if not self.writer.isOpened():
