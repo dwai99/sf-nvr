@@ -66,7 +66,7 @@ async def update_config(updates: ConfigUpdate):
 
         # Update cameras list
         if updates.cameras is not None:
-            config.cameras = updates.cameras
+            config.set('cameras', updates.cameras)
 
         # Save configuration to file
         config.save()
