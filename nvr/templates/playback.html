@@ -896,8 +896,8 @@
             // Load cameras
             await loadCameras();
 
-            // Load initial recordings
-            await loadRecordings();
+            // Don't load recordings automatically - wait for user to select time range
+            // await loadRecordings();
         }
 
         async function loadCameras() {
@@ -924,6 +924,9 @@
 
                     selectedCameras.add(camera.name);
                 });
+
+                // Show initial message prompting user to load recordings
+                updateVideoGrid();
 
             } catch (error) {
                 console.error('Error loading cameras:', error);
@@ -1007,6 +1010,12 @@
             const grid = document.getElementById('video-grid');
             grid.innerHTML = '';
             videoElements = {};
+
+            // Show message if no recordings have been loaded yet
+            if (!currentRecordings || Object.keys(currentRecordings).length === 0) {
+                grid.innerHTML = '<div class="no-recording" style="grid-column: 1 / -1; text-align: center; padding: 4rem 2rem; font-size: 1.2em;">Select a date and time range above, then click "Load Recordings" to view footage</div>';
+                return;
+            }
 
             selectedCameras.forEach(cameraName => {
                 const container = document.createElement('div');
