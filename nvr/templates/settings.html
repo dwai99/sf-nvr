@@ -429,6 +429,20 @@
         <div>
             <h1>⚙️ Settings</h1>
         </div>
+        <div class="stats">
+            <div class="stat">
+                <div class="stat-label">CPU</div>
+                <div class="stat-value" id="cpu-usage">--%</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Memory</div>
+                <div class="stat-value" id="memory-usage">--%</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Disk</div>
+                <div class="stat-value" id="disk-usage">--%</div>
+            </div>
+        </div>
         <div class="header-actions">
             <button class="btn btn-secondary" onclick="window.location.href='/'">← Back to Live View</button>
         </div>
@@ -1231,8 +1245,43 @@
             }
         });
 
+        // Fetch system stats
+        async function fetchSystemStats() {
+            try {
+                const response = await fetch('/api/system/stats');
+                const stats = await response.json();
+
+                // Update CPU usage
+                const cpuElem = document.getElementById('cpu-usage');
+                if (cpuElem) {
+                    cpuElem.textContent = `${stats.cpu.percent}%`;
+                    cpuElem.style.color = stats.cpu.percent > 80 ? '#ff4a4a' : stats.cpu.percent > 60 ? '#ffa500' : '#4aff4a';
+                }
+
+                // Update Memory usage
+                const memElem = document.getElementById('memory-usage');
+                if (memElem) {
+                    memElem.textContent = `${stats.memory.percent}%`;
+                    memElem.style.color = stats.memory.percent > 80 ? '#ff4a4a' : stats.memory.percent > 60 ? '#ffa500' : '#4aff4a';
+                }
+
+                // Update Disk usage
+                const diskElem = document.getElementById('disk-usage');
+                if (diskElem) {
+                    diskElem.textContent = `${stats.disk.percent}%`;
+                    diskElem.style.color = stats.disk.percent > 80 ? '#ff4a4a' : stats.disk.percent > 60 ? '#ffa500' : '#4aff4a';
+                }
+            } catch (error) {
+                console.error('Error fetching system stats:', error);
+            }
+        }
+
         // Load config on page load
         loadConfig();
+
+        // Start fetching system stats
+        fetchSystemStats();
+        setInterval(fetchSystemStats, 2000); // Update every 2 seconds
     </script>
 </body>
 </html>
