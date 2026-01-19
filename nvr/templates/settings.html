@@ -38,6 +38,29 @@
             gap: 1rem;
         }
 
+        .stats {
+            display: flex;
+            gap: 20px;
+        }
+
+        .stat {
+            background: #333;
+            padding: 10px 20px;
+            border-radius: 4px;
+            text-align: center;
+        }
+
+        .stat-label {
+            color: #888;
+            font-size: 0.9em;
+        }
+
+        .stat-value {
+            color: #4a9eff;
+            font-size: 1.5em;
+            font-weight: bold;
+        }
+
         .btn {
             padding: 0.6rem 1.2rem;
             border: none;
@@ -1162,7 +1185,8 @@
                 if (response.ok) {
                     hasUnsavedChanges = false;
                     document.getElementById('save-bar').classList.remove('visible');
-                    alert('Settings saved successfully! Restart the server for some changes to take effect.');
+                    // Redirect to main page after successful save
+                    window.location.href = '/';
                 } else {
                     throw new Error(result.detail || 'Failed to save settings');
                 }

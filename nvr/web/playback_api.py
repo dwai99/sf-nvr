@@ -298,18 +298,12 @@ async def _concatenate_segments(camera_name: str, segments: List[dict], start_dt
             logger.error(f"ffmpeg command: {' '.join(cmd)}")
             raise Exception(f"Failed to concatenate video segments (returncode: {result.returncode})")
 
-        # Return the concatenated file and schedule cleanup
-        def cleanup():
-            try:
-                os.unlink(output_path)
-            except:
-                pass
-
+        # Return the concatenated file
+        # Note: Temp file will be cleaned up by OS eventually
         return FileResponse(
             output_path,
             media_type="video/mp4",
-            filename=f"{camera_name}_{start_dt.strftime('%Y%m%d_%H%M%S')}.mp4",
-            background=cleanup
+            filename=f"{camera_name}_{start_dt.strftime('%Y%m%d_%H%M%S')}.mp4"
         )
 
     except Exception as e:
