@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ camera_name }} - Fullscreen</title>
+
+    <!-- Preload critical resources for faster WebRTC connection -->
+    <link rel="preconnect" href="/api">
+    <link rel="preload" href="/static/webrtc-client.js" as="script">
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #000;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            overflow: hidden;
+        }
+
+        .fullscreen-container {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .video-wrapper {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #000;
+            position: relative;
+        }
+
+        .video-wrapper video {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+            display: none;
+        }
+
+        .video-wrapper video.loaded {
+            display: block;
+        }
+
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #fff;
+            font-size: 1.5em;
+            text-align: center;
+        }
+
+        .loading::after {
+            content: '...';
+            animation: dots 1.5s steps(4, end) infinite;
+        }
+
+        @keyframes dots {
+            0%, 20% { content: '.'; }
+            40% { content: '..'; }
+            60%, 100% { content: '...'; }
+        }
+
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.1);
+            border-top: 4px solid #4a9eff;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .controls {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(to bottom, rgba(0,0,0,0.7), transparent);
+            padding: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .fullscreen-container:hover .controls {
+            opacity: 1;
+        }
+
+        .camera-name {
+            color: #fff;
+            font-size: 1.5em;
+            font-weight: bold;
+        }
+
+        .btn {
+            background: rgba(74, 158, 255, 0.9);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1em;
+            text-decoration: none;
+        }
+
+        .btn:hover {
+            background: rgba(58, 142, 239, 0.9);
+        }
+
+        .status {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(0,0,0,0.7);
+            color: #fff;
+            padding: 10px 20px;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+
+        .recording-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            background: #ff4a4a;
+            border-radius: 50%;
+            margin-right: 8px;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+    </style>
+</head>
+<body>
+    <div class="fullscreen-container">
+        <div class="controls">
+            <div class="camera-name">{{ camera_name }}</div>
+            <a href="/" class="btn">← Back to Grid</a>
+        </div>
+
+        <div class="video-wrapper">
+            <div class="loading" id="loading" style="display: none;">
+                <div class="spinner"></div>
+                <div>Loading...</div>
+            </div>
+            <img id="live-feed"
+                 src="/api/cameras/{{ camera_name | urlencode }}/live?quality=90&raw=true"
+                 style="display: block; max-width: 100%; max-height: 100%; object-fit: contain;" />
+        </div>
+
+        <div class="status">
+            <span class="recording-indicator"></span>
+            RECORDING - All cameras continue recording in background
+        </div>
+    </div>
+
+    <script>
+        // High-quality MJPEG streaming for fullscreen view
+        const imageElement = document.getElementById('live-feed');
+        const loading = document.getElementById('loading');
+
+        // Show loading indicator initially
+        loading.style.display = 'block';
+
+        // Hide loading when image loads
+        imageElement.addEventListener('load', () => {
+            console.log('High-quality MJPEG stream loaded');
+            loading.style.display = 'none';
+        });
+
+        // Handle errors
+        imageElement.addEventListener('error', (e) => {
+            console.error('Stream error:', e);
+            loading.innerHTML = '<div class="spinner"></div><div>Connection error<br><small>Refresh to retry</small></div>';
+            loading.style.display = 'block';
+        });
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' || e.key === 'Backspace') {
+                window.location.href = '/';
+            }
+        });
+    </script>
+</body>
+</html>

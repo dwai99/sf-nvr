@@ -1,0 +1,16 @@
+{
+  "name": "sf-nvr",
+  "version": "1.0.0",
+  "description": "A Python-based Network Video Recorder (NVR) with support for ONVIF camera discovery and RTSP streaming.",
+  "main": "test_modal_fullscreen.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "playwright": "^1.57.0"
+  }
+}

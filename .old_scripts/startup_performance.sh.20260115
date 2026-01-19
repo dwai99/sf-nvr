@@ -1,0 +1,17 @@
+#!/bin/bash
+# High-performance startup script for SF-NVR
+# Uses all available CPU cores and optimized settings
+
+echo "🚀 Starting SF-NVR in High-Performance Mode..."
+echo "   Multi-worker processing enabled"
+echo "   OpenCV multi-threading enabled"
+echo ""
+
+# Optional: Set CPU affinity for better performance (Linux only)
+# taskset -c 0-7 python3 main.py
+
+# Set higher resource limits (if needed)
+ulimit -n 65536  # Increase max open files
+
+# Run in production mode (multi-worker)
+python3 main.py

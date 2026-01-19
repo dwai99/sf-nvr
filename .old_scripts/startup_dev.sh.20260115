@@ -1,0 +1,19 @@
+#!/bin/bash
+# Development mode startup script for SF-NVR
+# Enables auto-reload when code changes + performance optimizations
+
+echo "🔧🚀 Starting SF-NVR in Development Mode with Performance Optimizations..."
+echo "   Auto-reload enabled - server will restart on code changes"
+echo "   Resource limits increased for better performance"
+echo ""
+
+# Increase system resource limits for better performance
+ulimit -n 65536  # Max open files
+
+# Enable development mode with auto-reload
+export DEV_MODE=1
+
+# Optional: Set process priority (requires sudo on some systems)
+# nice -n -10 python3 main.py
+
+python3 main.py

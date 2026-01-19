@@ -1,0 +1,38 @@
+# Core NVR dependencies
+opencv-python>=4.8.0
+numpy>=1.24.0
+
+# ONVIF protocol support
+# Note: onvif-zeep 0.2.12 from PyPI missing WSDL files (install.sh copies them)
+# zeep 4.2.1 for Python 3.9 compatibility (4.3+ requires Python 3.11+)
+# isodate 0.6.1 for Python 3.9 compatibility
+onvif-zeep>=0.2.12
+zeep==4.2.1
+isodate==0.6.1
+
+# RTSP and video processing
+ffmpeg-python>=0.2.0
+pillow>=10.0.0
+
+# Web framework and async support
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+jinja2>=3.1.2
+aiofiles>=23.2.1
+
+# Database for metadata
+sqlalchemy>=2.0.0
+aiosqlite>=0.19.0
+
+# Configuration management
+pyyaml>=6.0
+python-dotenv>=1.0.0
+
+# Utilities
+python-dateutil>=2.8.2
+psutil>=5.9.0
+
+# WebRTC support for low-latency streaming
+aiortc>=1.6.0
+av>=10.0.0

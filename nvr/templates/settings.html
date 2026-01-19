@@ -1,0 +1,1238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Settings - SF-NVR</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #0a0a0a;
+            color: #e0e0e0;
+            overflow-x: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+            padding: 1.5rem 2rem;
+            border-bottom: 1px solid #333;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        h1 {
+            font-size: 1.8em;
+            font-weight: 600;
+            color: #4a9eff;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 1rem;
+        }
+
+        .btn {
+            padding: 0.6rem 1.2rem;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.95em;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-weight: 500;
+        }
+
+        .btn-primary {
+            background: #4a9eff;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #3a8eef;
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: #333;
+            color: #e0e0e0;
+        }
+
+        .btn-secondary:hover {
+            background: #444;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .settings-layout {
+            display: grid;
+            grid-template-columns: 250px 1fr;
+            gap: 2rem;
+            min-height: calc(100vh - 200px);
+        }
+
+        .sidebar {
+            background: #1a1a1a;
+            border-radius: 8px;
+            padding: 1rem;
+            height: fit-content;
+            position: sticky;
+            top: 2rem;
+        }
+
+        .nav-item {
+            padding: 0.8rem 1rem;
+            margin-bottom: 0.5rem;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 0.8rem;
+            color: #b0b0b0;
+        }
+
+        .nav-item:hover {
+            background: #2a2a2a;
+            color: #e0e0e0;
+        }
+
+        .nav-item.active {
+            background: #4a9eff;
+            color: white;
+        }
+
+        .nav-icon {
+            font-size: 1.2em;
+        }
+
+        .content-area {
+            background: #1a1a1a;
+            border-radius: 8px;
+            padding: 2rem;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .section-title {
+            font-size: 1.5em;
+            margin-bottom: 1.5rem;
+            color: #4a9eff;
+            border-bottom: 2px solid #333;
+            padding-bottom: 0.5rem;
+        }
+
+        .setting-group {
+            background: #222;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .setting-group-title {
+            font-size: 1.1em;
+            margin-bottom: 1rem;
+            color: #e0e0e0;
+            font-weight: 500;
+        }
+
+        .setting-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 0;
+            border-bottom: 1px solid #333;
+        }
+
+        .setting-row:last-child {
+            border-bottom: none;
+        }
+
+        .setting-label {
+            flex: 1;
+        }
+
+        .setting-label-main {
+            font-size: 1em;
+            color: #e0e0e0;
+            margin-bottom: 0.3rem;
+        }
+
+        .setting-label-desc {
+            font-size: 0.85em;
+            color: #888;
+        }
+
+        .setting-control {
+            min-width: 250px;
+        }
+
+        input[type="text"],
+        input[type="number"],
+        input[type="password"],
+        select {
+            width: 100%;
+            padding: 0.6rem;
+            background: #333;
+            border: 1px solid #444;
+            border-radius: 4px;
+            color: #e0e0e0;
+            font-size: 0.95em;
+        }
+
+        input[type="text"]:focus,
+        input[type="number"]:focus,
+        input[type="password"]:focus,
+        select:focus {
+            outline: none;
+            border-color: #4a9eff;
+        }
+
+        .toggle-switch {
+            position: relative;
+            width: 50px;
+            height: 26px;
+            background: #444;
+            border-radius: 13px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .toggle-switch.on {
+            background: #4a9eff;
+        }
+
+        .toggle-switch::after {
+            content: '';
+            position: absolute;
+            top: 3px;
+            left: 3px;
+            width: 20px;
+            height: 20px;
+            background: white;
+            border-radius: 50%;
+            transition: transform 0.3s;
+        }
+
+        .toggle-switch.on::after {
+            transform: translateX(24px);
+        }
+
+        .camera-list {
+            display: grid;
+            gap: 1rem;
+        }
+
+        .camera-card {
+            background: #2a2a2a;
+            border-radius: 8px;
+            padding: 1.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border: 1px solid #333;
+            margin-bottom: 1rem;
+            transition: all 0.2s ease;
+        }
+
+        .camera-card.dragging {
+            opacity: 0.5;
+            transform: scale(0.95);
+        }
+
+        .camera-card.drag-over {
+            border-color: #4a9eff;
+            border-width: 2px;
+            margin-top: 2rem;
+        }
+
+        .camera-card-content {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            flex: 1;
+        }
+
+        .drag-handle {
+            font-size: 1.5em;
+            color: #666;
+            cursor: grab;
+            user-select: none;
+            padding: 0 0.5rem;
+        }
+
+        .drag-handle:hover {
+            color: #4a9eff;
+        }
+
+        .drag-handle:active {
+            cursor: grabbing;
+        }
+
+        .camera-info {
+            flex: 1;
+        }
+
+        .camera-name {
+            font-size: 1.1em;
+            color: #e0e0e0;
+            margin-bottom: 0.5rem;
+        }
+
+        .camera-details {
+            font-size: 0.9em;
+            color: #888;
+        }
+
+        .camera-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .btn-sm {
+            padding: 0.4rem 0.8rem;
+            font-size: 0.85em;
+        }
+
+        .btn-danger {
+            background: #e74c3c;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #c0392b;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 0.3rem 0.8rem;
+            border-radius: 12px;
+            font-size: 0.8em;
+            font-weight: 500;
+        }
+
+        .status-online {
+            background: #27ae60;
+            color: white;
+        }
+
+        .status-offline {
+            background: #e74c3c;
+            color: white;
+        }
+
+        .save-bar {
+            position: fixed;
+            bottom: -100px;
+            left: 0;
+            right: 0;
+            background: #2a2a2a;
+            border-top: 1px solid #444;
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: bottom 0.3s;
+            z-index: 1000;
+        }
+
+        .save-bar.visible {
+            bottom: 0;
+        }
+
+        .alert {
+            padding: 1rem;
+            border-radius: 6px;
+            margin-bottom: 1rem;
+        }
+
+        .alert-success {
+            background: rgba(39, 174, 96, 0.2);
+            border: 1px solid #27ae60;
+            color: #2ecc71;
+        }
+
+        .alert-error {
+            background: rgba(231, 76, 60, 0.2);
+            border: 1px solid #e74c3c;
+            color: #e74c3c;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 2000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: #1a1a1a;
+            border-radius: 8px;
+            padding: 2rem;
+            max-width: 600px;
+            width: 90%;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            font-size: 1.5em;
+            margin-bottom: 1.5rem;
+            color: #4a9eff;
+        }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        .form-label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: #e0e0e0;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 1rem;
+            justify-content: flex-end;
+            margin-top: 2rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div>
+            <h1>⚙️ Settings</h1>
+        </div>
+        <div class="header-actions">
+            <button class="btn btn-secondary" onclick="window.location.href='/'">← Back to Live View</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="settings-layout">
+            <div class="sidebar">
+                <div class="nav-item active" data-tab="system">
+                    <span class="nav-icon">🖥️</span>
+                    <span>System</span>
+                </div>
+                <div class="nav-item" data-tab="cameras">
+                    <span class="nav-icon">📹</span>
+                    <span>Cameras</span>
+                </div>
+                <div class="nav-item" data-tab="recording">
+                    <span class="nav-icon">⏺️</span>
+                    <span>Recording</span>
+                </div>
+                <div class="nav-item" data-tab="storage">
+                    <span class="nav-icon">💾</span>
+                    <span>Storage</span>
+                </div>
+                <div class="nav-item" data-tab="detection">
+                    <span class="nav-icon">🎯</span>
+                    <span>Detection</span>
+                </div>
+                <div class="nav-item" data-tab="network">
+                    <span class="nav-icon">🌐</span>
+                    <span>Network</span>
+                </div>
+                <div class="nav-item" data-tab="users">
+                    <span class="nav-icon">👥</span>
+                    <span>Users</span>
+                </div>
+            </div>
+
+            <div class="content-area">
+                <!-- System Tab -->
+                <div class="tab-content active" id="system-tab">
+                    <h2 class="section-title">System Settings</h2>
+
+                    <div class="setting-group">
+                        <div class="setting-group-title">General</div>
+
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="setting-label-main">System Name</div>
+                                <div class="setting-label-desc">Display name for this NVR system</div>
+                            </div>
+                            <div class="setting-control">
+                                <input type="text" id="system-name" value="SF-NVR">
+                            </div>
+                        </div>
+
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="setting-label-main">Time Zone</div>
+                                <div class="setting-label-desc">Time zone for recordings and playback</div>
+                            </div>
+                            <div class="setting-control">
+                                <select id="timezone">
+                                    <option value="America/Los_Angeles">America/Los Angeles (PST/PDT)</option>
+                                    <option value="America/New_York">America/New York (EST/EDT)</option>
+                                    <option value="America/Chicago">America/Chicago (CST/CDT)</option>
+                                    <option value="UTC">UTC</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="setting-group">
+                        <div class="setting-group-title">Monitoring</div>
+
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="setting-label-main">System Monitoring</div>
+                                <div class="setting-label-desc">Monitor disk space, CPU, and memory usage</div>
+                            </div>
+                            <div class="setting-control">
+                                <div class="toggle-switch on" data-setting="monitoring-enabled"></div>
+                            </div>
+                        </div>
+
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="setting-label-main">Alert on Low Disk Space</div>
+                                <div class="setting-label-desc">Send alert when disk space is low</div>
+                            </div>
+                            <div class="setting-control">
+                                <div class="toggle-switch on" data-setting="alert-disk-space"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Cameras Tab -->
+                <div class="tab-content" id="cameras-tab">
+                    <h2 class="section-title">Camera Management</h2>
+
+                    <button class="btn btn-primary" onclick="showAddCameraModal()" style="margin-bottom: 1.5rem;">
+                        + Add Camera
+                    </button>
+
+                    <div class="camera-list" id="camera-list">
+                        <!-- Cameras will be loaded here dynamically -->
+                    </div>
+                </div>
+
+                <!-- Recording Tab -->
+                <div class="tab-content" id="recording-tab">
+                    <h2 class="section-title">Recording Settings</h2>
+
+                    <div class="setting-group">
+                        <div class="setting-group-title">Basic Settings</div>
+
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="setting-label-main">Enable Recording</div>
+                                <div class="setting-label-desc">Enable continuous recording for all cameras</div>
+                            </div>
+                            <div class="setting-control">
+                                <div class="toggle-switch on" id="recording-enabled"></div>
+                            </div>
+                        </div>
+
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="setting-label-main">Segment Duration</div>
+                                <div class="setting-label-desc">Length of each recording segment (seconds)</div>
+                            </div>
+                            <div class="setting-control">
+                                <input type="number" id="segment-duration" value="300" min="60" max="3600">
+                            </div>
+                        </div>
+
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="setting-label-main">Video Codec</div>
+                                <div class="setting-label-desc">Codec used for video compression</div>
+                            </div>
+                            <div class="setting-control">
+                                <select id="video-codec">
+                                    <option value="h264">H.264 (Compatible)</option>
+                                    <option value="h265">H.265 (Smaller files, requires more CPU)</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="setting-label-main">Container Format</div>
+                                <div class="setting-label-desc">File format for recordings</div>
+                            </div>
+                            <div class="setting-control">
+                                <select id="container-format">
+                                    <option value="mp4">MP4 (Recommended)</option>
+                                    <option value="avi">AVI</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="setting-group">
+                        <div class="setting-group-title">Retention Policy</div>
+
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="setting-label-main">Retention Days</div>
+                                <div class="setting-label-desc">Number of days to keep recordings</div>
+                            </div>
+                            <div class="setting-control">
+                                <input type="number" id="retention-days" value="7" min="1" max="365">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Storage Tab -->
+                <div class="tab-content" id="storage-tab">
+                    <h2 class="section-title">Storage Settings</h2>
+
+                    <div class="setting-group">
+                        <div class="setting-group-title">Storage Location</div>
+
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="setting-label-main">Storage Path</div>
+                                <div class="setting-label-desc">Path where recordings are stored</div>
+                            </div>
+                            <div class="setting-control">
+                                <input type="text" id="storage-path" value="./recordings">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="setting-group">
+                        <div class="setting-group-title">Storage Status</div>
+                        <div id="storage-status">
+                            <!-- Will be populated by JavaScript -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Detection Tab -->
+                <div class="tab-content" id="detection-tab">
+                    <h2 class="section-title">Detection Settings</h2>
+
+                    <div class="setting-group">
+                        <div class="setting-group-title">Motion Detection</div>
+
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="setting-label-main">Enable Motion Detection</div>
+                                <div class="setting-label-desc">Detect motion in camera feeds</div>
+                            </div>
+                            <div class="setting-control">
+                                <div class="toggle-switch" id="motion-enabled"></div>
+                            </div>
+                        </div>
+
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="setting-label-main">Sensitivity</div>
+                                <div class="setting-label-desc">Motion detection sensitivity (0-100)</div>
+                            </div>
+                            <div class="setting-control">
+                                <input type="number" id="motion-sensitivity" value="25" min="0" max="100">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="setting-group">
+                        <div class="setting-group-title">AI Detection</div>
+
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="setting-label-main">Enable AI Detection</div>
+                                <div class="setting-label-desc">Detect people and vehicles using AI</div>
+                            </div>
+                            <div class="setting-control">
+                                <div class="toggle-switch" id="ai-enabled"></div>
+                            </div>
+                        </div>
+
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="setting-label-main">Detect People</div>
+                                <div class="setting-label-desc">Enable person detection</div>
+                            </div>
+                            <div class="setting-control">
+                                <div class="toggle-switch on" id="detect-person"></div>
+                            </div>
+                        </div>
+
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="setting-label-main">Detect Vehicles</div>
+                                <div class="setting-label-desc">Enable vehicle detection</div>
+                            </div>
+                            <div class="setting-control">
+                                <div class="toggle-switch on" id="detect-vehicle"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Network Tab -->
+                <div class="tab-content" id="network-tab">
+                    <h2 class="section-title">Network Settings</h2>
+
+                    <div class="setting-group">
+                        <div class="setting-group-title">Web Server</div>
+
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="setting-label-main">Listen Address</div>
+                                <div class="setting-label-desc">IP address to bind the web server to</div>
+                            </div>
+                            <div class="setting-control">
+                                <input type="text" id="web-host" value="0.0.0.0">
+                            </div>
+                        </div>
+
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="setting-label-main">Port</div>
+                                <div class="setting-label-desc">Port for the web interface</div>
+                            </div>
+                            <div class="setting-control">
+                                <input type="number" id="web-port" value="8080" min="1" max="65535">
+                            </div>
+                        </div>
+
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="setting-label-main">Stream Quality</div>
+                                <div class="setting-label-desc">Quality for web streaming</div>
+                            </div>
+                            <div class="setting-control">
+                                <select id="stream-quality">
+                                    <option value="low">Low (Faster)</option>
+                                    <option value="medium">Medium</option>
+                                    <option value="high">High (Better quality)</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="setting-group">
+                        <div class="setting-group-title">ONVIF Discovery</div>
+
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="setting-label-main">Auto-Discover Cameras</div>
+                                <div class="setting-label-desc">Automatically discover ONVIF cameras on network</div>
+                            </div>
+                            <div class="setting-control">
+                                <div class="toggle-switch on" id="onvif-auto-discover"></div>
+                            </div>
+                        </div>
+
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="setting-label-main">Discovery Timeout</div>
+                                <div class="setting-label-desc">Timeout for ONVIF discovery (seconds)</div>
+                            </div>
+                            <div class="setting-control">
+                                <input type="number" id="onvif-timeout" value="2" min="1" max="30">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Users Tab -->
+                <div class="tab-content" id="users-tab">
+                    <h2 class="section-title">User Management</h2>
+
+                    <div class="alert alert-error">
+                        User authentication not yet implemented. This feature will be added in Phase 1.
+                    </div>
+
+                    <button class="btn btn-primary" disabled style="margin-bottom: 1.5rem;">
+                        + Add User
+                    </button>
+
+                    <div class="setting-group">
+                        <div class="setting-group-title">Coming Soon</div>
+                        <p style="color: #888;">User authentication and role-based access control will be implemented in Phase 1 of the commercial enhancement plan.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Save Bar -->
+    <div class="save-bar" id="save-bar">
+        <div>
+            <strong>Unsaved changes</strong> - Your changes will be lost if you leave this page.
+        </div>
+        <div style="display: flex; gap: 1rem;">
+            <button class="btn btn-secondary" onclick="discardChanges()">Discard</button>
+            <button class="btn btn-primary" onclick="saveSettings()">Save Changes</button>
+        </div>
+    </div>
+
+    <!-- Add/Edit Camera Modal -->
+    <div class="modal" id="camera-modal">
+        <div class="modal-content">
+            <div class="modal-header">Add Camera</div>
+
+            <div class="form-group">
+                <label class="form-label">Camera Name</label>
+                <input type="text" id="modal-camera-name" placeholder="e.g., Front Door">
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">RTSP URL</label>
+                <input type="text" id="modal-rtsp-url" placeholder="rtsp://username:password@192.168.1.100:554/stream">
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">ONVIF Host (Optional)</label>
+                <input type="text" id="modal-onvif-host" placeholder="192.168.1.100">
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">ONVIF Port</label>
+                <input type="number" id="modal-onvif-port" value="8089">
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">Username</label>
+                <input type="text" id="modal-username" placeholder="admin">
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">Password</label>
+                <input type="password" id="modal-password" placeholder="password">
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">
+                    <input type="checkbox" id="modal-enabled" checked> Enable this camera
+                </label>
+            </div>
+
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeCameraModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="saveCameraModal()">Save Camera</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let config = {};
+        let hasUnsavedChanges = false;
+
+        // Load configuration on page load
+        async function loadConfig() {
+            try {
+                const response = await fetch('/api/config');
+                config = await response.json();
+                populateSettings();
+                loadCameras();
+                updateStorageStatus();
+            } catch (error) {
+                console.error('Error loading config:', error);
+            }
+        }
+
+        // Populate settings from config
+        function populateSettings() {
+            // System settings
+            document.getElementById('system-name').value = 'SF-NVR'; // TODO: Add to config
+
+            // Recording settings
+            const recording = config.recording || {};
+            document.getElementById('segment-duration').value = recording.segment_duration || 300;
+            document.getElementById('video-codec').value = recording.video_codec || 'h264';
+            document.getElementById('container-format').value = recording.container_format || 'mp4';
+            document.getElementById('retention-days').value = recording.retention_days || 7;
+            toggleSwitch('recording-enabled', recording.enabled !== false);
+
+            // Storage settings
+            document.getElementById('storage-path').value = recording.storage_path || './recordings';
+
+            // Motion detection
+            const motion = config.motion_detection || {};
+            toggleSwitch('motion-enabled', motion.enabled === true);
+            document.getElementById('motion-sensitivity').value = motion.sensitivity || 25;
+
+            // AI detection
+            const ai = config.ai_detection || {};
+            toggleSwitch('ai-enabled', ai.enabled === true);
+            toggleSwitch('detect-person', ai.detect_person !== false);
+            toggleSwitch('detect-vehicle', ai.detect_vehicle !== false);
+
+            // Network settings
+            const web = config.web || {};
+            document.getElementById('web-host').value = web.host || '0.0.0.0';
+            document.getElementById('web-port').value = web.port || 8080;
+            document.getElementById('stream-quality').value = web.stream_quality || 'medium';
+
+            // ONVIF settings
+            const onvif = config.onvif || {};
+            toggleSwitch('onvif-auto-discover', onvif.auto_discover !== false);
+            document.getElementById('onvif-timeout').value = onvif.discovery_timeout || 2;
+        }
+
+        // Load cameras list
+        async function loadCameras() {
+            const cameraList = document.getElementById('camera-list');
+            cameraList.innerHTML = '';
+
+            if (!config.cameras || config.cameras.length === 0) {
+                cameraList.innerHTML = '<p style="color: #888;">No cameras configured. Click "Add Camera" to get started.</p>';
+                return;
+            }
+
+            config.cameras.forEach((camera, index) => {
+                const card = document.createElement('div');
+                card.className = 'camera-card';
+                card.draggable = true;
+                card.dataset.cameraName = camera.name;
+                card.dataset.index = index;
+
+                card.innerHTML = `
+                    <div class="camera-card-content">
+                        <div class="drag-handle">⋮⋮</div>
+                        <div class="camera-info">
+                            <div class="camera-name">
+                                ${camera.name}
+                                <span class="status-badge ${camera.enabled ? 'status-online' : 'status-offline'}">
+                                    ${camera.enabled ? 'Enabled' : 'Disabled'}
+                                </span>
+                            </div>
+                            <div class="camera-details">
+                                ${camera.rtsp_url ? camera.rtsp_url.replace(/:[^:@]+@/, ':***@') : 'No RTSP URL'}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="camera-actions">
+                        <button class="btn btn-secondary btn-sm" onclick="editCamera('${camera.name}')">Edit</button>
+                        <button class="btn btn-danger btn-sm" onclick="deleteCamera('${camera.name}')">Delete</button>
+                    </div>
+                `;
+
+                // Add drag event listeners
+                card.addEventListener('dragstart', handleDragStart);
+                card.addEventListener('dragover', handleDragOver);
+                card.addEventListener('drop', handleDrop);
+                card.addEventListener('dragend', handleDragEnd);
+                card.addEventListener('dragleave', handleDragLeave);
+
+                cameraList.appendChild(card);
+            });
+        }
+
+        // Drag and drop handlers
+        let draggedElement = null;
+
+        function handleDragStart(e) {
+            draggedElement = e.currentTarget;
+            e.currentTarget.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/html', e.currentTarget.innerHTML);
+        }
+
+        function handleDragOver(e) {
+            if (e.preventDefault) {
+                e.preventDefault();
+            }
+            e.dataTransfer.dropEffect = 'move';
+
+            const target = e.currentTarget;
+            if (target !== draggedElement && target.classList.contains('camera-card')) {
+                target.classList.add('drag-over');
+            }
+
+            return false;
+        }
+
+        function handleDragLeave(e) {
+            e.currentTarget.classList.remove('drag-over');
+        }
+
+        function handleDrop(e) {
+            if (e.stopPropagation) {
+                e.stopPropagation();
+            }
+
+            const target = e.currentTarget;
+            if (draggedElement !== target && target.classList.contains('camera-card')) {
+                // Get indices
+                const draggedIndex = parseInt(draggedElement.dataset.index);
+                const targetIndex = parseInt(target.dataset.index);
+
+                // Reorder cameras array
+                const draggedCamera = config.cameras[draggedIndex];
+                config.cameras.splice(draggedIndex, 1);
+                config.cameras.splice(targetIndex, 0, draggedCamera);
+
+                // Reload the camera list with new order
+                loadCameras();
+
+                // Mark as changed
+                markAsChanged();
+            }
+
+            return false;
+        }
+
+        function handleDragEnd(e) {
+            e.currentTarget.classList.remove('dragging');
+            document.querySelectorAll('.camera-card').forEach(card => {
+                card.classList.remove('drag-over');
+            });
+        }
+
+        // Update storage status
+        async function updateStorageStatus() {
+            try {
+                const response = await fetch('/api/system/storage');
+                const storage = await response.json();
+
+                const statusDiv = document.getElementById('storage-status');
+                const usedPercent = (storage.used / storage.total * 100).toFixed(1);
+
+                statusDiv.innerHTML = `
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="setting-label-main">Disk Usage</div>
+                            <div class="setting-label-desc">${storage.used_gb} GB used of ${storage.total_gb} GB total</div>
+                        </div>
+                        <div class="setting-control">
+                            <strong style="color: ${usedPercent > 85 ? '#e74c3c' : '#4a9eff'}">${usedPercent}%</strong>
+                        </div>
+                    </div>
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="setting-label-main">Free Space</div>
+                            <div class="setting-label-desc">Available for recordings</div>
+                        </div>
+                        <div class="setting-control">
+                            <strong>${storage.free_gb} GB</strong>
+                        </div>
+                    </div>
+                `;
+            } catch (error) {
+                console.error('Error loading storage status:', error);
+            }
+        }
+
+        // Tab navigation
+        document.querySelectorAll('.nav-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const tab = item.dataset.tab;
+
+                // Update nav items
+                document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+                item.classList.add('active');
+
+                // Update tab content
+                document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+                document.getElementById(tab + '-tab').classList.add('active');
+            });
+        });
+
+        // Toggle switch handler
+        document.querySelectorAll('.toggle-switch').forEach(toggle => {
+            toggle.addEventListener('click', () => {
+                toggle.classList.toggle('on');
+                markAsChanged();
+            });
+        });
+
+        function toggleSwitch(id, enabled) {
+            const toggle = document.getElementById(id);
+            if (toggle) {
+                if (enabled) {
+                    toggle.classList.add('on');
+                } else {
+                    toggle.classList.remove('on');
+                }
+            }
+        }
+
+        // Mark as changed
+        function markAsChanged() {
+            hasUnsavedChanges = true;
+            document.getElementById('save-bar').classList.add('visible');
+        }
+
+        // Add event listeners to all inputs
+        document.querySelectorAll('input, select').forEach(input => {
+            input.addEventListener('change', markAsChanged);
+        });
+
+        // Save settings
+        async function saveSettings() {
+            try {
+                // Gather all settings
+                const updatedConfig = {
+                    recording: {
+                        enabled: document.querySelector('#recording-enabled').classList.contains('on'),
+                        segment_duration: parseInt(document.getElementById('segment-duration').value),
+                        video_codec: document.getElementById('video-codec').value,
+                        container_format: document.getElementById('container-format').value,
+                        retention_days: parseInt(document.getElementById('retention-days').value),
+                        storage_path: document.getElementById('storage-path').value
+                    },
+                    motion_detection: {
+                        enabled: document.querySelector('#motion-enabled').classList.contains('on'),
+                        sensitivity: parseInt(document.getElementById('motion-sensitivity').value)
+                    },
+                    ai_detection: {
+                        enabled: document.querySelector('#ai-enabled').classList.contains('on'),
+                        detect_person: document.querySelector('#detect-person').classList.contains('on'),
+                        detect_vehicle: document.querySelector('#detect-vehicle').classList.contains('on')
+                    },
+                    web: {
+                        host: document.getElementById('web-host').value,
+                        port: parseInt(document.getElementById('web-port').value),
+                        stream_quality: document.getElementById('stream-quality').value
+                    },
+                    onvif: {
+                        auto_discover: document.querySelector('#onvif-auto-discover').classList.contains('on'),
+                        discovery_timeout: parseInt(document.getElementById('onvif-timeout').value)
+                    },
+                    cameras: config.cameras // Keep existing cameras
+                };
+
+                const response = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(updatedConfig)
+                });
+
+                if (response.ok) {
+                    hasUnsavedChanges = false;
+                    document.getElementById('save-bar').classList.remove('visible');
+                    alert('Settings saved successfully! Restart the server for some changes to take effect.');
+                } else {
+                    throw new Error('Failed to save settings');
+                }
+            } catch (error) {
+                console.error('Error saving settings:', error);
+                alert('Error saving settings. Please try again.');
+            }
+        }
+
+        function discardChanges() {
+            hasUnsavedChanges = false;
+            document.getElementById('save-bar').classList.remove('visible');
+            loadConfig(); // Reload original settings
+        }
+
+        // Camera modal functions
+        function showAddCameraModal() {
+            document.getElementById('camera-modal').classList.add('active');
+        }
+
+        function closeCameraModal() {
+            document.getElementById('camera-modal').classList.remove('active');
+        }
+
+        async function saveCameraModal() {
+            const camera = {
+                name: document.getElementById('modal-camera-name').value,
+                rtsp_url: document.getElementById('modal-rtsp-url').value,
+                onvif_host: document.getElementById('modal-onvif-host').value,
+                onvif_port: parseInt(document.getElementById('modal-onvif-port').value),
+                username: document.getElementById('modal-username').value,
+                password: document.getElementById('modal-password').value,
+                enabled: document.getElementById('modal-enabled').checked
+            };
+
+            if (!camera.name || !camera.rtsp_url) {
+                alert('Please fill in camera name and RTSP URL');
+                return;
+            }
+
+            // Add camera to config
+            config.cameras.push(camera);
+
+            // Save via API
+            try {
+                const response = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(config)
+                });
+
+                if (response.ok) {
+                    closeCameraModal();
+                    loadCameras();
+                    alert('Camera added successfully! Restart the server to apply changes.');
+                }
+            } catch (error) {
+                console.error('Error saving camera:', error);
+                alert('Error saving camera');
+            }
+        }
+
+        function editCamera(name) {
+            alert('Edit camera functionality coming soon!');
+        }
+
+        async function deleteCamera(name) {
+            if (!confirm(`Are you sure you want to delete camera "${name}"?`)) {
+                return;
+            }
+
+            config.cameras = config.cameras.filter(c => c.name !== name);
+
+            try {
+                const response = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(config)
+                });
+
+                if (response.ok) {
+                    loadCameras();
+                    alert('Camera deleted successfully! Restart the server to apply changes.');
+                }
+            } catch (error) {
+                console.error('Error deleting camera:', error);
+                alert('Error deleting camera');
+            }
+        }
+
+        // Warn on page leave if unsaved changes
+        window.addEventListener('beforeunload', (e) => {
+            if (hasUnsavedChanges) {
+                e.preventDefault();
+                e.returnValue = '';
+            }
+        });
+
+        // Load config on page load
+        loadConfig();
+    </script>
+</body>
+</html>

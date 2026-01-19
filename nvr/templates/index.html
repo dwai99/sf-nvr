@@ -1,0 +1,1423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <title>SF-NVR - Recording v3</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            padding: 20px;
+        }
+
+        .header {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        h1 { color: #4a9eff; }
+
+        .stats {
+            display: flex;
+            gap: 20px;
+        }
+
+        .stat {
+            background: #333;
+            padding: 10px 20px;
+            border-radius: 4px;
+            text-align: center;
+        }
+
+        .stat-label { color: #888; font-size: 0.9em; }
+        .stat-value { color: #4a9eff; font-size: 1.5em; font-weight: bold; }
+
+        .camera-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+            gap: 20px;
+        }
+
+        .camera-card {
+            background: #2a2a2a;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        }
+
+        .camera-header {
+            background: #333;
+            padding: 15px;
+            border-bottom: 2px solid #4aff4a;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .camera-name-display {
+            font-size: 1.1em;
+            font-weight: bold;
+            cursor: pointer;
+            flex: 1;
+        }
+
+        .camera-name-display:hover {
+            color: #4a9eff;
+        }
+
+        .camera-name-input {
+            font-size: 1.1em;
+            font-weight: bold;
+            background: #444;
+            border: 2px solid #4a9eff;
+            color: #fff;
+            padding: 4px 8px;
+            border-radius: 4px;
+            flex: 1;
+            margin-right: 8px;
+        }
+
+        .rename-actions {
+            display: none;
+            gap: 4px;
+        }
+
+        .rename-actions.active {
+            display: flex;
+        }
+
+        .rename-btn {
+            background: #4a9eff;
+            border: none;
+            color: white;
+            padding: 6px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.85em;
+            transition: background 0.2s;
+        }
+
+        .rename-btn:hover {
+            background: #3a8eef;
+        }
+
+        .rename-btn.cancel {
+            background: #666;
+        }
+
+        .rename-btn.cancel:hover {
+            background: #777;
+        }
+
+        .reconnect-btn {
+            background: transparent;
+            border: 1px solid #666;
+            color: #aaa;
+            padding: 4px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            transition: all 0.2s;
+            margin-left: auto;
+            margin-right: 8px;
+        }
+
+        .reconnect-btn:hover {
+            background: #4a9eff;
+            border-color: #4a9eff;
+            color: white;
+            transform: rotate(180deg);
+        }
+
+        .reconnect-btn:active {
+            transform: rotate(360deg);
+        }
+
+        .status-recording {
+            background: #4aff4a;
+            color: #000;
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 0.85em;
+            font-weight: bold;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .rec-dot {
+            width: 8px;
+            height: 8px;
+            background: #f00;
+            border-radius: 50%;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        .camera-video {
+            width: 100%;
+            height: 300px;
+            background: #000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            cursor: pointer;
+        }
+
+        .camera-video:hover::after {
+            content: '⛶ Fullscreen';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(74, 158, 255, 0.9);
+            color: white;
+            padding: 15px 30px;
+            border-radius: 8px;
+            font-size: 1.2em;
+            font-weight: bold;
+            z-index: 10;
+        }
+
+        .camera-video img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        .camera-info {
+            padding: 15px;
+            font-size: 0.9em;
+            color: #888;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .hidden { display: none; }
+
+        .motion-toggle {
+            background: #333;
+            border: 1px solid #444;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.85em;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .motion-toggle:hover {
+            background: #444;
+            border-color: #4a9eff;
+        }
+
+        .motion-toggle.active {
+            background: #4a9eff;
+            border-color: #4a9eff;
+            color: white;
+        }
+
+        .controls-bar {
+            background: #2a2a2a;
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .control-btn {
+            background: #4a9eff;
+            border: none;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: background 0.2s;
+        }
+
+        .control-btn:hover {
+            background: #3a8eef;
+        }
+
+        .control-btn.secondary {
+            background: #666;
+        }
+
+        .control-btn.secondary:hover {
+            background: #777;
+        }
+
+        .quality-selector {
+            display: flex;
+            gap: 5px;
+            background: #333;
+            padding: 5px;
+            border-radius: 4px;
+        }
+
+        .quality-btn {
+            background: #444;
+            border: none;
+            color: #aaa;
+            padding: 6px 12px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 0.85em;
+            transition: all 0.2s;
+        }
+
+        .quality-btn:hover {
+            background: #555;
+        }
+
+        .quality-btn.active {
+            background: #4a9eff;
+            color: white;
+        }
+
+        .motion-indicator {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(255, 74, 74, 0.9);
+            color: white;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-weight: bold;
+            font-size: 0.9em;
+            display: none;
+            z-index: 5;
+        }
+
+        .motion-indicator.active {
+            display: block;
+            animation: flash 1s infinite;
+        }
+
+        @keyframes flash {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
+        /* Fullscreen Modal */
+        .fullscreen-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.95);
+            z-index: 9999;
+            animation: fadeIn 0.2s;
+        }
+
+        .fullscreen-modal.active {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .fullscreen-content {
+            width: 95vw;
+            height: 95vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .fullscreen-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px;
+            background: rgba(42, 42, 42, 0.9);
+            border-radius: 8px 8px 0 0;
+        }
+
+        .fullscreen-header h2 {
+            color: #4a9eff;
+            margin: 0;
+        }
+
+        .close-btn {
+            background: #ff4a4a;
+            border: none;
+            color: white;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+
+        .close-btn:hover {
+            background: #ff3333;
+            transform: scale(1.1);
+        }
+
+        .fullscreen-video-wrapper {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #000;
+            border-radius: 0 0 8px 8px;
+            position: relative;
+            min-height: 0; /* Important for flex children */
+            overflow: hidden;
+            cursor: default;
+        }
+
+        .fullscreen-video-wrapper.zoomed {
+            cursor: grab;
+        }
+
+        .fullscreen-video-wrapper.panning {
+            cursor: grabbing;
+        }
+
+        .fullscreen-video-wrapper img {
+            max-width: none;
+            max-height: none;
+            width: auto;
+            height: auto;
+            object-fit: contain;
+            transition: transform 0.1s ease-out;
+            transform-origin: center center;
+            pointer-events: none;
+            user-select: none;
+            -webkit-user-drag: none;
+        }
+
+        .fullscreen-status {
+            position: absolute;
+            bottom: 30px;
+            left: 30px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px 20px;
+            border-radius: 4px;
+            color: #fff;
+            font-size: 0.9em;
+            z-index: 10;
+        }
+
+        .zoom-controls {
+            position: absolute;
+            bottom: 30px;
+            right: 30px;
+            display: flex;
+            gap: 10px;
+            z-index: 10;
+            flex-direction: column;
+            align-items: flex-end;
+        }
+
+        .zoom-button-group {
+            display: flex;
+            gap: 10px;
+        }
+
+        .zoom-btn {
+            background: rgba(74, 158, 255, 0.9);
+            border: none;
+            color: white;
+            width: 45px;
+            height: 45px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 20px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            backdrop-filter: blur(10px);
+        }
+
+        .zoom-btn:hover {
+            background: rgba(74, 158, 255, 1);
+            transform: scale(1.1);
+        }
+
+        .zoom-btn.active {
+            background: rgba(255, 193, 7, 0.9);
+            box-shadow: 0 0 20px rgba(255, 193, 7, 0.6);
+        }
+
+        .zoom-btn.active:hover {
+            background: rgba(255, 193, 7, 1);
+        }
+
+        .zoom-btn:active {
+            transform: scale(0.95);
+        }
+
+        .zoom-indicator {
+            position: absolute;
+            top: 30px;
+            right: 30px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 8px 16px;
+            border-radius: 4px;
+            color: #4a9eff;
+            font-size: 0.9em;
+            z-index: 10;
+            backdrop-filter: blur(10px);
+        }
+
+        .zoom-hint {
+            position: absolute;
+            top: 30px;
+            left: 30px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 8px 16px;
+            border-radius: 4px;
+            color: #aaa;
+            font-size: 0.85em;
+            z-index: 10;
+            backdrop-filter: blur(10px);
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .fullscreen-video-wrapper:hover .zoom-hint {
+            opacity: 1;
+        }
+
+        .fullscreen-video-wrapper.zoomed .zoom-hint {
+            opacity: 0;
+        }
+
+        .zoom-selection-box {
+            position: absolute;
+            border: 2px solid #4a9eff;
+            background: rgba(74, 158, 255, 0.2);
+            pointer-events: none;
+            z-index: 15;
+            display: none;
+        }
+
+        .zoom-selection-box.active {
+            display: block;
+        }
+
+        .fullscreen-video-wrapper.selecting {
+            cursor: crosshair !important;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div>
+            <h1>🎥 SF-NVR</h1>
+            <p style="color: #888;">All cameras recording automatically</p>
+        </div>
+        <div class="stats">
+            <div class="stat">
+                <div class="stat-label">Cameras</div>
+                <div class="stat-value" id="camera-count">0</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Recording</div>
+                <div class="stat-value" id="recording-count">0</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">CPU</div>
+                <div class="stat-value" id="cpu-usage">--%</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Memory</div>
+                <div class="stat-value" id="memory-usage">--%</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Disk</div>
+                <div class="stat-value" id="disk-usage">--%</div>
+            </div>
+            <div class="stat" style="cursor: pointer;" onclick="window.location.href='/playback'">
+                <div class="stat-label">📼 Playback</div>
+                <div class="stat-value" style="font-size: 0.9em;">Archive</div>
+            </div>
+            <div class="stat" style="cursor: pointer;" onclick="window.location.href='/settings'">
+                <div class="stat-label">⚙️ Settings</div>
+                <div class="stat-value" style="font-size: 0.9em;">Config</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="controls-bar">
+        <span style="color: #aaa; font-size: 0.9em;">Live View Controls:</span>
+        <button class="control-btn secondary" id="motion-overlay-btn" onclick="toggleMotionOverlay()">
+            <span id="motion-btn-text">✗ Motion Overlay</span>
+        </button>
+        <div class="quality-selector" id="quality-selector">
+            <button class="quality-btn active" onclick="setQuality('low')">Low (Smooth)</button>
+            <button class="quality-btn" onclick="setQuality('medium')">Medium</button>
+            <button class="quality-btn" onclick="setQuality('high')">High (Clear)</button>
+        </div>
+        <span style="color: #666; font-size: 0.85em; margin-left: auto;" id="quality-hint">Low quality = fast grid view</span>
+    </div>
+
+    <div class="camera-grid" id="camera-grid"></div>
+
+    <!-- Fullscreen Modal -->
+    <div class="fullscreen-modal" id="fullscreen-modal">
+        <div class="fullscreen-content">
+            <div class="fullscreen-header">
+                <h2 id="fullscreen-camera-name"></h2>
+                <button class="close-btn" onclick="closeFullscreen()" title="Close (ESC)">×</button>
+            </div>
+            <div class="fullscreen-video-wrapper" id="fullscreen-video-wrapper">
+                <img id="fullscreen-stream" alt="Camera stream">
+                <div class="fullscreen-status" id="fullscreen-status">Loading...</div>
+                <div class="zoom-indicator" id="zoom-indicator">100%</div>
+                <div class="zoom-hint" id="zoom-hint">Drag to select zoom area</div>
+                <div class="zoom-selection-box" id="zoom-selection-box"></div>
+                <div class="zoom-controls">
+                    <button class="zoom-btn" id="select-area-btn" onclick="toggleSelectionMode()" title="Select Area to Zoom">⊡</button>
+                    <div class="zoom-button-group">
+                        <button class="zoom-btn" onclick="zoomIn()" title="Zoom In (+)">+</button>
+                        <button class="zoom-btn" onclick="zoomOut()" title="Zoom Out (-)">−</button>
+                        <button class="zoom-btn" onclick="resetZoom()" title="Reset Zoom (0)">⌂</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/webrtc-client.js"></script>
+    <script>
+        let cameras = [];
+        let showMotionOverlay = false; // Start with overlay off for cleaner video
+        let activeRenameId = null; // Track which camera is being renamed to prevent UI rebuild
+        let streamQuality = 'low'; // Default to low quality for grid view performance
+        let streamingMode = 'mjpeg'; // Always use MJPEG mode for reliability
+
+        function toggleMotionOverlay() {
+            showMotionOverlay = !showMotionOverlay;
+            const btn = document.getElementById('motion-overlay-btn');
+            const btnText = document.getElementById('motion-btn-text');
+
+            if (showMotionOverlay) {
+                btn.classList.remove('secondary');
+                btnText.textContent = '✓ Motion Overlay';
+            } else {
+                btn.classList.add('secondary');
+                btnText.textContent = '✗ Motion Overlay';
+            }
+
+            // Rebuild to update stream URLs
+            updateUI();
+        }
+
+        function setQuality(quality) {
+            streamQuality = quality;
+
+            // Update active button
+            document.querySelectorAll('.quality-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            event.target.classList.add('active');
+
+            // Rebuild to update stream URLs
+            updateUI();
+        }
+
+        function buildStreamUrl(cameraName) {
+            // Build URL with quality and motion overlay parameters
+            let url = `/api/cameras/${encodeURIComponent(cameraName)}/live`;
+            const params = [];
+
+            if (!showMotionOverlay) {
+                params.push('raw=true');
+            }
+
+            // Quality parameter (affects JPEG quality on backend)
+            if (streamQuality === 'low') {
+                params.push('quality=40');  // Low for maximum smoothness
+            } else if (streamQuality === 'medium') {
+                params.push('quality=65');  // Medium for balanced performance
+            } else if (streamQuality === 'high') {
+                params.push('quality=90');  // High for maximum clarity
+            }
+
+            if (params.length > 0) {
+                url += '?' + params.join('&');
+            }
+
+            return url;
+        }
+
+        async function fetchCameras() {
+            try {
+                const response = await fetch('/api/cameras');
+                cameras = await response.json();
+                updateUI();
+            } catch (error) {
+                console.error('Error fetching cameras:', error);
+            }
+        }
+
+        function updateUI() {
+            const grid = document.getElementById('camera-grid');
+
+            document.getElementById('camera-count').textContent = cameras.length;
+            document.getElementById('recording-count').textContent =
+                cameras.filter(c => c.recording).length;
+
+            // CRITICAL: Don't rebuild UI if user is actively renaming a camera
+            // Rebuilding would destroy the input field they're typing in!
+            if (activeRenameId !== null) {
+                console.log('Skipping UI rebuild - active rename in progress:', activeRenameId);
+                return;
+            }
+
+            // Use DocumentFragment for faster DOM updates
+            const fragment = document.createDocumentFragment();
+            cameras.forEach(camera => {
+                const card = createCameraCard(camera);
+                fragment.appendChild(card);
+            });
+
+            // Single DOM update (much faster than appendChild in loop)
+            grid.innerHTML = '';
+            grid.appendChild(fragment);
+        }
+
+        function createCameraCard(camera) {
+            const card = document.createElement('div');
+            card.className = 'camera-card';
+            card.setAttribute('data-camera', camera.name);
+
+            const safeId = camera.name.replace(/[^a-zA-Z0-9-_]/g, '_');
+
+            // Always use MJPEG streaming
+            const videoHtml = `<img src="${buildStreamUrl(camera.name)}" alt="${escapeHtml(camera.name)}" loading="lazy">`;
+
+            card.innerHTML = `
+                <div class="camera-header">
+                    <div class="camera-name-display" onclick="enableRename('${safeId}')" id="name-${safeId}">
+                        ${escapeHtml(camera.name)}
+                    </div>
+                    <input type="text"
+                           class="camera-name-input hidden"
+                           id="input-${safeId}"
+                           value="${escapeHtml(camera.name)}"
+                           data-original-name="${escapeHtml(camera.name)}"
+                           onkeydown="handleRenameKey(event, '${safeId}')">
+                    <div class="rename-actions" id="actions-${safeId}">
+                        <button class="rename-btn" type="button" onclick="console.log('Save clicked for ${safeId}'); saveRename('${safeId}')">✓ Save</button>
+                        <button class="rename-btn cancel" type="button" onclick="console.log('Cancel clicked for ${safeId}'); cancelRename('${safeId}')">✕ Cancel</button>
+                    </div>
+                    <button class="reconnect-btn" id="reconnect-${safeId}" onclick="reconnectCamera('${escapeHtml(camera.name)}')" title="Force reconnect camera">
+                        ↻
+                    </button>
+                    <span class="status-recording" id="status-${safeId}">
+                        <span class="rec-dot"></span>
+                        REC
+                    </span>
+                </div>
+                <div class="camera-video" onclick="goFullscreen('${escapeHtml(camera.name)}')">
+                    ${videoHtml}
+                    <div class="motion-indicator">MOTION</div>
+                </div>
+                <div class="camera-info">
+                    <span>📡 MJPEG | ${camera.device_info && camera.device_info.Manufacturer ?
+                        `${camera.device_info.Manufacturer} ${camera.device_info.Model}` :
+                        'Click name to rename • Click video for fullscreen'}</span>
+                </div>
+            `;
+
+            return card;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function enableRename(safeId) {
+            console.log('enableRename called for:', safeId);
+
+            // Set active rename ID to prevent UI rebuilds while typing
+            activeRenameId = safeId;
+            console.log('Active rename ID set to:', activeRenameId);
+
+            const display = document.getElementById(`name-${safeId}`);
+            const input = document.getElementById(`input-${safeId}`);
+            const actions = document.getElementById(`actions-${safeId}`);
+            const status = document.getElementById(`status-${safeId}`);
+
+            console.log('Elements found:', { display, input, actions, status });
+
+            display.classList.add('hidden');
+            status.classList.add('hidden');
+            input.classList.remove('hidden');
+            actions.classList.add('active');
+            input.focus();
+            input.select();
+
+            console.log('Rename mode enabled, buttons should be visible');
+        }
+
+        function handleRenameKey(event, safeId) {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                saveRename(safeId);
+            } else if (event.key === 'Escape') {
+                event.preventDefault();
+                cancelRename(safeId);
+            }
+        }
+
+        async function saveRename(safeId) {
+            const input = document.getElementById(`input-${safeId}`);
+            const oldName = input.getAttribute('data-original-name');
+            const newName = input.value.trim();
+
+            console.log('=== RENAME DEBUG START ===');
+            console.log('saveRename called with:', {
+                safeId,
+                oldName,
+                newName,
+                inputElement: input,
+                inputValue: input.value,
+                dataAttribute: input.getAttribute('data-original-name')
+            });
+
+            if (!newName) {
+                console.error('RENAME FAILED: Empty name');
+                alert('Camera name cannot be empty');
+                return;
+            }
+
+            if (newName === oldName) {
+                console.log('RENAME SKIPPED: Name unchanged, canceling');
+                cancelRename(safeId);
+                return;
+            }
+
+            console.log('RENAME PROCEEDING: oldName !== newName');
+
+            // Optimistically update UI immediately
+            const display = document.getElementById(`name-${safeId}`);
+            const actions = document.getElementById(`actions-${safeId}`);
+            const status = document.getElementById(`status-${safeId}`);
+
+            // Exit edit mode and show new name
+            input.classList.add('hidden');
+            actions.classList.remove('active');
+            display.classList.remove('hidden');
+            status.classList.remove('hidden');
+            display.textContent = newName;
+
+            // Update the data attribute to the new name for future edits
+            input.setAttribute('data-original-name', newName);
+            input.value = newName;
+
+            try {
+                const url = `/api/cameras/${encodeURIComponent(oldName)}/rename`;
+                const payload = { old_name: oldName, new_name: newName };
+
+                console.log('RENAME API CALL:', {
+                    url,
+                    payload,
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                // Add timeout to fetch
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                    signal: controller.signal
+                }).finally(() => clearTimeout(timeoutId));
+
+                console.log('RENAME RESPONSE:', {
+                    status: response.status,
+                    statusText: response.statusText,
+                    ok: response.ok,
+                    headers: Object.fromEntries(response.headers.entries())
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    console.log('RENAME SUCCESS:', result);
+                    // Update the cameras array to reflect the new name
+                    const cameraIndex = cameras.findIndex(c => c.name === oldName);
+                    console.log('Updating cameras array:', { cameraIndex, oldName, newName });
+                    if (cameraIndex !== -1) {
+                        cameras[cameraIndex].name = newName;
+                        console.log('Camera updated in array:', cameras[cameraIndex]);
+                    } else {
+                        console.warn('Camera not found in array:', oldName);
+                    }
+
+                    // Clear active rename ID to allow UI rebuilds again
+                    activeRenameId = null;
+                    console.log('Active rename ID cleared (success)');
+
+                    console.log('=== RENAME DEBUG END (SUCCESS) ===');
+                    // No need to reload the entire page - we already updated the UI optimistically
+                } else {
+                    let errorMessage = 'Unknown error';
+                    let errorDetails = null;
+                    try {
+                        errorDetails = await response.json();
+                        errorMessage = errorDetails.detail || JSON.stringify(errorDetails);
+                    } catch (e) {
+                        console.error('Failed to parse error response:', e);
+                        errorMessage = response.statusText;
+                    }
+                    console.error('RENAME FAILED:', {
+                        status: response.status,
+                        errorMessage,
+                        errorDetails
+                    });
+                    // Revert the UI change
+                    display.textContent = oldName;
+                    input.setAttribute('data-original-name', oldName);
+                    input.value = oldName;
+
+                    // Clear active rename ID to allow UI rebuilds again
+                    activeRenameId = null;
+                    console.log('Active rename ID cleared (failed)');
+
+                    console.log('RENAME UI REVERTED TO:', oldName);
+                    console.log('=== RENAME DEBUG END (FAILED) ===');
+                    alert('Failed to rename camera: ' + errorMessage);
+                }
+            } catch (error) {
+                console.error('RENAME EXCEPTION:', {
+                    name: error.name,
+                    message: error.message,
+                    stack: error.stack
+                });
+                // Revert the UI change
+                display.textContent = oldName;
+                input.setAttribute('data-original-name', oldName);
+                input.value = oldName;
+
+                // Clear active rename ID to allow UI rebuilds again
+                activeRenameId = null;
+                console.log('Active rename ID cleared (exception)');
+
+                console.log('RENAME UI REVERTED TO:', oldName);
+                console.log('=== RENAME DEBUG END (EXCEPTION) ===');
+
+                if (error.name === 'AbortError') {
+                    alert('Request timed out. Is the server running?');
+                } else {
+                    alert('Error renaming camera: ' + error.message);
+                }
+            }
+        }
+
+        function cancelRename(safeId) {
+            console.log('cancelRename called for:', safeId);
+
+            // Clear active rename ID to allow UI rebuilds again
+            activeRenameId = null;
+            console.log('Active rename ID cleared');
+
+            const display = document.getElementById(`name-${safeId}`);
+            const input = document.getElementById(`input-${safeId}`);
+            const actions = document.getElementById(`actions-${safeId}`);
+            const status = document.getElementById(`status-${safeId}`);
+            const oldName = input.getAttribute('data-original-name');
+
+            input.classList.add('hidden');
+            actions.classList.remove('active');
+            display.classList.remove('hidden');
+            status.classList.remove('hidden');
+            input.value = oldName;
+        }
+
+        function goFullscreen(cameraName) {
+            const modal = document.getElementById('fullscreen-modal');
+            const cameraNameElem = document.getElementById('fullscreen-camera-name');
+            const streamImg = document.getElementById('fullscreen-stream');
+            const statusElem = document.getElementById('fullscreen-status');
+
+            cameraNameElem.textContent = cameraName;
+
+            // Build high-quality MJPEG stream URL (same as grid)
+            let streamUrl = `/api/cameras/${encodeURIComponent(cameraName)}/live?quality=90`;
+            if (!showMotionOverlay) {
+                streamUrl += '&raw=true';
+            }
+
+            // Set stream source FIRST (before showing modal)
+            streamImg.src = streamUrl;
+
+            // Then show modal
+            modal.classList.add('active');
+            statusElem.textContent = 'Live';
+        }
+
+        function closeFullscreen() {
+            // Hide modal
+            const modal = document.getElementById('fullscreen-modal');
+            const streamImg = document.getElementById('fullscreen-stream');
+
+            modal.classList.remove('active');
+
+            // Stop stream by clearing source
+            streamImg.src = '';
+
+            // Reset zoom and selection mode when closing
+            resetZoom();
+            if (zoomState.selectionModeEnabled) {
+                toggleSelectionMode();
+            }
+        }
+
+        // Zoom state
+        let zoomState = {
+            scale: 1,
+            translateX: 0,
+            translateY: 0,
+            isDragging: false,
+            isPanning: false,
+            isSelecting: false,
+            selectionModeEnabled: false,  // Toggle for explicit selection mode
+            dragStartX: 0,
+            dragStartY: 0,
+            selectionStartX: 0,
+            selectionStartY: 0,
+            centerX: 0.5,
+            centerY: 0.5
+        };
+
+        function updateZoom() {
+            const streamImg = document.getElementById('fullscreen-stream');
+            const indicator = document.getElementById('zoom-indicator');
+            const wrapper = document.getElementById('fullscreen-video-wrapper');
+
+            streamImg.style.transform = `scale(${zoomState.scale}) translate(${zoomState.translateX}px, ${zoomState.translateY}px)`;
+            indicator.textContent = `${Math.round(zoomState.scale * 100)}%`;
+
+            // Update wrapper cursor class
+            if (zoomState.scale > 1) {
+                wrapper.classList.add('zoomed');
+            } else {
+                wrapper.classList.remove('zoomed');
+            }
+        }
+
+        function zoomIn() {
+            zoomState.scale = Math.min(zoomState.scale * 1.25, 10); // Max 10x zoom
+            updateZoom();
+        }
+
+        function zoomOut() {
+            zoomState.scale = Math.max(zoomState.scale / 1.25, 0.5); // Min 0.5x zoom
+            // Reset translation if zooming out to 1x or below
+            if (zoomState.scale <= 1) {
+                zoomState.scale = 1;
+                zoomState.translateX = 0;
+                zoomState.translateY = 0;
+            }
+            updateZoom();
+        }
+
+        function resetZoom() {
+            zoomState.scale = 1;
+            zoomState.translateX = 0;
+            zoomState.translateY = 0;
+            updateZoom();
+        }
+
+        function toggleSelectionMode() {
+            zoomState.selectionModeEnabled = !zoomState.selectionModeEnabled;
+            const btn = document.getElementById('select-area-btn');
+            const wrapper = document.getElementById('fullscreen-video-wrapper');
+            const hint = document.getElementById('zoom-hint');
+
+            if (zoomState.selectionModeEnabled) {
+                btn.classList.add('active');
+                wrapper.classList.add('selecting');
+                hint.textContent = 'Drag to select zoom area';
+                hint.style.display = 'block';
+            } else {
+                btn.classList.remove('active');
+                wrapper.classList.remove('selecting');
+                hint.style.display = 'none';
+            }
+        }
+
+        // Mouse wheel zoom
+        document.getElementById('fullscreen-video-wrapper').addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const delta = e.deltaY > 0 ? -1 : 1;
+            if (delta > 0) {
+                zoomIn();
+            } else {
+                zoomOut();
+            }
+        }, { passive: false });
+
+        // Zoom to a selected rectangular area
+        function zoomToSelection(box) {
+            console.log('zoomToSelection called with box (screen coords):', box);
+            console.log('Current zoom state:', { scale: zoomState.scale, translateX: zoomState.translateX, translateY: zoomState.translateY });
+
+            const streamImg = document.getElementById('fullscreen-stream');
+            const wrapper = document.getElementById('fullscreen-video-wrapper');
+            const wrapperRect = wrapper.getBoundingClientRect();
+
+            // Get the natural (original) image dimensions
+            const naturalWidth = streamImg.naturalWidth || streamImg.width;
+            const naturalHeight = streamImg.naturalHeight || streamImg.height;
+
+            // Calculate how the image is displayed when unzoomed (object-fit: contain)
+            const wrapperAspect = wrapperRect.width / wrapperRect.height;
+            const imageAspect = naturalWidth / naturalHeight;
+
+            let baseDisplayWidth, baseDisplayHeight, baseDisplayLeft, baseDisplayTop;
+
+            if (imageAspect > wrapperAspect) {
+                // Image is wider - fit to width
+                baseDisplayWidth = wrapperRect.width;
+                baseDisplayHeight = wrapperRect.width / imageAspect;
+                baseDisplayLeft = wrapperRect.left;
+                baseDisplayTop = wrapperRect.top + (wrapperRect.height - baseDisplayHeight) / 2;
+            } else {
+                // Image is taller - fit to height
+                baseDisplayHeight = wrapperRect.height;
+                baseDisplayWidth = wrapperRect.height * imageAspect;
+                baseDisplayTop = wrapperRect.top;
+                baseDisplayLeft = wrapperRect.left + (wrapperRect.width - baseDisplayWidth) / 2;
+            }
+
+            console.log('Base display dimensions:', { baseDisplayWidth, baseDisplayHeight });
+
+            // Convert selection box center from screen coords to unzoomed display coords
+            const wrapperCenterX = wrapperRect.width / 2;
+            const wrapperCenterY = wrapperRect.height / 2;
+
+            // Selection box center in wrapper coords
+            const selBoxCenterX = (box.x - wrapperRect.left) + box.width / 2;
+            const selBoxCenterY = (box.y - wrapperRect.top) + box.height / 2;
+
+            // Offset from wrapper center
+            const offsetFromCenterX = selBoxCenterX - wrapperCenterX;
+            const offsetFromCenterY = selBoxCenterY - wrapperCenterY;
+
+            console.log('Selection offset from center:', { offsetFromCenterX, offsetFromCenterY });
+
+            // Reverse current transform: CSS uses scale(s) translate(tx, ty)
+            // Applied as: screenPos = s * (displayPos + t)
+            // To reverse: displayPos = (screenPos / s) - t
+            const unzoomedX = (offsetFromCenterX / zoomState.scale) - zoomState.translateX;
+            const unzoomedY = (offsetFromCenterY / zoomState.scale) - zoomState.translateY;
+
+            console.log('Selection center in unzoomed space:', { unzoomedX, unzoomedY });
+
+            // Convert to normalized coordinates (0-1, with 0.5 being center)
+            const normX = 0.5 + (unzoomedX / baseDisplayWidth);
+            const normY = 0.5 + (unzoomedY / baseDisplayHeight);
+
+            console.log('Normalized center:', { normX, normY });
+
+            // Calculate new zoom scale to fit selection to 90% of viewport
+            const scaleX = (wrapperRect.width * 0.9) / box.width;
+            const scaleY = (wrapperRect.height * 0.9) / box.height;
+            const newScale = Math.min(scaleX, scaleY, 10) * zoomState.scale; // Progressive zoom
+
+            console.log('New scale:', newScale);
+
+            // Calculate translation to center this point
+            // We want normX,normY (in display space) to map to screen center (0,0 offset)
+            // transform: screenPos = scale * (displayPos + translate)
+            // For center: 0 = scale * (displayPos + translate)
+            // So: translate = -displayPos
+            const displayPosX = (normX - 0.5) * baseDisplayWidth;
+            const displayPosY = (normY - 0.5) * baseDisplayHeight;
+
+            zoomState.translateX = -displayPosX;
+            zoomState.translateY = -displayPosY;
+            zoomState.scale = newScale;
+
+            console.log('New zoom state:', { scale: zoomState.scale, translateX: zoomState.translateX, translateY: zoomState.translateY });
+
+            updateZoom();
+        }
+
+        // Drag-to-select zoom functionality
+        const videoWrapper = document.getElementById('fullscreen-video-wrapper');
+        const selectionBox = document.getElementById('zoom-selection-box');
+
+        videoWrapper.addEventListener('mousedown', (e) => {
+            console.log('Mousedown on wrapper');
+            // Don't trigger on zoom buttons or hint
+            if (e.target.closest('.zoom-btn') || e.target.closest('.zoom-hint')) {
+                console.log('  Clicked on button, ignoring');
+                return;
+            }
+
+            // Check if click is within wrapper bounds (don't check image bounds when zoomed)
+            const wrapperRect = videoWrapper.getBoundingClientRect();
+            if (e.clientX < wrapperRect.left || e.clientX > wrapperRect.right ||
+                e.clientY < wrapperRect.top || e.clientY > wrapperRect.bottom) {
+                console.log('  Outside wrapper bounds, ignoring');
+                return;
+            }
+
+            console.log('  Selection mode enabled:', zoomState.selectionModeEnabled);
+
+            if (zoomState.selectionModeEnabled) {
+                console.log('  ✓ Starting selection');
+                // Selection mode is enabled - start drawing selection box
+                zoomState.isSelecting = true;
+                zoomState.selectionStartX = e.clientX;
+                zoomState.selectionStartY = e.clientY;
+
+                // Initialize selection box (positioned relative to wrapper)
+                selectionBox.style.left = (e.clientX - wrapperRect.left) + 'px';
+                selectionBox.style.top = (e.clientY - wrapperRect.top) + 'px';
+                selectionBox.style.width = '0px';
+                selectionBox.style.height = '0px';
+                selectionBox.classList.add('active');
+            } else if (zoomState.scale > 1) {
+                // Not in selection mode and already zoomed - enable panning
+                zoomState.isPanning = true;
+                zoomState.dragStartX = e.clientX - zoomState.translateX;
+                zoomState.dragStartY = e.clientY - zoomState.translateY;
+                videoWrapper.classList.add('panning');
+            }
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (zoomState.isPanning) {
+                // Pan the zoomed image
+                zoomState.translateX = e.clientX - zoomState.dragStartX;
+                zoomState.translateY = e.clientY - zoomState.dragStartY;
+                updateZoom();
+            } else if (zoomState.isSelecting) {
+                // Update selection box (positioned relative to wrapper)
+                const videoWrapper = document.getElementById('fullscreen-video-wrapper');
+                const wrapperRect = videoWrapper.getBoundingClientRect();
+
+                const x = Math.min(e.clientX, zoomState.selectionStartX) - wrapperRect.left;
+                const y = Math.min(e.clientY, zoomState.selectionStartY) - wrapperRect.top;
+                const width = Math.abs(e.clientX - zoomState.selectionStartX);
+                const height = Math.abs(e.clientY - zoomState.selectionStartY);
+
+                selectionBox.style.left = x + 'px';
+                selectionBox.style.top = y + 'px';
+                selectionBox.style.width = width + 'px';
+                selectionBox.style.height = height + 'px';
+            }
+        });
+
+        document.addEventListener('mouseup', (e) => {
+            console.log('Mouseup:', { isPanning: zoomState.isPanning, isSelecting: zoomState.isSelecting, selectionModeEnabled: zoomState.selectionModeEnabled });
+            if (zoomState.isPanning) {
+                zoomState.isPanning = false;
+                videoWrapper.classList.remove('panning');
+            } else if (zoomState.isSelecting) {
+                console.log('Processing selection...');
+                zoomState.isSelecting = false;
+                selectionBox.classList.remove('active');
+
+                // Calculate final selection box
+                const x = Math.min(e.clientX, zoomState.selectionStartX);
+                const y = Math.min(e.clientY, zoomState.selectionStartY);
+                const width = Math.abs(e.clientX - zoomState.selectionStartX);
+                const height = Math.abs(e.clientY - zoomState.selectionStartY);
+
+                console.log('Selection:', { x, y, width, height, threshold: 20 });
+
+                // Only zoom if selection box is large enough (minimum 20px)
+                if (width > 20 && height > 20) {
+                    console.log('✓ Selection large enough, zooming...');
+                    zoomToSelection({ x, y, width, height });
+                    // Keep selection mode enabled for multiple zooms
+                } else {
+                    console.log('✗ Selection too small');
+                }
+            }
+        });
+
+        // Double-click to reset zoom
+        document.getElementById('fullscreen-stream').addEventListener('dblclick', () => {
+            resetZoom();
+        });
+
+        // Close modal on ESC key, zoom shortcuts
+        document.addEventListener('keydown', (e) => {
+            const modal = document.getElementById('fullscreen-modal');
+            const isModalActive = modal.classList.contains('active');
+
+            if (e.key === 'Escape' && isModalActive) {
+                closeFullscreen();
+                return;
+            }
+
+            // Zoom shortcuts (only when modal is active)
+            if (isModalActive) {
+                switch(e.key) {
+                    case '+':
+                    case '=':
+                        e.preventDefault();
+                        zoomIn();
+                        break;
+                    case '-':
+                    case '_':
+                        e.preventDefault();
+                        zoomOut();
+                        break;
+                    case '0':
+                        e.preventDefault();
+                        resetZoom();
+                        break;
+                    case 'ArrowUp':
+                        if (zoomState.scale > 1) {
+                            e.preventDefault();
+                            zoomState.translateY += 50;
+                            updateZoom();
+                        }
+                        break;
+                    case 'ArrowDown':
+                        if (zoomState.scale > 1) {
+                            e.preventDefault();
+                            zoomState.translateY -= 50;
+                            updateZoom();
+                        }
+                        break;
+                    case 'ArrowLeft':
+                        if (zoomState.scale > 1) {
+                            e.preventDefault();
+                            zoomState.translateX += 50;
+                            updateZoom();
+                        }
+                        break;
+                    case 'ArrowRight':
+                        if (zoomState.scale > 1) {
+                            e.preventDefault();
+                            zoomState.translateX -= 50;
+                            updateZoom();
+                        }
+                        break;
+                }
+            }
+        });
+
+        async function reconnectCamera(cameraName) {
+            try {
+                const response = await fetch(`/api/cameras/${encodeURIComponent(cameraName)}/reconnect`, {
+                    method: 'POST'
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    console.log(`Reconnecting ${cameraName}...`);
+                    // Optionally show a temporary notification
+                    const safeId = cameraName.replace(/[^a-z0-9]/gi, '_');
+                    const statusElem = document.getElementById(`status-${safeId}`);
+                    if (statusElem) {
+                        const originalHTML = statusElem.innerHTML;
+                        statusElem.innerHTML = '<span class="rec-dot"></span> RECONNECTING...';
+                        setTimeout(() => {
+                            statusElem.innerHTML = originalHTML;
+                        }, 3000);
+                    }
+                } else {
+                    console.error(`Failed to reconnect ${cameraName}:`, result.error);
+                    alert(`Failed to reconnect: ${result.error}`);
+                }
+            } catch (error) {
+                console.error(`Error reconnecting ${cameraName}:`, error);
+                alert(`Error reconnecting camera: ${error.message}`);
+            }
+        }
+
+        async function fetchSystemStats() {
+            try {
+                const response = await fetch('/api/system/stats');
+                const stats = await response.json();
+
+                // Update CPU usage
+                const cpuElem = document.getElementById('cpu-usage');
+                cpuElem.textContent = `${stats.cpu.percent}%`;
+                cpuElem.style.color = stats.cpu.percent > 80 ? '#ff4a4a' : stats.cpu.percent > 60 ? '#ffa500' : '#4aff4a';
+
+                // Update Memory usage
+                const memElem = document.getElementById('memory-usage');
+                memElem.textContent = `${stats.memory.percent}%`;
+                memElem.style.color = stats.memory.percent > 80 ? '#ff4a4a' : stats.memory.percent > 60 ? '#ffa500' : '#4aff4a';
+
+                // Update Disk usage
+                const diskElem = document.getElementById('disk-usage');
+                diskElem.textContent = `${stats.disk.percent}%`;
+                diskElem.style.color = stats.disk.percent > 80 ? '#ff4a4a' : stats.disk.percent > 60 ? '#ffa500' : '#4aff4a';
+            } catch (error) {
+                console.error('Error fetching system stats:', error);
+            }
+        }
+
+        // Initialize
+        fetchCameras();
+        fetchSystemStats();
+        // Periodic refresh every 5 seconds
+        setInterval(fetchCameras, 5000);
+        setInterval(fetchSystemStats, 2000); // Update stats every 2 seconds
+
+        // WebSocket for motion events
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const ws = new WebSocket(`${protocol}//${window.location.host}/ws/events`);
+
+        ws.onmessage = (event) => {
+            const events = JSON.parse(event.data);
+            events.forEach(e => {
+                if (e.type === 'motion') {
+                    const card = document.querySelector(`[data-camera="${e.camera}"]`);
+                    if (card) {
+                        const indicator = card.querySelector('.motion-indicator');
+                        indicator.classList.add('active');
+                        setTimeout(() => indicator.classList.remove('active'), 3000);
+                    }
+                }
+            });
+        };
+    </script>
+</body>
+</html>

@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SF-NVR - Network Video Recorder</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            padding: 20px;
+        }
+
+        .header {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+
+        h1 {
+            color: #4a9eff;
+            margin-bottom: 10px;
+        }
+
+        .stats {
+            display: flex;
+            gap: 20px;
+            margin-top: 10px;
+        }
+
+        .stat {
+            background: #333;
+            padding: 10px 20px;
+            border-radius: 4px;
+        }
+
+        .stat-label {
+            color: #888;
+            font-size: 0.9em;
+        }
+
+        .stat-value {
+            color: #4a9eff;
+            font-size: 1.5em;
+            font-weight: bold;
+        }
+
+        .controls {
+            background: #2a2a2a;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .btn {
+            background: #4a9eff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1em;
+            margin-right: 10px;
+        }
+
+        .btn:hover {
+            background: #3a8eef;
+        }
+
+        .btn-danger {
+            background: #ff4a4a;
+        }
+
+        .btn-danger:hover {
+            background: #ef3a3a;
+        }
+
+        .camera-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+            gap: 20px;
+        }
+
+        .camera-card {
+            background: #2a2a2a;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        }
+
+        .camera-header {
+            background: #333;
+            padding: 15px;
+            border-bottom: 2px solid #4a9eff;
+        }
+
+        .camera-name {
+            font-size: 1.2em;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .camera-status {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.8em;
+            font-weight: bold;
+        }
+
+        .status-recording {
+            background: #4aff4a;
+            color: #000;
+        }
+
+        .status-stopped {
+            background: #ff4a4a;
+            color: #fff;
+        }
+
+        .camera-video {
+            width: 100%;
+            height: 300px;
+            background: #000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #666;
+        }
+
+        .camera-video img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        .camera-controls {
+            padding: 15px;
+            display: flex;
+            gap: 10px;
+        }
+
+        .camera-info {
+            padding: 15px;
+            font-size: 0.9em;
+            color: #888;
+        }
+
+        .motion-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-left: 10px;
+            background: #666;
+        }
+
+        .motion-indicator.active {
+            background: #ff4a4a;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .recordings {
+            margin-top: 10px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .recording-item {
+            padding: 8px;
+            background: #333;
+            margin-bottom: 5px;
+            border-radius: 4px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .recording-item:hover {
+            background: #3a3a3a;
+        }
+
+        .recording-time {
+            color: #4a9eff;
+        }
+
+        .recording-size {
+            color: #888;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🎥 SF-NVR</h1>
+        <p>Network Video Recorder - ONVIF & RTSP</p>
+        <div class="stats">
+            <div class="stat">
+                <div class="stat-label">Cameras</div>
+                <div class="stat-value" id="camera-count">0</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Recording</div>
+                <div class="stat-value" id="recording-count">0</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="controls">
+        <button class="btn" onclick="discoverCameras()">🔍 Discover Cameras</button>
+        <button class="btn" onclick="startAll()">▶️ Start All</button>
+        <button class="btn btn-danger" onclick="stopAll()">⏹️ Stop All</button>
+        <button class="btn" onclick="refreshCameras()">🔄 Refresh</button>
+    </div>
+
+    <div class="camera-grid" id="camera-grid">
+        <!-- Camera cards will be inserted here -->
+    </div>
+
+    <script>
+        let cameras = [];
+        let ws = null;
+
+        // Initialize WebSocket for events
+        function initWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${window.location.host}/ws/events`);
+
+            ws.onmessage = (event) => {
+                const events = JSON.parse(event.data);
+                events.forEach(e => {
+                    if (e.type === 'motion') {
+                        const indicator = document.querySelector(`[data-camera="${e.camera}"] .motion-indicator`);
+                        if (indicator) {
+                            indicator.classList.add('active');
+                            setTimeout(() => indicator.classList.remove('active'), 2000);
+                        }
+                    }
+                });
+            };
+
+            ws.onclose = () => {
+                console.log('WebSocket closed, reconnecting...');
+                setTimeout(initWebSocket, 5000);
+            };
+        }
+
+        async function fetchCameras() {
+            try {
+                const response = await fetch('/api/cameras');
+                cameras = await response.json();
+                updateUI();
+            } catch (error) {
+                console.error('Error fetching cameras:', error);
+            }
+        }
+
+        function updateUI() {
+            const grid = document.getElementById('camera-grid');
+            grid.innerHTML = '';
+
+            document.getElementById('camera-count').textContent = cameras.length;
+            document.getElementById('recording-count').textContent =
+                cameras.filter(c => c.recording).length;
+
+            cameras.forEach(camera => {
+                const card = createCameraCard(camera);
+                grid.appendChild(card);
+            });
+        }
+
+        function createCameraCard(camera) {
+            const card = document.createElement('div');
+            card.className = 'camera-card';
+            card.setAttribute('data-camera', camera.name);
+
+            const statusClass = camera.recording ? 'status-recording' : 'status-stopped';
+            const statusText = camera.recording ? 'RECORDING' : 'STOPPED';
+
+            card.innerHTML = `
+                <div class="camera-header">
+                    <div class="camera-name">
+                        ${camera.name}
+                        <span class="motion-indicator"></span>
+                    </div>
+                    <span class="camera-status ${statusClass}">${statusText}</span>
+                </div>
+                <div class="camera-video" id="video-${encodeURIComponent(camera.name)}">
+                    ${camera.recording ?
+                        `<img src="/api/cameras/${encodeURIComponent(camera.name)}/live" alt="Live view">` :
+                        'Camera stopped'}
+                </div>
+                <div class="camera-controls">
+                    <button class="btn" onclick="startCamera('${camera.name}')" ${camera.recording ? 'disabled' : ''}>
+                        ▶️ Start
+                    </button>
+                    <button class="btn btn-danger" onclick="stopCamera('${camera.name}')" ${!camera.recording ? 'disabled' : ''}>
+                        ⏹️ Stop
+                    </button>
+                    <button class="btn" onclick="viewRecordings('${camera.name}')">
+                        📁 Recordings
+                    </button>
+                </div>
+                <div class="camera-info">
+                    ${camera.device_info && camera.device_info.manufacturer ?
+                        `${camera.device_info.manufacturer} ${camera.device_info.model}` :
+                        'Camera details unavailable'}
+                </div>
+            `;
+
+            return card;
+        }
+
+        async function startCamera(name) {
+            try {
+                await fetch(`/api/cameras/${encodeURIComponent(name)}/start`, { method: 'POST' });
+                await fetchCameras();
+            } catch (error) {
+                console.error('Error starting camera:', error);
+            }
+        }
+
+        async function stopCamera(name) {
+            try {
+                await fetch(`/api/cameras/${encodeURIComponent(name)}/stop`, { method: 'POST' });
+                await fetchCameras();
+            } catch (error) {
+                console.error('Error stopping camera:', error);
+            }
+        }
+
+        async function discoverCameras() {
+            const btn = event.target;
+            btn.disabled = true;
+            btn.textContent = '🔍 Discovering...';
+
+            try {
+                const response = await fetch('/api/cameras/discover', { method: 'POST' });
+                const result = await response.json();
+                alert(`Discovered ${result.count} camera(s)`);
+                await fetchCameras();
+            } catch (error) {
+                console.error('Error discovering cameras:', error);
+                alert('Error discovering cameras');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🔍 Discover Cameras';
+            }
+        }
+
+        async function startAll() {
+            for (const camera of cameras) {
+                if (!camera.recording) {
+                    await startCamera(camera.name);
+                }
+            }
+        }
+
+        async function stopAll() {
+            for (const camera of cameras) {
+                if (camera.recording) {
+                    await stopCamera(camera.name);
+                }
+            }
+        }
+
+        async function refreshCameras() {
+            await fetchCameras();
+        }
+
+        async function viewRecordings(cameraName) {
+            try {
+                const response = await fetch(`/api/cameras/${encodeURIComponent(cameraName)}/recordings`);
+                const recordings = await response.json();
+
+                if (recordings.length === 0) {
+                    alert('No recordings found');
+                    return;
+                }
+
+                // Simple display - you could make this fancier
+                let html = `<h3>Recordings for ${cameraName}</h3><ul>`;
+                recordings.forEach(rec => {
+                    const size = (rec.size / 1024 / 1024).toFixed(2);
+                    const time = new Date(rec.timestamp).toLocaleString();
+                    html += `<li><a href="/api/recordings/${encodeURIComponent(cameraName)}/${rec.filename}" target="_blank">
+                        ${time} (${size} MB)</a></li>`;
+                });
+                html += '</ul>';
+
+                // Create modal or new window
+                const win = window.open('', 'Recordings', 'width=600,height=400');
+                win.document.write(html);
+            } catch (error) {
+                console.error('Error fetching recordings:', error);
+            }
+        }
+
+        // Initialize
+        fetchCameras();
+        initWebSocket();
+        setInterval(fetchCameras, 5000);  // Refresh every 5 seconds
+    </script>
+</body>
+</html>

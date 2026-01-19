@@ -1,0 +1,1803 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SF-NVR - Playback</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            background: #2a2a2a;
+            padding: 15px 20px;
+            border-bottom: 2px solid #333;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h1 {
+            color: #4a9eff;
+            font-size: 1.5em;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn {
+            background: #4a9eff;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+        }
+
+        .btn:hover { background: #3a8eef; }
+
+        .btn-success {
+            background: #4aff4a;
+            color: #000;
+        }
+
+        .btn-success:hover { background: #3aef3a; }
+
+        .controls-panel {
+            background: #2a2a2a;
+            padding: 15px 20px;
+            border-bottom: 2px solid #333;
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .control-group label {
+            font-size: 0.85em;
+            color: #888;
+        }
+
+        .control-group input,
+        .control-group select {
+            background: #333;
+            border: 1px solid #444;
+            color: #fff;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+
+        .video-grid {
+            flex: 1;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 10px;
+            padding: 10px;
+            overflow-y: auto;
+        }
+
+        .video-container {
+            background: #2a2a2a;
+            border-radius: 8px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .video-header {
+            background: #333;
+            padding: 10px 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid #4a9eff;
+        }
+
+        .video-name {
+            font-weight: bold;
+            font-size: 1.1em;
+        }
+
+        .video-player {
+            flex: 1;
+            background: #000;
+            position: relative;
+            min-height: 300px;
+            overflow: hidden;
+            cursor: default;
+        }
+
+        .video-player.zoomed {
+            cursor: grab;
+        }
+
+        .video-player.panning {
+            cursor: grabbing;
+        }
+
+        .video-player video {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            transition: transform 0.1s ease-out;
+            transform-origin: center center;
+            pointer-events: none;
+            user-select: none;
+            -webkit-user-drag: none;
+        }
+
+        .video-player.lazy-loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .loading-spinner {
+            border: 4px solid rgba(255, 255, 255, 0.1);
+            border-top: 4px solid #4a9eff;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .no-recording {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #666;
+            text-align: center;
+        }
+
+        .timeline-panel {
+            background: #2a2a2a;
+            padding: 20px;
+            border-top: 2px solid #333;
+        }
+
+        .playback-controls {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .play-button {
+            background: #4a9eff;
+            border: none;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            cursor: pointer;
+            font-size: 1.5em;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.2s;
+            flex-shrink: 0;
+        }
+
+        .play-button:hover {
+            background: #3a8eef;
+        }
+
+        .play-button.playing::before {
+            content: '⏸';
+        }
+
+        .play-button.paused::before {
+            content: '▶';
+        }
+
+        .time-display {
+            background: #333;
+            padding: 8px 16px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 1em;
+            color: #4a9eff;
+            min-width: 200px;
+            text-align: center;
+            flex-shrink: 0;
+        }
+
+        .speed-controls {
+            display: flex;
+            gap: 5px;
+            align-items: center;
+            background: #333;
+            padding: 5px;
+            border-radius: 4px;
+            flex-shrink: 0;
+        }
+
+        .speed-btn {
+            background: #444;
+            border: none;
+            color: #aaa;
+            padding: 6px 12px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 0.85em;
+            transition: all 0.2s;
+        }
+
+        .speed-btn:hover {
+            background: #555;
+        }
+
+        .speed-btn.active {
+            background: #4a9eff;
+            color: white;
+        }
+
+        .timeline-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .timeline-slider-wrapper {
+            position: relative;
+            width: 100%;
+            height: 50px;
+            background: #333;
+            border-radius: 4px;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .timeline-track {
+            position: absolute;
+            top: 50%;
+            left: 10px;
+            right: 10px;
+            height: 8px;
+            background: #444;
+            border-radius: 4px;
+            transform: translateY(-50%);
+        }
+
+        .timeline-progress {
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 100%;
+            background: #4a9eff;
+            border-radius: 4px;
+            transition: width 0.1s linear;
+        }
+
+        .timeline-marker {
+            position: absolute;
+            top: 50%;
+            height: 12px;
+            width: 3px;
+            background: #ff4a4a;
+            transform: translateY(-50%);
+            cursor: pointer;
+        }
+
+        .timeline-marker:hover {
+            background: #ff6a6a;
+            width: 5px;
+        }
+
+        .timeline-marker.ai-person {
+            background: #ffa500;
+        }
+
+        .timeline-marker.ai-vehicle {
+            background: #ffff00;
+        }
+
+        .timeline-handle {
+            position: absolute;
+            top: 50%;
+            width: 18px;
+            height: 18px;
+            background: #4a9eff;
+            border: 3px solid white;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            cursor: grab;
+            z-index: 10;
+            transition: transform 0.1s;
+        }
+
+        .timeline-handle:hover {
+            transform: translate(-50%, -50%) scale(1.2);
+        }
+
+        .timeline-handle:active {
+            cursor: grabbing;
+        }
+
+        .timeline-time-labels {
+            display: flex;
+            justify-content: space-between;
+            padding: 5px 10px;
+            font-size: 0.8em;
+            color: #888;
+        }
+
+        .timeline-tooltip {
+            position: absolute;
+            bottom: 60px;
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 0.85em;
+            pointer-events: none;
+            white-space: nowrap;
+            display: none;
+            transform: translateX(-50%);
+            z-index: 20;
+        }
+
+        .timeline-tooltip::after {
+            content: '';
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            border: 6px solid transparent;
+            border-top-color: rgba(0, 0, 0, 0.9);
+        }
+
+        .legend {
+            display: flex;
+            gap: 20px;
+            font-size: 0.85em;
+            color: #aaa;
+            margin-top: 10px;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .legend-events {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 2px;
+        }
+
+        .detection-toggle {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: #333;
+            padding: 8px 12px;
+            border-radius: 4px;
+            border: 1px solid #444;
+        }
+
+        .detection-toggle label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            user-select: none;
+            font-size: 0.9em;
+        }
+
+        .toggle-switch {
+            position: relative;
+            width: 44px;
+            height: 24px;
+            background: #555;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .toggle-switch.active {
+            background: #4a9eff;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 20px;
+            height: 20px;
+            background: white;
+            border-radius: 50%;
+            transition: transform 0.3s;
+        }
+
+        .toggle-switch.active .toggle-slider {
+            transform: translateX(20px);
+        }
+
+        input[type="checkbox"].toggle-input {
+            display: none;
+        }
+
+        .filter-divider {
+            width: 1px;
+            height: 20px;
+            background: #555;
+            margin: 0 10px;
+        }
+
+        .keyboard-hint {
+            color: #666;
+            font-size: 0.8em;
+            cursor: help;
+        }
+
+        .keyboard-hint:hover {
+            color: #4a9eff;
+        }
+
+        .shortcuts-modal {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #2a2a2a;
+            padding: 30px;
+            border-radius: 8px;
+            border: 2px solid #4a9eff;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            z-index: 1001;
+            min-width: 400px;
+            display: none;
+        }
+
+        .shortcuts-modal.active {
+            display: block;
+        }
+
+        .shortcuts-header {
+            font-size: 1.3em;
+            margin-bottom: 20px;
+            color: #4a9eff;
+        }
+
+        .shortcuts-grid {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 10px 20px;
+            margin-bottom: 20px;
+        }
+
+        .shortcut-key {
+            background: #333;
+            padding: 4px 8px;
+            border-radius: 3px;
+            font-family: monospace;
+            color: #4a9eff;
+            text-align: center;
+        }
+
+        .shortcut-desc {
+            color: #ccc;
+        }
+
+        .camera-selector {
+            background: #333;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 10px;
+        }
+
+        .camera-checkbox {
+            display: inline-flex;
+            align-items: center;
+            margin-right: 20px;
+            margin-bottom: 10px;
+            cursor: pointer;
+        }
+
+        .camera-checkbox input {
+            margin-right: 8px;
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+        }
+
+        .export-panel {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #2a2a2a;
+            padding: 30px;
+            border-radius: 8px;
+            border: 2px solid #4a9eff;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            z-index: 1000;
+            min-width: 400px;
+            display: none;
+        }
+
+        .export-panel.active {
+            display: block;
+        }
+
+        .overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 999;
+            display: none;
+        }
+
+        .overlay.active {
+            display: block;
+        }
+
+        .export-header {
+            font-size: 1.3em;
+            margin-bottom: 20px;
+            color: #4a9eff;
+        }
+
+        .export-info {
+            background: #333;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            font-size: 0.9em;
+        }
+
+        .export-info div {
+            margin-bottom: 8px;
+        }
+
+        .export-info strong {
+            color: #4a9eff;
+        }
+
+        .export-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+
+        .btn-cancel {
+            background: #666;
+        }
+
+        .btn-cancel:hover {
+            background: #777;
+        }
+
+        .zoom-controls {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            display: flex;
+            gap: 5px;
+            z-index: 5;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .video-player:hover .zoom-controls {
+            opacity: 1;
+        }
+
+        .zoom-btn {
+            background: rgba(74, 158, 255, 0.9);
+            border: none;
+            color: white;
+            width: 35px;
+            height: 35px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            backdrop-filter: blur(10px);
+        }
+
+        .zoom-btn:hover {
+            background: rgba(74, 158, 255, 1);
+            transform: scale(1.1);
+        }
+
+        .zoom-btn.active {
+            background: rgba(255, 193, 7, 0.9);
+            box-shadow: 0 0 20px rgba(255, 193, 7, 0.6);
+        }
+
+        .zoom-btn.active:hover {
+            background: rgba(255, 193, 7, 1);
+        }
+
+        .zoom-btn:active {
+            transform: scale(0.95);
+        }
+
+        .zoom-indicator {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 4px 10px;
+            border-radius: 4px;
+            color: #4a9eff;
+            font-size: 0.85em;
+            z-index: 5;
+            backdrop-filter: blur(10px);
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .video-player:hover .zoom-indicator {
+            opacity: 1;
+        }
+
+        .video-player.zoomed .zoom-indicator {
+            opacity: 1;
+        }
+
+        .zoom-selection-box {
+            position: absolute;
+            border: 2px solid #4a9eff;
+            background: rgba(74, 158, 255, 0.2);
+            pointer-events: none;
+            z-index: 6;
+            display: none;
+        }
+
+        .zoom-selection-box.active {
+            display: block;
+        }
+
+        .video-player.selecting {
+            cursor: crosshair !important;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div>
+            <h1>📼 Playback Archive</h1>
+        </div>
+        <div class="header-actions">
+            <button class="btn" onclick="window.location.href='/'">← Live View</button>
+            <button class="btn btn-success" onclick="showExportPanel()">📥 Export for Law Enforcement</button>
+        </div>
+    </div>
+
+    <div class="controls-panel">
+        <div class="control-group">
+            <label>Date</label>
+            <input type="date" id="playback-date" onchange="loadRecordings()">
+        </div>
+        <div class="control-group">
+            <label>Start Time</label>
+            <input type="time" id="start-time" step="1" onchange="updateTimeRange()">
+        </div>
+        <div class="control-group">
+            <label>End Time</label>
+            <input type="time" id="end-time" step="1" onchange="updateTimeRange()">
+        </div>
+        <div class="control-group">
+            <label>&nbsp;</label>
+            <button class="btn" onclick="loadRecordings()">Load Recordings</button>
+        </div>
+        <div class="control-group">
+            <label>&nbsp;</label>
+            <button class="btn" onclick="setQuickRange('last-hour')">Last Hour</button>
+        </div>
+        <div class="control-group">
+            <label>&nbsp;</label>
+            <button class="btn" onclick="setQuickRange('last-4-hours')">Last 4 Hours</button>
+        </div>
+    </div>
+
+    <div class="camera-selector" id="camera-selector">
+        <strong>Select Cameras:</strong>
+        <div id="camera-checkboxes" style="margin-top: 10px;">
+        </div>
+    </div>
+
+    <div class="video-grid" id="video-grid">
+    </div>
+
+    <div class="timeline-panel">
+        <div class="playback-controls">
+            <button class="play-button paused" id="play-button" onclick="togglePlayPause()"></button>
+
+            <div class="timeline-container">
+                <div class="timeline-slider-wrapper" id="timeline-slider"
+                     onmousedown="startDrag(event)"
+                     onmousemove="handleDrag(event)"
+                     onmouseleave="hideTooltip()">
+                    <div class="timeline-track">
+                        <div class="timeline-progress" id="timeline-progress"></div>
+                        <div id="timeline-markers"></div>
+                    </div>
+                    <div class="timeline-handle" id="timeline-handle"></div>
+                    <div class="timeline-tooltip" id="timeline-tooltip">00:00:00</div>
+                </div>
+                <div class="timeline-time-labels">
+                    <span id="start-label">--:--:--</span>
+                    <span id="end-label">--:--:--</span>
+                </div>
+            </div>
+
+            <div class="time-display" id="current-time">
+                <span id="current-time-display">--:--:--</span> / <span id="total-time-display">--:--:--</span>
+            </div>
+
+            <div class="speed-controls">
+                <button class="speed-btn" onclick="setPlaybackSpeed(0.5)">0.5×</button>
+                <button class="speed-btn active" onclick="setPlaybackSpeed(1.0)">1×</button>
+                <button class="speed-btn" onclick="setPlaybackSpeed(1.5)">1.5×</button>
+                <button class="speed-btn" onclick="setPlaybackSpeed(2.0)">2×</button>
+            </div>
+        </div>
+
+        <div class="legend">
+            <div class="legend-events">
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #ff4a4a;"></div>
+                    <span>Motion Events</span>
+                </div>
+
+                <div class="filter-divider"></div>
+
+                <div class="detection-toggle">
+                    <label>
+                        <input type="checkbox" id="show-ai-detections" class="toggle-input" checked onchange="toggleAIDetections()">
+                        <div class="toggle-switch active" id="ai-toggle-switch" onclick="toggleAIToggle()">
+                            <div class="toggle-slider"></div>
+                        </div>
+                        <span>AI Detections</span>
+                    </label>
+                </div>
+
+                <div class="legend-item" id="person-legend">
+                    <div class="legend-color" style="background: #ffa500;"></div>
+                    <span>Person</span>
+                </div>
+                <div class="legend-item" id="vehicle-legend">
+                    <div class="legend-color" style="background: #ffff00;"></div>
+                    <span>Vehicle</span>
+                </div>
+            </div>
+            <div class="keyboard-hint" onclick="showShortcuts()">
+                ⌨️ Keyboard Shortcuts
+            </div>
+        </div>
+    </div>
+
+    <!-- Export Modal -->
+    <div class="overlay" id="export-overlay" onclick="hideExportPanel(); hideShortcuts()"></div>
+    <div class="export-panel" id="export-panel">
+        <div class="export-header">📥 Export Recording for Law Enforcement</div>
+        <div class="export-info">
+            <div><strong>Date:</strong> <span id="export-date">--</span></div>
+            <div><strong>Time Range:</strong> <span id="export-time-range">--</span></div>
+            <div><strong>Cameras:</strong> <span id="export-cameras">--</span></div>
+            <div><strong>Format:</strong> MP4 (H.264)</div>
+            <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #444; color: #aaa;">
+                This will create a downloadable video file containing all selected cameras
+                for the specified time period. The file can be saved to a USB drive or other
+                portable media for law enforcement.
+            </div>
+        </div>
+        <div class="export-actions">
+            <button class="btn btn-cancel" onclick="hideExportPanel()">Cancel</button>
+            <button class="btn btn-success" onclick="performExport()">Download Recording</button>
+        </div>
+    </div>
+
+    <!-- Keyboard Shortcuts Modal -->
+    <div class="shortcuts-modal" id="shortcuts-modal">
+        <div class="shortcuts-header">⌨️ Keyboard Shortcuts</div>
+        <div class="shortcuts-grid">
+            <div class="shortcut-key">Space / K</div>
+            <div class="shortcut-desc">Play / Pause</div>
+
+            <div class="shortcut-key">← / →</div>
+            <div class="shortcut-desc">Rewind / Forward 5 seconds</div>
+
+            <div class="shortcut-key">J / L</div>
+            <div class="shortcut-desc">Rewind / Forward 10 seconds</div>
+
+            <div class="shortcut-key">0-9</div>
+            <div class="shortcut-desc">Jump to 0%, 10%, 20%... of video</div>
+
+            <div class="shortcut-key">, / .</div>
+            <div class="shortcut-desc">Decrease / Increase playback speed</div>
+
+            <div class="shortcut-key">A</div>
+            <div class="shortcut-desc">Toggle AI detections (person/vehicle)</div>
+
+            <div class="shortcut-key">?</div>
+            <div class="shortcut-desc">Show this help</div>
+
+            <div class="shortcut-key">ESC</div>
+            <div class="shortcut-desc">Close modal</div>
+        </div>
+        <div style="text-align: right;">
+            <button class="btn" onclick="hideShortcuts()">Close</button>
+        </div>
+    </div>
+
+    <script>
+        let cameras = [];
+        let selectedCameras = new Set();
+        let currentRecordings = {};
+        let videoElements = {};
+        let motionEvents = {};
+        let playbackState = {
+            playing: false,
+            speed: 1.0,
+            currentTime: 0,
+            duration: 0,
+            startTime: null,
+            endTime: null,
+            isDragging: false,
+            showAIDetections: true
+        };
+
+        async function init() {
+            // Set default date to today
+            const today = new Date().toISOString().split('T')[0];
+            document.getElementById('playback-date').value = today;
+
+            // Set default time to last 4 hours
+            setQuickRange('last-4-hours');
+
+            // Load cameras
+            await loadCameras();
+
+            // Load initial recordings
+            await loadRecordings();
+        }
+
+        async function loadCameras() {
+            try {
+                const response = await fetch('/api/cameras');
+                cameras = await response.json();
+
+                const container = document.getElementById('camera-checkboxes');
+                container.innerHTML = '';
+
+                cameras.forEach(camera => {
+                    const label = document.createElement('label');
+                    label.className = 'camera-checkbox';
+
+                    const checkbox = document.createElement('input');
+                    checkbox.type = 'checkbox';
+                    checkbox.value = camera.name;
+                    checkbox.checked = true;
+                    checkbox.onchange = () => toggleCamera(camera.name, checkbox.checked);
+
+                    label.appendChild(checkbox);
+                    label.appendChild(document.createTextNode(camera.name));
+                    container.appendChild(label);
+
+                    selectedCameras.add(camera.name);
+                });
+
+            } catch (error) {
+                console.error('Error loading cameras:', error);
+            }
+        }
+
+        function toggleCamera(cameraName, enabled) {
+            if (enabled) {
+                selectedCameras.add(cameraName);
+            } else {
+                selectedCameras.delete(cameraName);
+            }
+            updateVideoGrid();
+        }
+
+        function setQuickRange(range) {
+            const now = new Date();
+            const endTime = now.toTimeString().split(' ')[0];
+
+            let startDate;
+            if (range === 'last-hour') {
+                startDate = new Date(now.getTime() - 60 * 60 * 1000);
+            } else if (range === 'last-4-hours') {
+                startDate = new Date(now.getTime() - 4 * 60 * 60 * 1000);
+            }
+
+            const startTime = startDate.toTimeString().split(' ')[0];
+
+            document.getElementById('start-time').value = startTime;
+            document.getElementById('end-time').value = endTime;
+        }
+
+        function updateTimeRange() {
+            // Time range updated, will be used when loading recordings
+        }
+
+        async function loadRecordings() {
+            const date = document.getElementById('playback-date').value;
+            const startTime = document.getElementById('start-time').value;
+            const endTime = document.getElementById('end-time').value;
+
+            if (!date || !startTime || !endTime) {
+                alert('Please select date and time range');
+                return;
+            }
+
+            const startDateTime = `${date}T${startTime}`;
+            const endDateTime = `${date}T${endTime}`;
+
+            try {
+                // Load recordings for all cameras
+                const response = await fetch(
+                    `/api/playback/recordings?start_time=${encodeURIComponent(startDateTime)}&end_time=${encodeURIComponent(endDateTime)}`
+                );
+                const data = await response.json();
+
+                currentRecordings = data.cameras;
+
+                // Load motion events
+                const motionResponse = await fetch(
+                    `/api/playback/motion-events?start_time=${encodeURIComponent(startDateTime)}&end_time=${encodeURIComponent(endDateTime)}`
+                );
+                const motionData = await motionResponse.json();
+                motionEvents = motionData.cameras;
+
+                // Store time range in playback state
+                playbackState.startTime = startDateTime;
+                playbackState.endTime = endDateTime;
+
+                // Update UI
+                updateVideoGrid();
+                updateTimeline();
+
+            } catch (error) {
+                console.error('Error loading recordings:', error);
+                alert('Error loading recordings: ' + error.message);
+            }
+        }
+
+        function updateVideoGrid() {
+            const grid = document.getElementById('video-grid');
+            grid.innerHTML = '';
+            videoElements = {};
+
+            selectedCameras.forEach(cameraName => {
+                const container = document.createElement('div');
+                container.className = 'video-container';
+
+                const header = document.createElement('div');
+                header.className = 'video-header';
+                header.innerHTML = `
+                    <span class="video-name">${cameraName}</span>
+                    <span style="font-size: 0.9em; color: #888;">
+                        ${currentRecordings[cameraName] ?
+                            `${currentRecordings[cameraName].length} segments` :
+                            'No recordings'}
+                    </span>
+                `;
+
+                const player = document.createElement('div');
+                player.className = 'video-player';
+
+                if (currentRecordings[cameraName] && currentRecordings[cameraName].length > 0) {
+                    // Add loading indicator
+                    player.classList.add('lazy-loading');
+                    player.innerHTML = '<div class="loading-spinner"></div>';
+
+                    const video = document.createElement('video');
+                    video.controls = true;
+                    video.preload = 'metadata';  // Only load metadata initially
+                    video.id = `video-${cameraName}`;
+
+                    // Use playback API to serve video
+                    const startTime = document.getElementById('start-time').value;
+                    const endTime = document.getElementById('end-time').value;
+                    const date = document.getElementById('playback-date').value;
+                    const startDateTime = `${date}T${startTime}`;
+                    const endDateTime = `${date}T${endTime}`;
+
+                    // Use API endpoint to serve video properly
+                    const videoUrl = `/api/playback/video/${encodeURIComponent(cameraName)}?start_time=${encodeURIComponent(startDateTime)}&end_time=${encodeURIComponent(endDateTime)}`;
+                    video.src = videoUrl;
+
+                    // Remove loading indicator when video loads
+                    video.onloadedmetadata = () => {
+                        player.classList.remove('lazy-loading');
+                        player.innerHTML = '';
+                        player.appendChild(video);
+
+                        // Add zoom controls
+                        const zoomIndicator = document.createElement('div');
+                        zoomIndicator.className = 'zoom-indicator';
+                        zoomIndicator.id = `zoom-indicator-${cameraName}`;
+                        zoomIndicator.textContent = '100%';
+
+                        const zoomControls = document.createElement('div');
+                        zoomControls.className = 'zoom-controls';
+                        zoomControls.innerHTML = `
+                            <button class="zoom-btn select-area-btn" data-camera="${cameraName}" title="Select Area to Zoom">⊡</button>
+                            <button class="zoom-btn" onclick="zoomVideo('${cameraName}', 'in')" title="Zoom In (+)">+</button>
+                            <button class="zoom-btn" onclick="zoomVideo('${cameraName}', 'out')" title="Zoom Out (-)">−</button>
+                            <button class="zoom-btn" onclick="zoomVideo('${cameraName}', 'reset')" title="Reset Zoom (0)">⌂</button>
+                        `;
+
+                        const selectionBox = document.createElement('div');
+                        selectionBox.className = 'zoom-selection-box';
+                        selectionBox.id = `zoom-selection-${cameraName}`;
+
+                        player.appendChild(zoomIndicator);
+                        player.appendChild(zoomControls);
+                        player.appendChild(selectionBox);
+
+                        // Add zoom data to player
+                        player.dataset.zoomScale = '1';
+                        player.dataset.zoomX = '0';
+                        player.dataset.zoomY = '0';
+                    };
+
+                    // Handle errors
+                    video.onerror = () => {
+                        player.classList.remove('lazy-loading');
+                        player.innerHTML = '<div class="no-recording">Error loading video. Check console for details.</div>';
+                        console.error(`Failed to load video for ${cameraName}:`, video.error);
+                    };
+
+                    videoElements[cameraName] = video;
+                } else {
+                    player.innerHTML = '<div class="no-recording">No recording available for this time period</div>';
+                }
+
+                container.appendChild(header);
+                container.appendChild(player);
+                grid.appendChild(container);
+            });
+        }
+
+        function updateTimeline() {
+            const markersContainer = document.getElementById('timeline-markers');
+            markersContainer.innerHTML = '';
+
+            if (!playbackState.startTime || !playbackState.endTime) return;
+
+            const startMs = new Date(playbackState.startTime).getTime();
+            const endMs = new Date(playbackState.endTime).getTime();
+            const rangeMs = endMs - startMs;
+
+            // Add motion event markers
+            Object.keys(motionEvents).forEach(cameraName => {
+                if (!selectedCameras.has(cameraName)) return;
+
+                motionEvents[cameraName].forEach(event => {
+                    // Filter based on AI detection toggle
+                    const isAIDetection = event.event_type === 'ai_person' || event.event_type === 'ai_vehicle';
+                    if (isAIDetection && !playbackState.showAIDetections) {
+                        return; // Skip AI detections if toggle is off
+                    }
+
+                    const eventTime = new Date(event.event_time).getTime();
+                    const position = ((eventTime - startMs) / rangeMs) * 100;
+
+                    if (position >= 0 && position <= 100) {
+                        const marker = document.createElement('div');
+                        marker.className = 'timeline-marker';
+
+                        // Different colors for different event types
+                        if (event.event_type === 'ai_person') {
+                            marker.classList.add('ai-person');
+                            marker.title = `Person: ${cameraName} at ${event.event_time}`;
+                        } else if (event.event_type === 'ai_vehicle') {
+                            marker.classList.add('ai-vehicle');
+                            marker.title = `Vehicle: ${cameraName} at ${event.event_time}`;
+                        } else {
+                            marker.title = `Motion: ${cameraName} at ${event.event_time}`;
+                        }
+
+                        marker.style.left = position + '%';
+                        marker.onclick = () => seekToTime(eventTime);
+                        markersContainer.appendChild(marker);
+                    }
+                });
+            });
+
+            // Update time labels
+            document.getElementById('start-label').textContent = formatTime(playbackState.startTime);
+            document.getElementById('end-label').textContent = formatTime(playbackState.endTime);
+            document.getElementById('total-time-display').textContent = formatDuration(rangeMs / 1000);
+        }
+
+        function formatTime(isoString) {
+            if (!isoString) return '--:--:--';
+            return new Date(isoString).toLocaleTimeString();
+        }
+
+        function formatDuration(seconds) {
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            const s = Math.floor(seconds % 60);
+            return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+        }
+
+        function togglePlayPause() {
+            playbackState.playing = !playbackState.playing;
+            const playButton = document.getElementById('play-button');
+
+            if (playbackState.playing) {
+                playButton.classList.remove('paused');
+                playButton.classList.add('playing');
+            } else {
+                playButton.classList.remove('playing');
+                playButton.classList.add('paused');
+            }
+
+            Object.values(videoElements).forEach(video => {
+                if (playbackState.playing) {
+                    video.play();
+                } else {
+                    video.pause();
+                }
+            });
+        }
+
+        function setPlaybackSpeed(speed) {
+            playbackState.speed = speed;
+
+            // Update active button
+            document.querySelectorAll('.speed-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            event.target.classList.add('active');
+
+            Object.values(videoElements).forEach(video => {
+                video.playbackRate = speed;
+            });
+        }
+
+        // Timeline slider interaction
+        function startDrag(event) {
+            playbackState.isDragging = true;
+            seekToPosition(event);
+        }
+
+        function handleDrag(event) {
+            if (playbackState.isDragging) {
+                seekToPosition(event);
+            }
+            showTooltip(event);
+        }
+
+        function seekToPosition(event) {
+            const slider = document.getElementById('timeline-slider');
+            const rect = slider.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const percent = Math.max(0, Math.min(100, (x / rect.width) * 100));
+
+            updateTimelinePosition(percent);
+
+            if (!playbackState.startTime || !playbackState.endTime) return;
+
+            const startMs = new Date(playbackState.startTime).getTime();
+            const endMs = new Date(playbackState.endTime).getTime();
+            const rangeMs = endMs - startMs;
+            const targetTimeMs = startMs + (rangeMs * percent / 100);
+
+            playbackState.currentTime = (targetTimeMs - startMs) / 1000;
+
+            // Seek all video players
+            Object.values(videoElements).forEach(video => {
+                const videoDuration = video.duration || 0;
+                if (videoDuration > 0) {
+                    video.currentTime = Math.min(playbackState.currentTime, videoDuration);
+                }
+            });
+        }
+
+        function seekToTime(timestampMs) {
+            if (!playbackState.startTime || !playbackState.endTime) return;
+
+            const startMs = new Date(playbackState.startTime).getTime();
+            const endMs = new Date(playbackState.endTime).getTime();
+            const rangeMs = endMs - startMs;
+            const percent = ((timestampMs - startMs) / rangeMs) * 100;
+
+            updateTimelinePosition(percent);
+            playbackState.currentTime = (timestampMs - startMs) / 1000;
+
+            Object.values(videoElements).forEach(video => {
+                const videoDuration = video.duration || 0;
+                if (videoDuration > 0) {
+                    video.currentTime = Math.min(playbackState.currentTime, videoDuration);
+                }
+            });
+        }
+
+        function updateTimelinePosition(percent) {
+            const progress = document.getElementById('timeline-progress');
+            const handle = document.getElementById('timeline-handle');
+            progress.style.width = percent + '%';
+            handle.style.left = percent + '%';
+        }
+
+        function showTooltip(event) {
+            const tooltip = document.getElementById('timeline-tooltip');
+            const slider = document.getElementById('timeline-slider');
+            const rect = slider.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const percent = Math.max(0, Math.min(100, (x / rect.width) * 100));
+
+            if (!playbackState.startTime || !playbackState.endTime) return;
+
+            const startMs = new Date(playbackState.startTime).getTime();
+            const endMs = new Date(playbackState.endTime).getTime();
+            const rangeMs = endMs - startMs;
+            const targetTimeMs = startMs + (rangeMs * percent / 100);
+            const targetDate = new Date(targetTimeMs);
+
+            tooltip.textContent = targetDate.toLocaleTimeString();
+            tooltip.style.left = percent + '%';
+            tooltip.style.display = 'block';
+        }
+
+        function hideTooltip() {
+            if (!playbackState.isDragging) {
+                document.getElementById('timeline-tooltip').style.display = 'none';
+            }
+        }
+
+        // Mouse up anywhere stops dragging
+        document.addEventListener('mouseup', () => {
+            playbackState.isDragging = false;
+            hideTooltip();
+        });
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            // Handle ESC to close modals
+            if (e.key === 'Escape') {
+                hideExportPanel();
+                hideShortcuts();
+                return;
+            }
+
+            // Handle ? to show shortcuts
+            if (e.key === '?') {
+                e.preventDefault();
+                showShortcuts();
+                return;
+            }
+
+            // Handle 'a' to toggle AI detections
+            if (e.key === 'a' || e.key === 'A') {
+                e.preventDefault();
+                const checkbox = document.getElementById('show-ai-detections');
+                checkbox.checked = !checkbox.checked;
+                toggleAIDetections();
+                return;
+            }
+
+            // Ignore if typing in input fields
+            if (e.target.tagName === 'INPUT') return;
+
+            switch(e.key) {
+                case ' ':  // Spacebar - play/pause
+                case 'k':  // k - play/pause (YouTube style)
+                    e.preventDefault();
+                    togglePlayPause();
+                    break;
+
+                case 'ArrowLeft':  // Left arrow - rewind 5 seconds
+                    e.preventDefault();
+                    skipTime(-5);
+                    break;
+
+                case 'ArrowRight':  // Right arrow - forward 5 seconds
+                    e.preventDefault();
+                    skipTime(5);
+                    break;
+
+                case 'j':  // j - rewind 10 seconds
+                    e.preventDefault();
+                    skipTime(-10);
+                    break;
+
+                case 'l':  // l - forward 10 seconds
+                    e.preventDefault();
+                    skipTime(10);
+                    break;
+
+                case '0':  // 0 - jump to start
+                    e.preventDefault();
+                    jumpToPercent(0);
+                    break;
+
+                case '1': case '2': case '3': case '4': case '5':
+                case '6': case '7': case '8': case '9':
+                    e.preventDefault();
+                    jumpToPercent(parseInt(e.key) * 10);
+                    break;
+
+                case '<':  // < - slow down
+                case ',':
+                    e.preventDefault();
+                    changeSpeed(-0.25);
+                    break;
+
+                case '>':  // > - speed up
+                case '.':
+                    e.preventDefault();
+                    changeSpeed(0.25);
+                    break;
+            }
+        });
+
+        function skipTime(seconds) {
+            Object.values(videoElements).forEach(video => {
+                video.currentTime = Math.max(0, Math.min(video.duration || 0, video.currentTime + seconds));
+            });
+        }
+
+        function jumpToPercent(percent) {
+            Object.values(videoElements).forEach(video => {
+                const duration = video.duration || 0;
+                video.currentTime = (duration * percent) / 100;
+            });
+            updateTimelinePosition(percent);
+        }
+
+        function changeSpeed(delta) {
+            const newSpeed = Math.max(0.25, Math.min(4, playbackState.speed + delta));
+            const speedButtons = [0.5, 1.0, 1.5, 2.0];
+            const closest = speedButtons.reduce((prev, curr) =>
+                Math.abs(curr - newSpeed) < Math.abs(prev - newSpeed) ? curr : prev
+            );
+
+            // Find and click the closest speed button
+            document.querySelectorAll('.speed-btn').forEach(btn => {
+                if (btn.textContent.includes(closest.toString())) {
+                    btn.click();
+                }
+            });
+        }
+
+        function showExportPanel() {
+            const date = document.getElementById('playback-date').value;
+            const startTime = document.getElementById('start-time').value;
+            const endTime = document.getElementById('end-time').value;
+
+            if (!date || !startTime || !endTime) {
+                alert('Please select date and time range first');
+                return;
+            }
+
+            document.getElementById('export-date').textContent = date;
+            document.getElementById('export-time-range').textContent = `${startTime} - ${endTime}`;
+            document.getElementById('export-cameras').textContent = Array.from(selectedCameras).join(', ');
+
+            document.getElementById('export-overlay').classList.add('active');
+            document.getElementById('export-panel').classList.add('active');
+        }
+
+        function hideExportPanel() {
+            document.getElementById('export-overlay').classList.remove('active');
+            document.getElementById('export-panel').classList.remove('active');
+        }
+
+        function showShortcuts() {
+            document.getElementById('export-overlay').classList.add('active');
+            document.getElementById('shortcuts-modal').classList.add('active');
+        }
+
+        function hideShortcuts() {
+            document.getElementById('export-overlay').classList.remove('active');
+            document.getElementById('shortcuts-modal').classList.remove('active');
+        }
+
+        function toggleAIToggle() {
+            const checkbox = document.getElementById('show-ai-detections');
+            checkbox.checked = !checkbox.checked;
+            toggleAIDetections();
+        }
+
+        function toggleAIDetections() {
+            const checkbox = document.getElementById('show-ai-detections');
+            const toggleSwitch = document.getElementById('ai-toggle-switch');
+            const personLegend = document.getElementById('person-legend');
+            const vehicleLegend = document.getElementById('vehicle-legend');
+
+            playbackState.showAIDetections = checkbox.checked;
+
+            // Update toggle switch visual state
+            if (checkbox.checked) {
+                toggleSwitch.classList.add('active');
+                personLegend.style.opacity = '1';
+                vehicleLegend.style.opacity = '1';
+            } else {
+                toggleSwitch.classList.remove('active');
+                personLegend.style.opacity = '0.3';
+                vehicleLegend.style.opacity = '0.3';
+            }
+
+            // Refresh timeline markers
+            updateTimeline();
+        }
+
+        async function performExport() {
+            const date = document.getElementById('playback-date').value;
+            const startTime = document.getElementById('start-time').value;
+            const endTime = document.getElementById('end-time').value;
+
+            const startDateTime = `${date}T${startTime}`;
+            const endDateTime = `${date}T${endTime}`;
+
+            // Export each camera
+            for (const cameraName of selectedCameras) {
+                const url = `/api/playback/video/${encodeURIComponent(cameraName)}?start_time=${encodeURIComponent(startDateTime)}&end_time=${encodeURIComponent(endDateTime)}`;
+
+                // Create download link
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${cameraName}_${date}_${startTime.replace(/:/g, '')}-${endTime.replace(/:/g, '')}.mp4`;
+                a.click();
+            }
+
+            hideExportPanel();
+            alert('Download started. Files will be saved to your Downloads folder.');
+        }
+
+        // Zoom functionality for playback videos
+        function zoomVideo(cameraName, action, box) {
+            const video = document.getElementById(`video-${cameraName}`);
+            const player = video.parentElement;
+            const indicator = document.getElementById(`zoom-indicator-${cameraName}`);
+
+            let scale = parseFloat(player.dataset.zoomScale) || 1;
+            let x = parseFloat(player.dataset.zoomX) || 0;
+            let y = parseFloat(player.dataset.zoomY) || 0;
+
+            if (action === 'in') {
+                scale = Math.min(scale * 1.25, 10); // Max 10x zoom
+            } else if (action === 'out') {
+                scale = Math.max(scale / 1.25, 0.5); // Min 0.5x zoom
+                if (scale <= 1) {
+                    scale = 1;
+                    x = 0;
+                    y = 0;
+                }
+            } else if (action === 'reset') {
+                scale = 1;
+                x = 0;
+                y = 0;
+            } else if (action === 'selection' && box) {
+                // Zoom to selected rectangular area (supports progressive zoom)
+                const playerRect = player.getBoundingClientRect();
+
+                // Get the natural video dimensions
+                const naturalWidth = video.videoWidth || video.width;
+                const naturalHeight = video.videoHeight || video.height;
+
+                // Calculate how the video is displayed at 100% zoom (object-fit: contain)
+                const playerAspect = playerRect.width / playerRect.height;
+                const videoAspect = naturalWidth / naturalHeight;
+
+                let baseDisplayWidth, baseDisplayHeight;
+
+                if (videoAspect > playerAspect) {
+                    // Video is wider - fit to width
+                    baseDisplayWidth = playerRect.width;
+                    baseDisplayHeight = playerRect.width / videoAspect;
+                } else {
+                    // Video is taller - fit to height
+                    baseDisplayHeight = playerRect.height;
+                    baseDisplayWidth = playerRect.height * videoAspect;
+                }
+
+                // Convert selection box center from screen coords to wrapper coords
+                const wrapperCenterX = playerRect.width / 2;
+                const wrapperCenterY = playerRect.height / 2;
+
+                // Selection box center in wrapper coords
+                const selBoxCenterX = (box.x - playerRect.left) + box.width / 2;
+                const selBoxCenterY = (box.y - playerRect.top) + box.height / 2;
+
+                // Offset from wrapper center
+                const offsetFromCenterX = selBoxCenterX - wrapperCenterX;
+                const offsetFromCenterY = selBoxCenterY - wrapperCenterY;
+
+                // Reverse current transform to get unzoomed position
+                // CSS applies: scale(s) translate(tx, ty) which becomes: screenPos = s * (displayPos + t)
+                // To reverse: displayPos = (screenPos / s) - t
+                const unzoomedX = (offsetFromCenterX / scale) - x;
+                const unzoomedY = (offsetFromCenterY / scale) - y;
+
+                // Convert to normalized coordinates (0-1, with 0.5 being center)
+                const normX = 0.5 + (unzoomedX / baseDisplayWidth);
+                const normY = 0.5 + (unzoomedY / baseDisplayHeight);
+
+                // Calculate new zoom scale to fit selection to 90% of viewport
+                const scaleX = (playerRect.width * 0.9) / box.width;
+                const scaleY = (playerRect.height * 0.9) / box.height;
+                const targetScale = Math.min(scaleX, scaleY, 10);
+                const newScale = targetScale * scale; // Progressive zoom - multiply by current scale
+
+                // Calculate translation to center this point
+                const displayPosX = (normX - 0.5) * baseDisplayWidth;
+                const displayPosY = (normY - 0.5) * baseDisplayHeight;
+
+                x = -displayPosX;
+                y = -displayPosY;
+                scale = newScale;
+            }
+
+            player.dataset.zoomScale = scale;
+            player.dataset.zoomX = x;
+            player.dataset.zoomY = y;
+
+            video.style.transform = `scale(${scale}) translate(${x}px, ${y}px)`;
+            indicator.textContent = `${Math.round(scale * 100)}%`;
+
+            if (scale > 1) {
+                player.classList.add('zoomed');
+            } else {
+                player.classList.remove('zoomed');
+            }
+        }
+
+        // Mouse wheel zoom for playback videos
+        document.addEventListener('wheel', (e) => {
+            const player = e.target.closest('.video-player');
+            if (!player) return;
+
+            const video = player.querySelector('video');
+            if (!video) return;
+
+            const cameraName = video.id.replace('video-', '');
+            e.preventDefault();
+
+            const delta = e.deltaY > 0 ? -1 : 1;
+            if (delta > 0) {
+                zoomVideo(cameraName, 'in');
+            } else {
+                zoomVideo(cameraName, 'out');
+            }
+        }, { passive: false });
+
+        // Drag-to-select zoom functionality for playback videos
+        // Updated: 2026-01-19 14:05 - Fixed progressive zoom and mouse bounds check
+        let panState = {
+            isPanning: false,
+            isSelecting: false,
+            selectionModeEnabled: {},  // Per-camera selection mode tracking
+            cameraName: null,
+            startX: 0,
+            startY: 0,
+            selectionStartX: 0,
+            selectionStartY: 0
+        };
+
+        // Toggle selection mode for playback video
+        function togglePlaybackSelection(cameraName) {
+            const btn = document.querySelector(`.select-area-btn[data-camera="${cameraName}"]`);
+            const player = document.getElementById(`video-${cameraName}`).parentElement;
+
+            panState.selectionModeEnabled[cameraName] = !panState.selectionModeEnabled[cameraName];
+
+            if (panState.selectionModeEnabled[cameraName]) {
+                btn.classList.add('active');
+                player.classList.add('selecting');
+            } else {
+                btn.classList.remove('active');
+                player.classList.remove('selecting');
+            }
+        }
+
+        // Setup click handlers for select-area buttons
+        document.addEventListener('click', (e) => {
+            if (e.target.classList.contains('select-area-btn')) {
+                const cameraName = e.target.dataset.camera;
+                togglePlaybackSelection(cameraName);
+            }
+        });
+
+        document.addEventListener('mousedown', (e) => {
+            const player = e.target.closest('.video-player');
+            if (!player) return;
+
+            // Don't trigger on zoom buttons
+            if (e.target.closest('.zoom-btn')) return;
+
+            const video = player.querySelector('video');
+            if (!video) return;
+
+            const playerRect = player.getBoundingClientRect();
+
+            // Check if click is within player bounds (don't check video bounds when zoomed)
+            if (e.clientX < playerRect.left || e.clientX > playerRect.right ||
+                e.clientY < playerRect.top || e.clientY > playerRect.bottom) {
+                return;
+            }
+
+            const cameraName = video.id.replace('video-', '');
+            const scale = parseFloat(player.dataset.zoomScale) || 1;
+
+            if (panState.selectionModeEnabled[cameraName]) {
+                // Selection mode is enabled - start drawing selection box
+                panState.isSelecting = true;
+                panState.cameraName = cameraName;
+                panState.selectionStartX = e.clientX;
+                panState.selectionStartY = e.clientY;
+
+                // Initialize selection box
+                const selectionBox = document.getElementById(`zoom-selection-${cameraName}`);
+                selectionBox.style.left = (e.clientX - playerRect.left) + 'px';
+                selectionBox.style.top = (e.clientY - playerRect.top) + 'px';
+                selectionBox.style.width = '0px';
+                selectionBox.style.height = '0px';
+                selectionBox.classList.add('active');
+            } else if (scale > 1) {
+                // Not in selection mode and already zoomed - enable panning
+                panState.isPanning = true;
+                panState.cameraName = cameraName;
+                panState.startX = e.clientX - (parseFloat(player.dataset.zoomX) || 0);
+                panState.startY = e.clientY - (parseFloat(player.dataset.zoomY) || 0);
+                player.classList.add('panning');
+            }
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (panState.isPanning) {
+                // Pan the zoomed video
+                const video = document.getElementById(`video-${panState.cameraName}`);
+                if (!video) return;
+
+                const player = video.parentElement;
+                const x = e.clientX - panState.startX;
+                const y = e.clientY - panState.startY;
+
+                player.dataset.zoomX = x;
+                player.dataset.zoomY = y;
+
+                const scale = parseFloat(player.dataset.zoomScale) || 1;
+                video.style.transform = `scale(${scale}) translate(${x}px, ${y}px)`;
+            } else if (panState.isSelecting) {
+                // Update selection box
+                const video = document.getElementById(`video-${panState.cameraName}`);
+                if (!video) return;
+
+                const player = video.parentElement;
+                const playerRect = player.getBoundingClientRect();
+                const selectionBox = document.getElementById(`zoom-selection-${panState.cameraName}`);
+
+                const x = Math.min(e.clientX, panState.selectionStartX) - playerRect.left;
+                const y = Math.min(e.clientY, panState.selectionStartY) - playerRect.top;
+                const width = Math.abs(e.clientX - panState.selectionStartX);
+                const height = Math.abs(e.clientY - panState.selectionStartY);
+
+                selectionBox.style.left = x + 'px';
+                selectionBox.style.top = y + 'px';
+                selectionBox.style.width = width + 'px';
+                selectionBox.style.height = height + 'px';
+            }
+        });
+
+        document.addEventListener('mouseup', (e) => {
+            if (panState.isPanning) {
+                const video = document.getElementById(`video-${panState.cameraName}`);
+                if (video) {
+                    video.parentElement.classList.remove('panning');
+                }
+                panState.isPanning = false;
+                panState.cameraName = null;
+            } else if (panState.isSelecting) {
+                const video = document.getElementById(`video-${panState.cameraName}`);
+                if (video) {
+                    const player = video.parentElement;
+                    const selectionBox = document.getElementById(`zoom-selection-${panState.cameraName}`);
+
+                    selectionBox.classList.remove('active');
+
+                    // Calculate final selection box
+                    const x = Math.min(e.clientX, panState.selectionStartX);
+                    const y = Math.min(e.clientY, panState.selectionStartY);
+                    const width = Math.abs(e.clientX - panState.selectionStartX);
+                    const height = Math.abs(e.clientY - panState.selectionStartY);
+
+                    // Only zoom if selection box is large enough (minimum 20px)
+                    if (width > 20 && height > 20) {
+                        zoomVideo(panState.cameraName, 'selection', { x, y, width, height });
+                        // Keep selection mode enabled for multiple zooms
+                    }
+                }
+                panState.isSelecting = false;
+                panState.cameraName = null;
+            }
+        });
+
+        // Double-click to reset zoom on playback videos
+        document.addEventListener('dblclick', (e) => {
+            const player = e.target.closest('.video-player');
+            if (!player) return;
+
+            const video = player.querySelector('video');
+            if (!video) return;
+
+            const cameraName = video.id.replace('video-', '');
+            zoomVideo(cameraName, 'reset');
+        });
+
+        // Initialize on load
+        init();
+
+        // Update timeline and current time display
+        setInterval(() => {
+            if (Object.keys(videoElements).length === 0) return;
+
+            // Get first video's current time as reference
+            const firstVideo = Object.values(videoElements)[0];
+            if (firstVideo && !playbackState.isDragging) {
+                playbackState.currentTime = firstVideo.currentTime || 0;
+
+                // Update progress bar
+                const duration = firstVideo.duration || 0;
+                if (duration > 0) {
+                    const percent = (playbackState.currentTime / duration) * 100;
+                    updateTimelinePosition(percent);
+                }
+
+                // Update time display
+                document.getElementById('current-time-display').textContent = formatDuration(playbackState.currentTime);
+
+                // Auto-pause at end
+                if (playbackState.currentTime >= duration && playbackState.playing) {
+                    togglePlayPause();
+                }
+            }
+        }, 100);
+    </script>
+</body>
+</html>

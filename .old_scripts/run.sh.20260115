@@ -1,0 +1,57 @@
+#!/bin/bash
+# Quick run script - activates venv and runs the NVR
+# Usage: ./run.sh [command]
+#   ./run.sh              - Start NVR
+#   ./run.sh discover     - Discover cameras
+#   ./run.sh test         - Test discovery
+#   ./run.sh fix-onvif    - Fix ONVIF installation
+
+set -e
+
+# Check for virtual environment
+if [ ! -d "venv" ]; then
+    echo "❌ Virtual environment not found!"
+    echo ""
+    echo "Run setup first: ./setup.sh"
+    exit 1
+fi
+
+# Activate virtual environment
+source venv/bin/activate
+
+if [ -z "$VIRTUAL_ENV" ]; then
+    echo "❌ Failed to activate virtual environment"
+    exit 1
+fi
+
+# Determine what to run
+COMMAND=${1:-main}
+
+case $COMMAND in
+    discover)
+        echo "🔍 Running camera discovery..."
+        python3 discover_cameras.py
+        ;;
+    test)
+        echo "🧪 Running discovery test..."
+        python3 test_discovery.py
+        ;;
+    fix-onvif)
+        echo "🔧 Fixing ONVIF installation..."
+        ./fix_onvif.sh
+        ;;
+    main|start|nvr)
+        echo "🎥 Starting NVR..."
+        python3 main.py
+        ;;
+    *)
+        echo "Usage: ./run.sh [command]"
+        echo ""
+        echo "Commands:"
+        echo "  (none)       Start NVR (default)"
+        echo "  discover     Discover cameras"
+        echo "  test         Test discovery"
+        echo "  fix-onvif    Fix ONVIF installation"
+        exit 1
+        ;;
+esac
