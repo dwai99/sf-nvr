@@ -1107,13 +1107,14 @@
                 player.className = 'video-player';
 
                 if (currentRecordings[cameraName] && currentRecordings[cameraName].length > 0) {
-                    // Add loading indicator
+                    // Add loading indicator with segment count
+                    const segmentCount = currentRecordings[cameraName].length;
                     player.classList.add('lazy-loading');
-                    player.innerHTML = '<div class="loading-spinner"></div>';
+                    player.innerHTML = `<div class="loading-spinner"></div><div style="color: #888; margin-top: 10px; font-size: 0.9em;">Loading ${segmentCount} segment${segmentCount > 1 ? 's' : ''}...</div>`;
 
                     const video = document.createElement('video');
                     video.controls = true;
-                    video.preload = 'metadata';  // Only load metadata initially
+                    video.preload = 'none';  // Don't preload - let user click play when ready
                     video.id = `video-${cameraName}`;
 
                     // Use playback API to serve video
@@ -1135,45 +1136,44 @@
                             player.innerHTML = '<div class="no-recording">Video loading timed out. The time range may be too large or no recordings exist.</div>';
                             console.error(`Video load timeout for ${cameraName}`);
                         }
-                    }, 30000); // 30 second timeout
+                    }, 120000); // 120 second timeout for large concatenated videos
 
+                    // Show video immediately - don't wait for metadata
+                    clearTimeout(loadTimeout);
+                    player.classList.remove('lazy-loading');
+                    player.innerHTML = '';
+                    player.appendChild(video);
+
+                    // Add zoom controls
+                    const zoomIndicator = document.createElement('div');
+                    zoomIndicator.className = 'zoom-indicator';
+                    zoomIndicator.id = `zoom-indicator-${cameraName}`;
+                    zoomIndicator.textContent = '100%';
+
+                    const zoomControls = document.createElement('div');
+                    zoomControls.className = 'zoom-controls';
+                    zoomControls.innerHTML = `
+                        <button class="zoom-btn select-area-btn" data-camera="${cameraName}" title="Select Area to Zoom">⊡</button>
+                        <button class="zoom-btn" onclick="zoomVideo('${cameraName}', 'in')" title="Zoom In (+)">+</button>
+                        <button class="zoom-btn" onclick="zoomVideo('${cameraName}', 'out')" title="Zoom Out (-)">−</button>
+                        <button class="zoom-btn" onclick="zoomVideo('${cameraName}', 'reset')" title="Reset Zoom (0)">⌂</button>
+                    `;
+
+                    const selectionBox = document.createElement('div');
+                    selectionBox.className = 'zoom-selection-box';
+                    selectionBox.id = `zoom-selection-${cameraName}`;
+
+                    player.appendChild(zoomIndicator);
+                    player.appendChild(zoomControls);
+                    player.appendChild(selectionBox);
+
+                    // Add zoom data to player
+                    player.dataset.zoomScale = '1';
+                    player.dataset.zoomX = '0';
+                    player.dataset.zoomY = '0';
+
+                    // Set video source last - this triggers loading
                     video.src = videoUrl;
-
-                    // Remove loading indicator when video loads
-                    video.onloadedmetadata = () => {
-                        clearTimeout(loadTimeout);
-                        player.classList.remove('lazy-loading');
-                        player.innerHTML = '';
-                        player.appendChild(video);
-
-                        // Add zoom controls
-                        const zoomIndicator = document.createElement('div');
-                        zoomIndicator.className = 'zoom-indicator';
-                        zoomIndicator.id = `zoom-indicator-${cameraName}`;
-                        zoomIndicator.textContent = '100%';
-
-                        const zoomControls = document.createElement('div');
-                        zoomControls.className = 'zoom-controls';
-                        zoomControls.innerHTML = `
-                            <button class="zoom-btn select-area-btn" data-camera="${cameraName}" title="Select Area to Zoom">⊡</button>
-                            <button class="zoom-btn" onclick="zoomVideo('${cameraName}', 'in')" title="Zoom In (+)">+</button>
-                            <button class="zoom-btn" onclick="zoomVideo('${cameraName}', 'out')" title="Zoom Out (-)">−</button>
-                            <button class="zoom-btn" onclick="zoomVideo('${cameraName}', 'reset')" title="Reset Zoom (0)">⌂</button>
-                        `;
-
-                        const selectionBox = document.createElement('div');
-                        selectionBox.className = 'zoom-selection-box';
-                        selectionBox.id = `zoom-selection-${cameraName}`;
-
-                        player.appendChild(zoomIndicator);
-                        player.appendChild(zoomControls);
-                        player.appendChild(selectionBox);
-
-                        // Add zoom data to player
-                        player.dataset.zoomScale = '1';
-                        player.dataset.zoomX = '0';
-                        player.dataset.zoomY = '0';
-                    };
 
                     // Handle errors
                     video.onerror = () => {
