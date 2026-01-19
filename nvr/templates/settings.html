@@ -1103,39 +1103,53 @@
             input.addEventListener('change', markAsChanged);
         });
 
+        // Helper function to safely get element value
+        function getElementValue(id, defaultValue = '') {
+            const elem = document.getElementById(id);
+            return elem ? elem.value : defaultValue;
+        }
+
+        // Helper function to safely check toggle state
+        function isToggleOn(id) {
+            const elem = document.getElementById(id);
+            return elem ? elem.classList.contains('on') : false;
+        }
+
         // Save settings
         async function saveSettings() {
             try {
-                // Gather all settings
+                // Gather all settings with safe defaults
                 const updatedConfig = {
                     recording: {
-                        enabled: document.querySelector('#recording-enabled').classList.contains('on'),
-                        segment_duration: parseInt(document.getElementById('segment-duration').value),
-                        video_codec: document.getElementById('video-codec').value,
-                        container_format: document.getElementById('container-format').value,
-                        retention_days: parseInt(document.getElementById('retention-days').value),
-                        storage_path: document.getElementById('storage-path').value
+                        enabled: isToggleOn('recording-enabled'),
+                        segment_duration: parseInt(getElementValue('segment-duration', '300')),
+                        video_codec: getElementValue('video-codec', 'h264'),
+                        container_format: getElementValue('container-format', 'mp4'),
+                        retention_days: parseInt(getElementValue('retention-days', '7')),
+                        storage_path: getElementValue('storage-path', './recordings')
                     },
                     motion_detection: {
-                        enabled: document.querySelector('#motion-enabled').classList.contains('on'),
-                        sensitivity: parseInt(document.getElementById('motion-sensitivity').value)
+                        enabled: isToggleOn('motion-enabled'),
+                        sensitivity: parseInt(getElementValue('motion-sensitivity', '25'))
                     },
                     ai_detection: {
-                        enabled: document.querySelector('#ai-enabled').classList.contains('on'),
-                        detect_person: document.querySelector('#detect-person').classList.contains('on'),
-                        detect_vehicle: document.querySelector('#detect-vehicle').classList.contains('on')
+                        enabled: isToggleOn('ai-enabled'),
+                        detect_person: isToggleOn('detect-person'),
+                        detect_vehicle: isToggleOn('detect-vehicle')
                     },
                     web: {
-                        host: document.getElementById('web-host').value,
-                        port: parseInt(document.getElementById('web-port').value),
-                        stream_quality: document.getElementById('stream-quality').value
+                        host: getElementValue('web-host', '0.0.0.0'),
+                        port: parseInt(getElementValue('web-port', '8080')),
+                        stream_quality: getElementValue('stream-quality', 'medium')
                     },
                     onvif: {
-                        auto_discover: document.querySelector('#onvif-auto-discover').classList.contains('on'),
-                        discovery_timeout: parseInt(document.getElementById('onvif-timeout').value)
+                        auto_discover: isToggleOn('onvif-auto-discover'),
+                        discovery_timeout: parseInt(getElementValue('onvif-timeout', '2'))
                     },
-                    cameras: config.cameras // Keep existing cameras
+                    cameras: config.cameras || [] // Keep existing cameras
                 };
+
+                console.log('Saving config:', updatedConfig);
 
                 const response = await fetch('/api/config', {
                     method: 'POST',
@@ -1143,16 +1157,18 @@
                     body: JSON.stringify(updatedConfig)
                 });
 
+                const result = await response.json();
+
                 if (response.ok) {
                     hasUnsavedChanges = false;
                     document.getElementById('save-bar').classList.remove('visible');
                     alert('Settings saved successfully! Restart the server for some changes to take effect.');
                 } else {
-                    throw new Error('Failed to save settings');
+                    throw new Error(result.detail || 'Failed to save settings');
                 }
             } catch (error) {
                 console.error('Error saving settings:', error);
-                alert('Error saving settings. Please try again.');
+                alert(`Error saving settings: ${error.message}\nCheck console for details.`);
             }
         }
 

@@ -166,6 +166,10 @@ async def startup_event():
     # Start cleanup task
     asyncio.create_task(cleanup_task())
 
+    # Start disk space monitor (prevents drive from filling up)
+    asyncio.create_task(disk_monitor_task())
+    logger.info("Disk space monitor started - will prevent drive from filling up")
+
     # Start motion monitoring
     if config.get('motion_detection.enabled', True) and motion_monitor.detectors:
         asyncio.create_task(motion_monitor.start_monitoring(recorder_manager))
@@ -200,6 +204,56 @@ async def cleanup_task():
                 recorder_manager.cleanup_old_recordings(retention_days)
         except Exception as e:
             logger.error(f"Error in cleanup task: {e}")
+
+
+async def disk_monitor_task():
+    """Monitor disk space and prevent drive from filling up"""
+    from nvr.core.disk_manager import DiskManager
+
+    # Safety thresholds
+    MIN_FREE_GB = 5.0  # Always keep at least 5GB free
+    WARNING_THRESHOLD = 90.0  # Start cleanup at 90% full
+    CRITICAL_THRESHOLD = 95.0  # Aggressive cleanup at 95% full
+
+    storage_path = config.storage_path
+    disk_manager = DiskManager(storage_path, min_free_gb=MIN_FREE_GB, warning_threshold_percent=WARNING_THRESHOLD)
+
+    logger.info(f"Disk monitor started: min_free={MIN_FREE_GB}GB, warning={WARNING_THRESHOLD}%, critical={CRITICAL_THRESHOLD}%")
+
+    while True:
+        try:
+            await asyncio.sleep(300)  # Check every 5 minutes
+
+            usage = disk_manager.get_disk_usage()
+            if not usage:
+                continue
+
+            # Check if we need emergency cleanup
+            if usage['percent'] >= CRITICAL_THRESHOLD or usage['free_gb'] < MIN_FREE_GB:
+                logger.error(f"CRITICAL: Disk space low! {usage['free_gb']:.1f}GB free ({usage['percent']:.1f}% used)")
+                logger.info("Starting emergency cleanup to free 10GB...")
+
+                # Aggressive cleanup: try to free 10GB
+                files_deleted, bytes_freed = disk_manager.cleanup_old_recordings(target_free_gb=MIN_FREE_GB + 10)
+
+                if files_deleted > 0:
+                    logger.info(f"Emergency cleanup: deleted {files_deleted} files, freed {bytes_freed/(1024**3):.2f}GB")
+                else:
+                    logger.error("Emergency cleanup failed - no files to delete!")
+
+            # Regular cleanup if above warning threshold
+            elif usage['percent'] >= WARNING_THRESHOLD:
+                logger.warning(f"Disk space warning: {usage['free_gb']:.1f}GB free ({usage['percent']:.1f}% used)")
+                logger.info("Starting cleanup to maintain free space...")
+
+                # Normal cleanup: try to get to 15GB free
+                files_deleted, bytes_freed = disk_manager.cleanup_old_recordings(target_free_gb=15.0)
+
+                if files_deleted > 0:
+                    logger.info(f"Cleanup: deleted {files_deleted} files, freed {bytes_freed/(1024**3):.2f}GB")
+
+        except Exception as e:
+            logger.error(f"Error in disk monitor task: {e}", exc_info=True)
 
 
 # Web Routes

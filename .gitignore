@@ -59,6 +59,9 @@ tmp/
 temp/
 *.tmp
 
+# Test and debug scripts
+scripts/
+
 # macOS
 .DS_Store
 .AppleDouble
