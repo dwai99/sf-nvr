@@ -957,6 +957,46 @@ async def get_camera_alerts(camera_name: str, limit: int = 20):
     return {'alerts': alert_system.get_alerts_by_camera(camera_name, limit)}
 
 
+@app.get("/api/motion/heatmap/{camera_name}")
+async def get_motion_heatmap(camera_name: str, date: str = None):
+    """
+    Get motion heatmap for a camera
+
+    Args:
+        camera_name: Name of camera
+        date: Date in YYYY-MM-DD format (defaults to today)
+    """
+    try:
+        from nvr.core.motion_heatmap import MotionHeatmapManager
+
+        # Parse date
+        if date:
+            target_date = datetime.strptime(date, "%Y-%m-%d")
+        else:
+            target_date = datetime.now()
+
+        # Create heatmap manager
+        heatmap_mgr = MotionHeatmapManager(config.storage_path, playback_db)
+
+        # Generate daily heatmap
+        heatmap_path = heatmap_mgr.get_daily_heatmap(camera_name, target_date)
+
+        if not heatmap_path or not heatmap_path.exists():
+            raise HTTPException(status_code=404, detail="No motion data available for this date")
+
+        return FileResponse(
+            heatmap_path,
+            media_type="image/png",
+            filename=f"{camera_name}_heatmap_{date or 'today'}.png"
+        )
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    except Exception as e:
+        logger.error(f"Error generating heatmap: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
