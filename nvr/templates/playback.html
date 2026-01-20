@@ -800,9 +800,10 @@
                 <div class="stat-label">Memory</div>
                 <div class="stat-value" id="memory-usage">--%</div>
             </div>
-            <div class="stat">
+            <div class="stat" style="min-width: 120px;">
                 <div class="stat-label">Disk</div>
                 <div class="stat-value" id="disk-usage">--%</div>
+                <div style="color: #666; font-size: 0.7em; margin-top: 2px;" id="disk-details">-- / -- GB</div>
             </div>
         </div>
         <div class="header-actions">
@@ -1049,6 +1050,11 @@
                 if (diskElem) {
                     diskElem.textContent = `${stats.disk.percent}%`;
                     diskElem.style.color = stats.disk.percent > 80 ? '#ff4a4a' : stats.disk.percent > 60 ? '#ffa500' : '#4aff4a';
+                }
+
+                const diskDetailsElem = document.getElementById('disk-details');
+                if (diskDetailsElem) {
+                    diskDetailsElem.textContent = `${stats.disk.used_gb} / ${stats.disk.total_gb} GB`;
                 }
             } catch (error) {
                 console.error('Error fetching system stats:', error);
@@ -1580,15 +1586,13 @@
         function setPlaybackSpeed(speed) {
             playbackState.speed = speed;
 
-            // Update active button
-            document.querySelectorAll('.speed-btn').forEach(btn => {
-                btn.classList.remove('active');
-            });
-            event.target.classList.add('active');
-
+            // Update all videos
             Object.values(videoElements).forEach(video => {
                 video.playbackRate = speed;
             });
+
+            // Update UI buttons
+            updateSpeedButtons(speed);
         }
 
         // Timeline slider interaction
@@ -2299,6 +2303,260 @@
                 }
             }
         }, 100);
+
+        // ===== Keyboard Shortcuts =====
+        document.addEventListener('keydown', (e) => {
+            // Don't trigger shortcuts if user is typing in an input field
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) {
+                return;
+            }
+
+            // Prevent default for keys we handle
+            const handledKeys = ['Space', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'KeyF', 'KeyM'];
+            if (handledKeys.includes(e.code)) {
+                e.preventDefault();
+            }
+
+            switch(e.code) {
+                case 'Space':
+                case 'KeyK':
+                    // Space or K: Play/Pause
+                    togglePlayPause();
+                    break;
+
+                case 'ArrowLeft':
+                    // Left arrow: Rewind 5 seconds
+                    skipTime(-5);
+                    break;
+
+                case 'ArrowRight':
+                    // Right arrow: Skip forward 5 seconds
+                    skipTime(5);
+                    break;
+
+                case 'KeyJ':
+                    // J: Rewind 10 seconds
+                    skipTime(-10);
+                    break;
+
+                case 'KeyL':
+                    // L: Skip forward 10 seconds
+                    skipTime(10);
+                    break;
+
+                case 'ArrowUp':
+                    // Up arrow: Increase playback speed
+                    changePlaybackSpeed(0.25);
+                    break;
+
+                case 'ArrowDown':
+                    // Down arrow: Decrease playback speed
+                    changePlaybackSpeed(-0.25);
+                    break;
+
+                case 'Digit0':
+                case 'Digit1':
+                case 'Digit2':
+                case 'Digit3':
+                case 'Digit4':
+                case 'Digit5':
+                case 'Digit6':
+                case 'Digit7':
+                case 'Digit8':
+                case 'Digit9':
+                    // Number keys: Jump to percentage (0 = start, 9 = 90%, etc.)
+                    const percentage = parseInt(e.code.replace('Digit', '')) * 10;
+                    jumpToPercentage(percentage);
+                    break;
+
+                case 'KeyF':
+                    // F: Toggle fullscreen
+                    toggleFullscreen();
+                    break;
+
+                case 'KeyM':
+                    // M: Mute/Unmute
+                    toggleMute();
+                    break;
+
+                case 'Comma':
+                    // , (comma): Previous frame (when paused)
+                    if (!playbackState.playing) {
+                        skipTime(-0.033); // ~1 frame at 30fps
+                    }
+                    break;
+
+                case 'Period':
+                    // . (period): Next frame (when paused)
+                    if (!playbackState.playing) {
+                        skipTime(0.033); // ~1 frame at 30fps
+                    }
+                    break;
+            }
+        });
+
+        function skipTime(seconds) {
+            const firstVideo = Object.values(videoElements)[0];
+            if (!firstVideo) return;
+
+            const currentTime = firstVideo.currentTime;
+            const duration = firstVideo.duration;
+            const newTime = Math.max(0, Math.min(currentTime + seconds, duration));
+
+            // Calculate the timestamp in the overall timeline
+            const startMs = new Date(playbackState.startTime).getTime();
+            const offsetMs = newTime * 1000;
+            const targetMs = startMs + offsetMs;
+
+            seekToTime(targetMs);
+        }
+
+        function jumpToPercentage(percentage) {
+            if (!playbackState.startTime || !playbackState.endTime) return;
+
+            const startMs = new Date(playbackState.startTime).getTime();
+            const endMs = new Date(playbackState.endTime).getTime();
+            const rangeMs = endMs - startMs;
+            const targetMs = startMs + (rangeMs * percentage / 100);
+
+            seekToTime(targetMs);
+        }
+
+        function changePlaybackSpeed(delta) {
+            const firstVideo = Object.values(videoElements)[0];
+            if (!firstVideo) return;
+
+            const currentSpeed = firstVideo.playbackRate || 1.0;
+            const newSpeed = Math.max(0.25, Math.min(currentSpeed + delta, 4.0));
+
+            // Update all videos
+            Object.values(videoElements).forEach(video => {
+                video.playbackRate = newSpeed;
+            });
+
+            // Update playback state
+            playbackState.speed = newSpeed;
+
+            // Update UI buttons (highlight closest speed button)
+            updateSpeedButtons(newSpeed);
+
+            // Show speed indicator
+            showNotification(`Playback Speed: ${newSpeed.toFixed(2)}x`);
+        }
+
+        function updateSpeedButtons(currentSpeed) {
+            const speedButtons = document.querySelectorAll('.speed-btn');
+            const speeds = [0.5, 1.0, 1.5, 2.0];
+
+            // Find closest predefined speed
+            let closestSpeed = speeds[0];
+            let minDiff = Math.abs(currentSpeed - speeds[0]);
+
+            speeds.forEach(speed => {
+                const diff = Math.abs(currentSpeed - speed);
+                if (diff < minDiff) {
+                    minDiff = diff;
+                    closestSpeed = speed;
+                }
+            });
+
+            // Update button states
+            speedButtons.forEach(btn => {
+                btn.classList.remove('active');
+                const btnSpeed = parseFloat(btn.textContent);
+                if (Math.abs(btnSpeed - closestSpeed) < 0.01) {
+                    btn.classList.add('active');
+                }
+            });
+        }
+
+        function toggleFullscreen() {
+            const videoGrid = document.getElementById('video-grid');
+            if (!document.fullscreenElement) {
+                videoGrid.requestFullscreen().catch(err => {
+                    console.error('Error entering fullscreen:', err);
+                });
+            } else {
+                document.exitFullscreen();
+            }
+        }
+
+        function toggleMute() {
+            Object.values(videoElements).forEach(video => {
+                video.muted = !video.muted;
+            });
+
+            const firstVideo = Object.values(videoElements)[0];
+            if (firstVideo) {
+                showNotification(firstVideo.muted ? 'Muted' : 'Unmuted');
+            }
+        }
+
+        function showNotification(message) {
+            // Remove existing notification
+            const existing = document.getElementById('keyboard-notification');
+            if (existing) {
+                existing.remove();
+            }
+
+            // Create notification
+            const notification = document.createElement('div');
+            notification.id = 'keyboard-notification';
+            notification.textContent = message;
+            notification.style.cssText = `
+                position: fixed;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                background: rgba(0, 0, 0, 0.8);
+                color: white;
+                padding: 20px 40px;
+                border-radius: 8px;
+                font-size: 24px;
+                font-weight: bold;
+                z-index: 10000;
+                pointer-events: none;
+            `;
+            document.body.appendChild(notification);
+
+            // Remove after 1 second
+            setTimeout(() => {
+                notification.style.opacity = '0';
+                notification.style.transition = 'opacity 0.3s';
+                setTimeout(() => notification.remove(), 300);
+            }, 700);
+        }
+
+        // Show keyboard shortcuts help on ? key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === '?' || (e.shiftKey && e.key === '/')) {
+                e.preventDefault();
+                showKeyboardShortcuts();
+            }
+        });
+
+        function showKeyboardShortcuts() {
+            const shortcuts = `
+                <div style="max-width: 500px; margin: 0 auto;">
+                    <h3 style="margin-top: 0;">Keyboard Shortcuts</h3>
+                    <div style="display: grid; grid-template-columns: auto 1fr; gap: 10px 20px; font-size: 14px;">
+                        <strong>Space / K</strong><span>Play/Pause</span>
+                        <strong>← / →</strong><span>Rewind/Forward 5s</span>
+                        <strong>J / L</strong><span>Rewind/Forward 10s</span>
+                        <strong>↑ / ↓</strong><span>Increase/Decrease speed</span>
+                        <strong>0-9</strong><span>Jump to 0%-90%</span>
+                        <strong>, / .</strong><span>Previous/Next frame (paused)</span>
+                        <strong>F</strong><span>Fullscreen</span>
+                        <strong>M</strong><span>Mute/Unmute</span>
+                        <strong>?</strong><span>Show this help</span>
+                    </div>
+                </div>
+            `;
+
+            showNotification('Press ? for keyboard shortcuts');
+            // Also could show a modal with full shortcuts
+            console.log(shortcuts);
+        }
     </script>
 </body>
 </html>

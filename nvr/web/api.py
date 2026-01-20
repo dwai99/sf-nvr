@@ -380,6 +380,100 @@ async def debug_camera(camera_name: str) -> Dict[str, Any]:
     }
 
 
+@app.get("/api/cameras/{camera_name}/health")
+async def get_camera_health(camera_name: str) -> Dict[str, Any]:
+    """Get detailed health information for a camera"""
+    recorder = recorder_manager.get_recorder(camera_name)
+    if not recorder:
+        raise HTTPException(status_code=404, detail="Camera not found")
+
+    # Calculate time since last frame
+    time_since_last_frame = None
+    if recorder.last_frame_time:
+        delta = datetime.now() - recorder.last_frame_time
+        time_since_last_frame = delta.total_seconds()
+
+    # Determine health status
+    status = 'healthy'
+    if not recorder.is_recording:
+        status = 'stopped'
+    elif recorder.consecutive_failures > 0:
+        status = 'degraded'
+    elif time_since_last_frame and time_since_last_frame > 30:
+        status = 'stale'
+
+    return {
+        'camera_name': camera_name,
+        'camera_id': recorder.camera_id,
+        'status': status,
+        'is_recording': recorder.is_recording,
+        'stream_info': {
+            'fps': recorder.stream_fps,
+            'width': recorder.stream_width,
+            'height': recorder.stream_height,
+        },
+        'health_metrics': {
+            'last_frame_time': recorder.last_frame_time.isoformat() if recorder.last_frame_time else None,
+            'time_since_last_frame_seconds': round(time_since_last_frame, 2) if time_since_last_frame else None,
+            'last_connection_attempt': recorder.last_connection_attempt.isoformat() if recorder.last_connection_attempt else None,
+            'last_successful_connection': recorder.last_successful_connection.isoformat() if recorder.last_successful_connection else None,
+            'total_reconnects': recorder.total_reconnects,
+            'consecutive_failures': recorder.consecutive_failures,
+        },
+        'recording_info': {
+            'current_segment_start': recorder.current_segment_start.isoformat() if recorder.current_segment_start else None,
+            'current_segment_path': str(recorder.current_segment_path) if recorder.current_segment_path else None,
+        }
+    }
+
+
+@app.get("/api/cameras/health")
+async def get_all_cameras_health() -> List[Dict[str, Any]]:
+    """Get health information for all cameras"""
+    cameras = config.cameras
+    health_data = []
+
+    for camera in cameras:
+        camera_name = camera['name']
+        recorder = recorder_manager.get_recorder(camera_name) if recorder_manager else None
+
+        if not recorder:
+            health_data.append({
+                'camera_name': camera_name,
+                'camera_id': camera.get('id', camera_name),
+                'status': 'not_started',
+                'is_recording': False,
+            })
+            continue
+
+        # Calculate time since last frame
+        time_since_last_frame = None
+        if recorder.last_frame_time:
+            delta = datetime.now() - recorder.last_frame_time
+            time_since_last_frame = delta.total_seconds()
+
+        # Determine health status
+        status = 'healthy'
+        if not recorder.is_recording:
+            status = 'stopped'
+        elif recorder.consecutive_failures > 0:
+            status = 'degraded'
+        elif time_since_last_frame and time_since_last_frame > 30:
+            status = 'stale'
+
+        health_data.append({
+            'camera_name': camera_name,
+            'camera_id': recorder.camera_id,
+            'status': status,
+            'is_recording': recorder.is_recording,
+            'time_since_last_frame_seconds': round(time_since_last_frame, 2) if time_since_last_frame else None,
+            'total_reconnects': recorder.total_reconnects,
+            'consecutive_failures': recorder.consecutive_failures,
+        })
+
+    return health_data
+
+
 @app.post("/api/cameras/discover")
 async def discover_cameras(ip_range: str = None) -> Dict[str, Any]:
     """Discover ONVIF cameras on network"""
@@ -616,6 +710,59 @@ async def get_recording(camera_name: str, filename: str):
     except Exception as e:
         logger.error(f"Error retrieving recording: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/storage/stats")
+async def get_storage_stats():
+    """Get detailed storage statistics per camera"""
+    import os
+
+    storage_path = config.storage_path
+    camera_stats = []
+    total_size = 0
+
+    for camera in config.cameras:
+        camera_id = camera.get('id', camera['name'])
+        camera_dir = storage_path / camera_id
+
+        if not camera_dir.exists():
+            camera_stats.append({
+                'camera_name': camera['name'],
+                'camera_id': camera_id,
+                'size_gb': 0,
+                'file_count': 0
+            })
+            continue
+
+        # Calculate directory size
+        dir_size = 0
+        file_count = 0
+
+        try:
+            for entry in camera_dir.rglob('*.mp4'):
+                if entry.is_file():
+                    dir_size += entry.stat().st_size
+                    file_count += 1
+        except Exception as e:
+            logger.error(f"Error calculating storage for {camera_id}: {e}")
+
+        size_gb = dir_size / (1024 ** 3)
+        total_size += size_gb
+
+        camera_stats.append({
+            'camera_name': camera['name'],
+            'camera_id': camera_id,
+            'size_gb': round(size_gb, 2),
+            'file_count': file_count
+        })
+
+    # Sort by size descending
+    camera_stats.sort(key=lambda x: x['size_gb'], reverse=True)
+
+    return {
+        'cameras': camera_stats,
+        'total_size_gb': round(total_size, 2)
+    }
 
 
 @app.websocket("/ws/events")

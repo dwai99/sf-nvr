@@ -64,6 +64,16 @@ class RTSPRecorder:
         # Callbacks
         self.on_motion_detected: Optional[Callable] = None
 
+        # Health tracking
+        self.last_frame_time: Optional[datetime] = None
+        self.last_connection_attempt: Optional[datetime] = None
+        self.last_successful_connection: Optional[datetime] = None
+        self.total_reconnects: int = 0
+        self.consecutive_failures: int = 0
+        self.stream_fps: float = 0.0
+        self.stream_width: int = 0
+        self.stream_height: int = 0
+
         # Create camera storage directory using camera_id (stable across renames)
         self.camera_storage = storage_path / self.camera_id
         self.camera_storage.mkdir(parents=True, exist_ok=True)
@@ -111,6 +121,7 @@ class RTSPRecorder:
             try:
                 # Connect to RTSP stream with TCP transport for reliability
                 logger.info(f"Connecting to {self.camera_name}...")
+                self.last_connection_attempt = datetime.now()
 
                 # Use FFmpeg backend for RTSP (TCP transport set via environment variable)
                 self.capture = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
@@ -121,6 +132,7 @@ class RTSPRecorder:
 
                 if not self.capture.isOpened():
                     consecutive_failures += 1
+                    self.consecutive_failures = consecutive_failures
 
                     # Log less frequently for persistent failures
                     if consecutive_failures <= 3 or consecutive_failures % 10 == 0:
@@ -138,9 +150,18 @@ class RTSPRecorder:
 
                 logger.info(f"Stream opened: {width}x{height} @ {fps}fps")
 
+                # Track successful connection and stream properties
+                self.last_successful_connection = datetime.now()
+                self.stream_fps = fps
+                self.stream_width = width
+                self.stream_height = height
+                if consecutive_failures > 0:
+                    self.total_reconnects += 1
+
                 # Reset counters on successful connection
                 retry_delay = 5
                 consecutive_failures = 0
+                self.consecutive_failures = 0
 
                 # Record frames
                 self._record_frames(fps, width, height)
@@ -192,6 +213,7 @@ class RTSPRecorder:
 
             # Reset failure counter on successful read
             consecutive_failures = 0
+            self.last_frame_time = datetime.now()
 
             # CRITICAL: Scale down frame to recording dimensions if needed
             if width > 1920:
