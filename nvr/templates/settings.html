@@ -691,10 +691,30 @@
                         <div class="setting-row">
                             <div class="setting-label">
                                 <div class="setting-label-main">Sensitivity</div>
-                                <div class="setting-label-desc">Motion detection sensitivity (0-100)</div>
+                                <div class="setting-label-desc">Motion detection sensitivity (0-100, default: 25)</div>
                             </div>
                             <div class="setting-control">
                                 <input type="number" id="motion-sensitivity" value="25" min="0" max="100">
+                            </div>
+                        </div>
+
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="setting-label-main">Minimum Area</div>
+                                <div class="setting-label-desc">Minimum motion area in pixels (default: 500)</div>
+                            </div>
+                            <div class="setting-control">
+                                <input type="number" id="motion-min-area" value="500" min="100" max="10000" step="100">
+                            </div>
+                        </div>
+
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="setting-label-main">Per-Camera Settings</div>
+                                <div class="setting-label-desc">Configure motion detection individually for each camera</div>
+                            </div>
+                            <div class="setting-control">
+                                <button class="btn btn-secondary" onclick="showPerCameraMotionSettings()">Configure Cameras</button>
                             </div>
                         </div>
                     </div>
@@ -877,6 +897,21 @@
             <div class="modal-actions">
                 <button class="btn btn-secondary" onclick="closeCameraModal()">Cancel</button>
                 <button class="btn btn-primary" onclick="saveCameraModal()">Save Camera</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Per-Camera Motion Settings Modal -->
+    <div class="modal" id="motion-camera-modal">
+        <div class="modal-content" style="max-width: 800px; max-height: 80vh; overflow-y: auto;">
+            <div class="modal-header">Per-Camera Motion Detection Settings</div>
+
+            <div id="motion-camera-list" style="display: flex; flex-direction: column; gap: 15px;">
+                <!-- Camera cards will be inserted here -->
+            </div>
+
+            <div class="modal-actions">
+                <button class="btn btn-primary" onclick="closeMotionCameraModal()">Close</button>
             </div>
         </div>
     </div>
@@ -1314,6 +1349,84 @@
                 }
             } catch (error) {
                 console.error('Error fetching system stats:', error);
+            }
+        }
+
+        // Per-camera motion settings functions
+        async function showPerCameraMotionSettings() {
+            const modal = document.getElementById('motion-camera-modal');
+            const cameraList = document.getElementById('motion-camera-list');
+
+            // Fetch cameras
+            const response = await fetch('/api/cameras');
+            const cameras = await response.json();
+
+            // Build camera cards
+            cameraList.innerHTML = cameras.map(camera => `
+                <div style="background: #1a1a1a; padding: 15px; border-radius: 6px; border: 1px solid #333;">
+                    <div style="font-size: 1.1em; font-weight: bold; margin-bottom: 10px; color: #4a9eff;">
+                        ${camera.name}
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                        <div>
+                            <label style="display: block; font-size: 0.9em; color: #888; margin-bottom: 5px;">
+                                Sensitivity (0-100)
+                            </label>
+                            <input type="number"
+                                   id="motion-sens-${camera.name}"
+                                   value="${camera.motion_sensitivity || 25}"
+                                   min="0" max="100"
+                                   style="width: 100%; padding: 8px; background: #2a2a2a; border: 1px solid #444; color: #fff; border-radius: 4px;">
+                        </div>
+                        <div>
+                            <label style="display: block; font-size: 0.9em; color: #888; margin-bottom: 5px;">
+                                Min Area (pixels)
+                            </label>
+                            <input type="number"
+                                   id="motion-area-${camera.name}"
+                                   value="${camera.motion_min_area || 500}"
+                                   min="100" max="10000" step="100"
+                                   style="width: 100%; padding: 8px; background: #2a2a2a; border: 1px solid #444; color: #fff; border-radius: 4px;">
+                        </div>
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <button class="btn btn-primary" style="padding: 6px 12px; font-size: 0.9em;"
+                                onclick="saveCameraMotionSettings('${camera.name}')">
+                            Save Settings
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+
+            modal.classList.add('active');
+        }
+
+        function closeMotionCameraModal() {
+            document.getElementById('motion-camera-modal').classList.remove('active');
+        }
+
+        async function saveCameraMotionSettings(cameraName) {
+            const sensitivity = parseInt(document.getElementById(`motion-sens-${cameraName}`).value);
+            const minArea = parseInt(document.getElementById(`motion-area-${cameraName}`).value);
+
+            try {
+                const response = await fetch(`/api/cameras/${encodeURIComponent(cameraName)}/motion-settings`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        sensitivity: sensitivity,
+                        min_area: minArea
+                    })
+                });
+
+                if (response.ok) {
+                    alert(`Motion settings saved for ${cameraName}`);
+                } else {
+                    alert('Failed to save motion settings');
+                }
+            } catch (error) {
+                console.error('Error saving motion settings:', error);
+                alert('Error saving motion settings');
             }
         }
 

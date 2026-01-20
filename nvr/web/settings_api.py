@@ -122,3 +122,42 @@ async def get_system_info():
     except Exception as e:
         logger.error(f"Error getting system info: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class MotionSettings(BaseModel):
+    """Model for per-camera motion detection settings"""
+    sensitivity: int
+    min_area: int
+
+
+@router.post("/api/cameras/{camera_name}/motion-settings")
+async def update_camera_motion_settings(camera_name: str, settings: MotionSettings):
+    """Update motion detection settings for a specific camera"""
+    try:
+        # Find the camera in config
+        camera_found = False
+        for camera in config.cameras:
+            if camera['name'] == camera_name:
+                camera['motion_sensitivity'] = settings.sensitivity
+                camera['motion_min_area'] = settings.min_area
+                camera_found = True
+                break
+
+        if not camera_found:
+            raise HTTPException(status_code=404, detail="Camera not found")
+
+        # Save updated config to file
+        config.save_config()
+
+        logger.info(f"Updated motion settings for {camera_name}: sensitivity={settings.sensitivity}, min_area={settings.min_area}")
+
+        return {
+            'success': True,
+            'message': f'Motion settings updated for {camera_name}'
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating motion settings for {camera_name}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
