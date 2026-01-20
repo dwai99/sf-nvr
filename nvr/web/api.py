@@ -99,6 +99,11 @@ async def startup_event():
     playback_db = PlaybackDatabase(db_path)
     logger.info(f"Playback database initialized at {db_path}")
 
+    # Schedule periodic database maintenance (runs every 24 hours)
+    from nvr.core.db_maintenance import schedule_maintenance
+    schedule_maintenance(playback_db, interval_hours=24)
+    logger.info("Database maintenance scheduled")
+
     # Initialize recorder manager with database
     recorder_manager = RecorderManager(
         storage_path=config.storage_path,

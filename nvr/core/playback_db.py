@@ -393,3 +393,83 @@ class PlaybackDatabase:
             logger.info(f"Removed {deleted_count} orphaned database entries")
 
         return deleted_count
+
+    def cleanup_old_incomplete_segments(self, hours_threshold: int = 24) -> int:
+        """
+        Clean up incomplete segments (NULL end_time) that are older than threshold
+
+        These are likely from crashed recordings or server restarts. Only clean up
+        segments older than the threshold to avoid removing currently recording segments.
+
+        Args:
+            hours_threshold: Age in hours before an incomplete segment is considered orphaned
+
+        Returns:
+            Number of segments cleaned up
+        """
+        from datetime import datetime, timedelta
+
+        threshold_time = datetime.now() - timedelta(hours=hours_threshold)
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Find old incomplete segments
+            cursor.execute("""
+                SELECT id, camera_name, file_path, start_time
+                FROM recording_segments
+                WHERE end_time IS NULL
+                AND start_time < ?
+            """, (threshold_time,))
+
+            old_incomplete = cursor.fetchall()
+
+            if not old_incomplete:
+                return 0
+
+            deleted_count = 0
+            for row in old_incomplete:
+                file_path = Path(row['file_path'])
+
+                # If file exists, try to finalize it with actual file info
+                if file_path.exists():
+                    try:
+                        file_size = file_path.stat().st_size
+                        # Estimate duration based on file size (rough estimate: ~2MB per minute for 1080p)
+                        estimated_duration = max(60, int(file_size / (2 * 1024 * 1024) * 60))
+                        estimated_end_time = datetime.fromisoformat(row['start_time']) + timedelta(seconds=estimated_duration)
+
+                        # Update with estimates
+                        conn.execute("""
+                            UPDATE recording_segments
+                            SET end_time = ?,
+                                duration_seconds = ?,
+                                file_size_bytes = ?
+                            WHERE id = ?
+                        """, (estimated_end_time, estimated_duration, file_size, row['id']))
+
+                        logger.info(f"Finalized orphaned segment: {file_path.name} (estimated duration: {estimated_duration}s)")
+                    except Exception as e:
+                        logger.warning(f"Failed to finalize {file_path.name}: {e}")
+                        conn.execute("DELETE FROM recording_segments WHERE id = ?", (row['id'],))
+                        deleted_count += 1
+                else:
+                    # File doesn't exist, delete the database entry
+                    conn.execute("DELETE FROM recording_segments WHERE id = ?", (row['id'],))
+                    deleted_count += 1
+
+            if deleted_count > 0:
+                logger.info(f"Cleaned up {deleted_count} old incomplete segments")
+
+            return deleted_count
+
+    def optimize_database(self):
+        """Run database optimization (VACUUM and ANALYZE) for better performance"""
+        with self._get_connection() as conn:
+            # VACUUM reclaims space and defragments the database
+            conn.execute("VACUUM")
+            logger.info("Database VACUUM completed")
+
+            # ANALYZE updates statistics for query optimization
+            conn.execute("ANALYZE")
+            logger.info("Database ANALYZE completed")
