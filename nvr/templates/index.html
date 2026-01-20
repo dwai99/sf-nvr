@@ -213,6 +213,53 @@
             align-items: center;
         }
 
+        .camera-health {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.85em;
+            padding: 4px 10px;
+            border-radius: 4px;
+            background: rgba(0, 0, 0, 0.3);
+        }
+
+        .health-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .health-dot.healthy {
+            background: #4aff4a;
+        }
+
+        .health-dot.degraded {
+            background: #ffa500;
+        }
+
+        .health-dot.stale {
+            background: #ff4a4a;
+        }
+
+        .health-dot.stopped {
+            background: #666;
+            animation: none;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .camera-metrics {
+            display: flex;
+            gap: 10px;
+            font-size: 0.75em;
+            color: #666;
+            margin-top: 5px;
+        }
+
         .hidden { display: none; }
 
         .motion-toggle {
@@ -680,10 +727,25 @@
             return url;
         }
 
+        let cameraHealth = {};
+
         async function fetchCameras() {
             try {
-                const response = await fetch('/api/cameras');
-                cameras = await response.json();
+                // Fetch both cameras and health data in parallel
+                const [camerasResponse, healthResponse] = await Promise.all([
+                    fetch('/api/cameras'),
+                    fetch('/api/cameras/health')
+                ]);
+
+                cameras = await camerasResponse.json();
+                const healthData = await healthResponse.json();
+
+                // Create health lookup map
+                cameraHealth = {};
+                healthData.forEach(h => {
+                    cameraHealth[h.camera_name] = h;
+                });
+
                 updateUI();
             } catch (error) {
                 console.error('Error fetching cameras:', error);
@@ -754,13 +816,58 @@
                     <div class="motion-indicator">MOTION</div>
                 </div>
                 <div class="camera-info">
-                    <span>📡 MJPEG | ${camera.device_info && camera.device_info.Manufacturer ?
-                        `${camera.device_info.Manufacturer} ${camera.device_info.Model}` :
-                        'Click name to rename • Click video for fullscreen'}</span>
+                    <div>
+                        <span>📡 MJPEG | ${camera.device_info && camera.device_info.Manufacturer ?
+                            `${camera.device_info.Manufacturer} ${camera.device_info.Model}` :
+                            'Click name to rename • Click video for fullscreen'}</span>
+                        ${generateHealthMetrics(camera.name)}
+                    </div>
+                    ${generateHealthIndicator(camera.name)}
                 </div>
             `;
 
             return card;
+        }
+
+        function generateHealthIndicator(cameraName) {
+            const health = cameraHealth[cameraName];
+            if (!health) {
+                return '<div class="camera-health"><div class="health-dot stopped"></div><span>Unknown</span></div>';
+            }
+
+            const statusText = health.status.charAt(0).toUpperCase() + health.status.slice(1);
+            return `
+                <div class="camera-health">
+                    <div class="health-dot ${health.status}"></div>
+                    <span>${statusText}</span>
+                </div>
+            `;
+        }
+
+        function generateHealthMetrics(cameraName) {
+            const health = cameraHealth[cameraName];
+            if (!health || !health.is_recording) {
+                return '';
+            }
+
+            const metrics = [];
+
+            if (health.time_since_last_frame_seconds !== null && health.time_since_last_frame_seconds !== undefined) {
+                const seconds = Math.floor(health.time_since_last_frame_seconds);
+                if (seconds < 60) {
+                    metrics.push(`Last frame: ${seconds}s ago`);
+                }
+            }
+
+            if (health.total_reconnects > 0) {
+                metrics.push(`Reconnects: ${health.total_reconnects}`);
+            }
+
+            if (metrics.length > 0) {
+                return `<div class="camera-metrics">${metrics.join(' • ')}</div>`;
+            }
+
+            return '';
         }
 
         function escapeHtml(text) {

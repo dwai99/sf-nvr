@@ -473,3 +473,32 @@ class PlaybackDatabase:
             # ANALYZE updates statistics for query optimization
             conn.execute("ANALYZE")
             logger.info("Database ANALYZE completed")
+
+    def delete_segment_by_path(self, camera_id: str, filename: str) -> bool:
+        """
+        Delete a segment from the database by camera_id and filename
+
+        Args:
+            camera_id: Camera identifier
+            filename: Recording filename (e.g., "20260119_200022.mp4")
+
+        Returns:
+            True if segment was deleted, False otherwise
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Delete by file_path pattern
+            file_path_pattern = f"%/{camera_id}/{filename}"
+
+            cursor.execute("""
+                DELETE FROM recording_segments
+                WHERE file_path LIKE ?
+            """, (file_path_pattern,))
+
+            deleted = cursor.rowcount > 0
+
+            if deleted:
+                logger.info(f"Deleted segment from database: {camera_id}/{filename}")
+
+            return deleted

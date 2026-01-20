@@ -46,6 +46,7 @@ recorder_manager: RecorderManager = None
 motion_monitor: MotionMonitor = None
 ai_monitor: AIDetectionMonitor = None
 playback_db: PlaybackDatabase = None
+storage_manager = None
 webrtc_manager: WebRTCManager = None
 webrtc_passthrough: WebRTCPassthroughManager = None
 rtsp_proxy: RTSPProxy = None
@@ -103,6 +104,39 @@ async def startup_event():
     from nvr.core.db_maintenance import schedule_maintenance
     schedule_maintenance(playback_db, interval_hours=24)
     logger.info("Database maintenance scheduled")
+
+    # Initialize storage manager for automatic cleanup
+    from nvr.core.storage_manager import StorageManager
+    storage_manager = StorageManager(
+        storage_path=config.storage_path,
+        playback_db=playback_db,
+        retention_days=config.get('recording.retention_days', 7),
+        cleanup_threshold_percent=config.get('recording.cleanup_threshold', 85.0),
+        target_percent=config.get('recording.cleanup_target', 75.0)
+    )
+
+    # Schedule periodic storage cleanup checks (every 6 hours)
+    def schedule_storage_cleanup():
+        import threading
+        import time
+
+        def cleanup_loop():
+            while True:
+                try:
+                    time.sleep(6 * 3600)  # 6 hours
+                    logger.info("Running scheduled storage cleanup check")
+                    stats = storage_manager.check_and_cleanup()
+                    if stats['cleanup_triggered']:
+                        logger.info(f"Storage cleanup completed: deleted {stats['files_deleted']} files, freed {stats['space_freed_gb']:.2f} GB")
+                except Exception as e:
+                    logger.error(f"Error in storage cleanup loop: {e}")
+
+        thread = threading.Thread(target=cleanup_loop, daemon=True, name="StorageCleanup")
+        thread.start()
+        return thread
+
+    schedule_storage_cleanup()
+    logger.info("Storage cleanup scheduler started (checks every 6 hours)")
 
     # Initialize recorder manager with database
     recorder_manager = RecorderManager(
@@ -793,6 +827,63 @@ async def websocket_events(websocket: WebSocket):
         logger.info("WebSocket client disconnected")
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
+
+
+@app.get("/api/storage/cleanup/status")
+async def get_cleanup_status():
+    """Get current storage cleanup status and statistics"""
+    if not storage_manager:
+        raise HTTPException(status_code=503, detail="Storage manager not initialized")
+
+    try:
+        # Get disk usage
+        import psutil
+        disk = psutil.disk_usage(str(config.storage_path))
+
+        # Get retention stats
+        retention_stats = storage_manager.get_retention_stats()
+
+        return {
+            'disk_usage': {
+                'percent': round(disk.percent, 1),
+                'used_gb': round(disk.used / (1024**3), 1),
+                'free_gb': round(disk.free / (1024**3), 1),
+                'total_gb': round(disk.total / (1024**3), 1)
+            },
+            'cleanup_config': {
+                'retention_days': storage_manager.retention_days,
+                'cleanup_threshold_percent': storage_manager.cleanup_threshold,
+                'target_percent': storage_manager.target_percent
+            },
+            'retention_stats': retention_stats
+        }
+    except Exception as e:
+        logger.error(f"Error getting cleanup status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/storage/cleanup/run")
+async def run_manual_cleanup():
+    """Manually trigger storage cleanup"""
+    if not storage_manager:
+        raise HTTPException(status_code=503, detail="Storage manager not initialized")
+
+    try:
+        logger.info("Manual storage cleanup triggered via API")
+        stats = storage_manager.check_and_cleanup()
+
+        return {
+            'success': True,
+            'cleanup_triggered': stats['cleanup_triggered'],
+            'initial_usage_percent': stats['initial_usage_percent'],
+            'final_usage_percent': stats['final_usage_percent'],
+            'files_deleted': stats['files_deleted'],
+            'space_freed_gb': round(stats['space_freed_gb'], 2),
+            'message': f"Deleted {stats['files_deleted']} files, freed {stats['space_freed_gb']:.2f} GB" if stats['cleanup_triggered'] else "No cleanup needed"
+        }
+    except Exception as e:
+        logger.error(f"Error running manual cleanup: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/health")
