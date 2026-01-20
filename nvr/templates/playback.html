@@ -1637,6 +1637,12 @@
             const rangeMs = endMs - startMs;
             const percent = ((timestampMs - startMs) / rangeMs) * 100;
 
+            // Debug logging
+            const clickedDate = new Date(timestampMs);
+            console.log(`\n=== TIMELINE SEEK ===`);
+            console.log(`Clicked time: ${clickedDate.toLocaleString()} (${clickedDate.toISOString()})`);
+            console.log(`Timeline range: ${playbackState.startTime} to ${playbackState.endTime}`);
+
             updateTimelinePosition(percent);
             playbackState.currentTime = (timestampMs - startMs) / 1000;
 
@@ -1661,6 +1667,11 @@
 
                     // Calculate offset within this segment (in seconds)
                     const offsetSeconds = (timestampMs - segmentStartMs) / 1000;
+
+                    // Debug logging
+                    console.log(`Camera: ${cameraName}`);
+                    console.log(`  Segment: ${segmentStart} to ${segmentEnd}`);
+                    console.log(`  Offset in segment: ${offsetSeconds.toFixed(1)}s`);
 
                     // Build URL for this specific segment
                     const cacheBuster = Date.now();
