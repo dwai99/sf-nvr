@@ -47,6 +47,7 @@ motion_monitor: MotionMonitor = None
 ai_monitor: AIDetectionMonitor = None
 playback_db: PlaybackDatabase = None
 storage_manager = None
+alert_system = None
 webrtc_manager: WebRTCManager = None
 webrtc_passthrough: WebRTCPassthroughManager = None
 rtsp_proxy: RTSPProxy = None
@@ -137,6 +138,58 @@ async def startup_event():
 
     schedule_storage_cleanup()
     logger.info("Storage cleanup scheduler started (checks every 6 hours)")
+
+    # Initialize alert system
+    from nvr.core.alert_system import alert_system as alert_sys
+    alert_system = alert_sys
+
+    # Add webhook handler if configured
+    webhook_url = config.get('alerts.webhook_url')
+    if webhook_url:
+        from nvr.core.alert_system import WebhookAlertHandler
+        alert_system.add_handler(WebhookAlertHandler(webhook_url))
+        logger.info(f"Alert webhook configured: {webhook_url}")
+
+    # Schedule periodic health checks (every 2 minutes)
+    def schedule_health_monitoring():
+        import threading
+        import time
+
+        async def health_check_loop():
+            while True:
+                try:
+                    await asyncio.sleep(120)  # 2 minutes
+
+                    # Check all cameras
+                    response = await get_all_cameras_health()
+                    for camera_health in response:
+                        await alert_system.check_camera_health(
+                            camera_health['camera_name'],
+                            camera_health
+                        )
+
+                    # Check storage
+                    import psutil
+                    disk = psutil.disk_usage(str(config.storage_path))
+                    await alert_system.check_storage(
+                        disk.percent,
+                        disk.free / (1024**3)
+                    )
+
+                except Exception as e:
+                    logger.error(f"Error in health monitoring loop: {e}")
+
+        def run_async_loop():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(health_check_loop())
+
+        thread = threading.Thread(target=run_async_loop, daemon=True, name="HealthMonitor")
+        thread.start()
+        return thread
+
+    schedule_health_monitoring()
+    logger.info("Health monitoring scheduler started (checks every 2 minutes)")
 
     # Initialize recorder manager with database
     recorder_manager = RecorderManager(
@@ -884,6 +937,24 @@ async def run_manual_cleanup():
     except Exception as e:
         logger.error(f"Error running manual cleanup: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/alerts")
+async def get_alerts(limit: int = 50):
+    """Get recent system alerts"""
+    if not alert_system:
+        return {'alerts': []}
+
+    return {'alerts': alert_system.get_recent_alerts(limit)}
+
+
+@app.get("/api/alerts/camera/{camera_name}")
+async def get_camera_alerts(camera_name: str, limit: int = 20):
+    """Get recent alerts for a specific camera"""
+    if not alert_system:
+        return {'alerts': []}
+
+    return {'alerts': alert_system.get_alerts_by_camera(camera_name, limit)}
 
 
 @app.get("/health")
