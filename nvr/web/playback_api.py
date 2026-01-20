@@ -1,6 +1,6 @@
 """Playback API endpoints for video archive access"""
 
-from fastapi import APIRouter, HTTPException, Query, Response, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Query, Response, BackgroundTasks, Request
 from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 from typing import Optional, List
@@ -12,6 +12,82 @@ import tempfile
 import os
 
 logger = logging.getLogger(__name__)
+
+
+def range_requests_response(
+    file_path: Path,
+    request: Request,
+    content_type: str = "video/mp4"
+):
+    """
+    Returns a StreamingResponse that supports HTTP Range requests for video seeking.
+    This allows browsers to seek within videos and stream them properly.
+    """
+    file_size = file_path.stat().st_size
+    range_header = request.headers.get("range")
+
+    headers = {
+        "accept-ranges": "bytes",
+        "content-type": content_type,
+    }
+
+    start = 0
+    end = file_size - 1
+
+    if range_header:
+        # Parse range header (e.g., "bytes=0-1023")
+        range_match = range_header.replace("bytes=", "").split("-")
+        start = int(range_match[0]) if range_match[0] else 0
+        end = int(range_match[1]) if range_match[1] else file_size - 1
+
+        # Ensure valid range
+        start = max(0, start)
+        end = min(end, file_size - 1)
+
+        # Add content-range header for 206 response
+        headers["content-range"] = f"bytes {start}-{end}/{file_size}"
+
+        logger.debug(f"Range request: bytes {start}-{end}/{file_size}")
+
+        def file_iterator():
+            with open(file_path, "rb") as f:
+                f.seek(start)
+                remaining = end - start + 1
+                chunk_size = 65536  # 64KB chunks
+
+                while remaining > 0:
+                    chunk = f.read(min(chunk_size, remaining))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+                    yield chunk
+
+        return StreamingResponse(
+            file_iterator(),
+            status_code=206,  # Partial Content
+            headers=headers,
+            media_type=content_type
+        )
+
+    else:
+        # No range requested, send entire file
+        headers["content-length"] = str(file_size)
+
+        def file_iterator():
+            with open(file_path, "rb") as f:
+                chunk_size = 65536  # 64KB chunks
+                while True:
+                    chunk = f.read(chunk_size)
+                    if not chunk:
+                        break
+                    yield chunk
+
+        return StreamingResponse(
+            file_iterator(),
+            status_code=200,
+            headers=headers,
+            media_type=content_type
+        )
 
 router = APIRouter()
 
@@ -87,6 +163,7 @@ async def get_all_recordings(
         elif start_time and end_time:
             start_dt = datetime.fromisoformat(start_time)
             end_dt = datetime.fromisoformat(end_time)
+            logger.info(f"Parsed time range - start_time param: {start_time} -> {start_dt}, end_time param: {end_time} -> {end_dt}")
         else:
             end_dt = datetime.now()
             start_dt = end_dt - timedelta(days=1)
@@ -160,6 +237,7 @@ async def get_all_motion_events(
 @router.get("/api/playback/video/{camera_name}")
 async def stream_video_segment(
     camera_name: str,
+    request: Request,
     background_tasks: BackgroundTasks,
     start_time: str = Query(..., description="ISO format datetime"),
     end_time: Optional[str] = Query(None, description="ISO format datetime"),
@@ -176,33 +254,167 @@ async def stream_video_segment(
             # Default to 5 minutes
             end_dt = start_dt + timedelta(minutes=5)
 
+        logger.info(f"VIDEO REQUEST - Camera: {camera_name}, start_time param: '{start_time}' -> {start_dt}, end_time param: '{end_time}' -> {end_dt}")
+
         # Get segments in range
         segments = playback_db.get_segments_in_range(camera_name, start_dt, end_dt)
 
         if not segments:
             logger.warning(f"No recordings found for {camera_name} between {start_dt} and {end_dt}")
-            raise HTTPException(status_code=404, detail=f"No recordings found for {camera_name} in the specified time range")
+
+            # Try to find the closest recording not earlier than start_dt
+            logger.info(f"Looking for closest recording not earlier than {start_dt}")
+
+            # Get all segments for this camera after start_dt
+            all_segments = playback_db.get_all_segments(camera_name)
+
+            # Filter to segments that start at or after the requested start time
+            future_segments = [
+                s for s in all_segments
+                if datetime.fromisoformat(s['start_time']) >= start_dt
+            ]
+
+            if future_segments:
+                # Sort by start time and get the earliest
+                future_segments.sort(key=lambda s: s['start_time'])
+                closest_segment = future_segments[0]
+                closest_start = datetime.fromisoformat(closest_segment['start_time'])
+
+                # Calculate duration that was requested
+                requested_duration = (end_dt - start_dt).total_seconds()
+
+                # Get segments from closest time for the same duration
+                adjusted_end_dt = closest_start + timedelta(seconds=requested_duration)
+                segments = playback_db.get_segments_in_range(camera_name, closest_start, adjusted_end_dt)
+
+                if segments:
+                    logger.info(f"Adjusted time range to {closest_start} - {adjusted_end_dt}, found {len(segments)} segment(s)")
+                else:
+                    raise HTTPException(status_code=404, detail=f"No recordings found for {camera_name} at or after {start_dt}")
+            else:
+                raise HTTPException(status_code=404, detail=f"No recordings found for {camera_name} at or after {start_dt}")
 
         logger.info(f"Found {len(segments)} segment(s) for {camera_name}")
 
-        # If single segment, return it directly
-        if len(segments) == 1:
-            file_path = Path(segments[0]['file_path'])
-            logger.info(f"Serving single segment: {file_path}")
+        # Filter out segments whose files don't exist (deleted by retention policy)
+        existing_segments = [s for s in segments if Path(s['file_path']).exists()]
 
-            if not file_path.exists():
-                logger.error(f"Recording file not found: {file_path}")
-                raise HTTPException(status_code=404, detail=f"Recording file not found: {file_path}")
+        if not existing_segments:
+            logger.warning(f"Database had {len(segments)} segments but none exist on disk")
+            raise HTTPException(status_code=404, detail=f"No recordings found for {camera_name} (files deleted)")
 
-            return FileResponse(
-                file_path,
-                media_type="video/mp4",
-                filename=f"{camera_name}_{start_dt.strftime('%Y%m%d_%H%M%S')}.mp4"
+        logger.info(f"{len(existing_segments)} segment(s) exist on disk")
+
+        # Serve segment(s) for the requested time range
+        # Find the segment that best matches the requested start time
+        if len(existing_segments) >= 1:
+            # Find segment that contains the requested start time, or is closest after it
+            # Prefer segments with non-NULL end_time (completed recordings)
+            best_segment = None
+
+            # First pass: look for completed segments only
+            for seg in existing_segments:
+                if not seg['end_time']:
+                    continue  # Skip incomplete segments in first pass
+
+                seg_start = datetime.fromisoformat(seg['start_time'])
+                seg_end = datetime.fromisoformat(seg['end_time'])
+
+                # If requested start is within this segment, use it
+                if seg_start <= start_dt <= seg_end:
+                    best_segment = seg
+                    break
+                # If requested start is before this segment starts, this is the next available
+                elif start_dt < seg_start:
+                    best_segment = seg
+                    break
+
+            # Second pass: if no completed segment found, consider incomplete ones
+            if not best_segment:
+                for seg in existing_segments:
+                    seg_start = datetime.fromisoformat(seg['start_time'])
+
+                    # For incomplete segments, check if start_time matches
+                    if seg_start <= start_dt:
+                        best_segment = seg
+                        # Keep looking for a better match
+                    elif start_dt < seg_start:
+                        # This segment starts after requested time
+                        if not best_segment:
+                            best_segment = seg
+                        break
+
+            # If still no segment found, use the last one
+            if not best_segment:
+                best_segment = existing_segments[-1]
+
+            segment_to_serve = best_segment
+            file_path = Path(segment_to_serve['file_path'])
+
+            if len(existing_segments) == 1:
+                logger.info(f"Serving single segment: {file_path}")
+            else:
+                logger.info(f"Serving best matching segment (of {len(existing_segments)}): {file_path} (start: {segment_to_serve['start_time']})")
+
+            # Check if file needs transcoding (mp4v -> H.264 for browser compatibility)
+            probe_result = subprocess.run(
+                ['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+                 '-show_entries', 'stream=codec_name', '-of', 'default=noprint_wrappers=1:nokey=1',
+                 str(file_path)],
+                capture_output=True,
+                text=True
             )
+            codec = probe_result.stdout.strip()
 
-        # Multiple segments - concatenate using ffmpeg
-        logger.info(f"Concatenating {len(segments)} segments for {camera_name}")
-        return await _concatenate_segments(camera_name, segments, start_dt, background_tasks)
+            if codec == 'mpeg4':
+                # Transcode mp4v to H.264 for browser compatibility
+                logger.info(f"Transcoding {file_path.name} from mp4v to H.264 for browser")
+
+                # First check if background transcoder already created the file (next to original)
+                background_transcoded = file_path.parent / f"{file_path.stem}_h264{file_path.suffix}"
+
+                if background_transcoded.exists():
+                    logger.info(f"Using background-transcoded file: {background_transcoded.name}")
+                    return range_requests_response(background_transcoded, request, content_type="video/mp4")
+
+                # Fall back to on-demand transcoding
+                # Create transcoded file in temp directory
+                transcode_dir = Path("recordings/.transcoded")
+                transcode_dir.mkdir(exist_ok=True)
+
+                transcoded_file = transcode_dir / f"{file_path.stem}_h264.mp4"
+
+                # Check if already transcoded
+                if not transcoded_file.exists():
+                    logger.info(f"Creating transcoded file: {transcoded_file.name}")
+                    transcode_cmd = [
+                        'ffmpeg', '-i', str(file_path),
+                        '-c:v', 'libx264',  # H.264 codec
+                        '-preset', 'fast',  # Fast encoding
+                        '-crf', '23',  # Quality (lower = better, 23 is default)
+                        '-c:a', 'aac',  # AAC audio (if any)
+                        '-movflags', '+faststart',  # Enable streaming
+                        '-y',  # Overwrite
+                        str(transcoded_file)
+                    ]
+
+                    result = subprocess.run(transcode_cmd, capture_output=True)
+                    if result.returncode != 0:
+                        logger.error(f"Transcode failed: {result.stderr.decode()}")
+                        raise HTTPException(status_code=500, detail="Video transcode failed")
+
+                    logger.info(f"Transcode complete: {transcoded_file.name}")
+                else:
+                    logger.info(f"Using cached transcoded file: {transcoded_file.name}")
+
+                # Serve transcoded file
+                return range_requests_response(transcoded_file, request, content_type="video/mp4")
+            else:
+                # Already H.264 or other browser-compatible codec, serve directly
+                return range_requests_response(file_path, request, content_type="video/mp4")
+
+        # No segments found
+        raise HTTPException(status_code=404, detail=f"No recordings found for {camera_name}")
 
     except ValueError as e:
         logger.error(f"Invalid datetime format: {e}")
@@ -252,7 +464,7 @@ async def serve_recording_file(file_path: str = Query(..., description="Absolute
 
 
 async def _concatenate_segments(camera_name: str, segments: List[dict], start_dt: datetime, background_tasks: BackgroundTasks):
-    """Concatenate multiple video segments using ffmpeg"""
+    """Concatenate multiple video segments using ffmpeg with streaming output"""
     try:
         # Create temporary file list for ffmpeg concat
         with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
@@ -262,63 +474,72 @@ async def _concatenate_segments(camera_name: str, segments: List[dict], start_dt
                 if file_path.exists():
                     f.write(f"file '{file_path.absolute()}'\n")
 
-        # Output file
-        output_file = tempfile.NamedTemporaryFile(
-            suffix='.mp4',
-            delete=False,
-            prefix=f"{camera_name}_{start_dt.strftime('%Y%m%d_%H%M%S')}_"
-        )
-        output_path = output_file.name
-        output_file.close()
-
-        # Run ffmpeg to concatenate
+        # Stream concatenation: output to pipe instead of file
         cmd = [
             'ffmpeg',
             '-f', 'concat',
             '-safe', '0',
             '-i', list_file,
             '-c', 'copy',
-            '-y',
-            output_path
+            '-movflags', 'frag_keyframe+empty_moov',  # Enable streaming-friendly format
+            '-f', 'mp4',
+            'pipe:1'  # Output to stdout
         ]
 
-        result = subprocess.run(
+        logger.info(f"Starting streaming concatenation for {camera_name} ({len(segments)} segments)")
+
+        # Start ffmpeg process
+        process = subprocess.Popen(
             cmd,
-            capture_output=True,
-            text=True,
-            timeout=60
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            bufsize=10485760  # 10MB buffer
         )
 
-        # Clean up list file
-        os.unlink(list_file)
-
-        if result.returncode != 0:
-            logger.error(f"ffmpeg returncode: {result.returncode}")
-            logger.error(f"ffmpeg stderr (last 500 chars): {result.stderr[-500:]}")
-            logger.error(f"ffmpeg stdout: {result.stdout}")
-            logger.error(f"ffmpeg command: {' '.join(cmd)}")
-            raise Exception(f"Failed to concatenate video segments (returncode: {result.returncode})")
-
-        # Register cleanup function to delete temp file after response is sent
-        def cleanup_temp_file():
+        # Register cleanup
+        def cleanup_process():
             try:
-                if os.path.exists(output_path):
-                    os.unlink(output_path)
-                    logger.info(f"Cleaned up temp file: {output_path}")
+                if process.poll() is None:
+                    process.terminate()
+                    process.wait(timeout=5)
+                os.unlink(list_file)
+                logger.info(f"Cleaned up streaming process for {camera_name}")
             except Exception as e:
-                logger.error(f"Error cleaning up temp file {output_path}: {e}")
+                logger.error(f"Error cleaning up process: {e}")
 
-        background_tasks.add_task(cleanup_temp_file)
+        background_tasks.add_task(cleanup_process)
 
-        # Return the concatenated file
-        return FileResponse(
-            output_path,
+        # Generator to stream ffmpeg output
+        def stream_video():
+            try:
+                while True:
+                    chunk = process.stdout.read(65536)  # 64KB chunks
+                    if not chunk:
+                        break
+                    yield chunk
+
+                # Check for errors
+                process.wait()
+                if process.returncode != 0:
+                    stderr = process.stderr.read().decode('utf-8')
+                    logger.error(f"ffmpeg streaming error: {stderr[-500:]}")
+            except Exception as e:
+                logger.error(f"Error in stream_video generator: {e}")
+            finally:
+                if process.poll() is None:
+                    process.terminate()
+
+        # Return streaming response
+        return StreamingResponse(
+            stream_video(),
             media_type="video/mp4",
-            filename=f"{camera_name}_{start_dt.strftime('%Y%m%d_%H%M%S')}.mp4"
+            headers={
+                "Content-Disposition": f'inline; filename="{camera_name}_{start_dt.strftime("%Y%m%d_%H%M%S")}.mp4"'
+            }
         )
 
     except Exception as e:
-        logger.error(f"Error concatenating segments: {e}")
+        logger.error(f"Error setting up streaming concatenation: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

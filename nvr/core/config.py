@@ -2,6 +2,7 @@
 
 import os
 import yaml
+import uuid
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from dotenv import load_dotenv
@@ -25,6 +26,9 @@ class Config:
 
         with open(self.config_path, 'r') as f:
             self._config = yaml.safe_load(f)
+
+        # Ensure all cameras have unique IDs
+        self._ensure_camera_ids()
 
     def save(self) -> None:
         """Save current configuration to YAML file"""
@@ -100,6 +104,75 @@ class Config:
             self.set('cameras', cameras)
             self.save()
             return True
+        return False
+
+    def _ensure_camera_ids(self) -> None:
+        """Ensure all cameras have unique IDs, generate if missing"""
+        cameras = self.cameras
+        needs_save = False
+
+        for camera in cameras:
+            if 'id' not in camera or not camera['id']:
+                # Generate ID from physical camera identifiers or name as fallback
+                camera['id'] = self._generate_camera_id(camera)
+                needs_save = True
+
+        if needs_save:
+            self.set('cameras', cameras)
+            self.save()
+
+    def _generate_camera_id(self, camera: Dict[str, Any]) -> str:
+        """
+        Generate a stable camera ID from physical identifiers
+
+        Priority order:
+        1. Serial number (survives network changes, camera moves, IP changes)
+        2. Hardware ID (if available)
+        3. Sanitized name (backward compatibility for existing cameras)
+        """
+        device_info = camera.get('device_info', {})
+
+        # Try serial number first (best option - physically tied to camera)
+        serial = device_info.get('serial') or device_info.get('SerialNumber')
+        if serial and serial not in ('Unknown', '', None):
+            # Sanitize serial number for filesystem safety
+            safe_serial = "".join(c if c.isalnum() or c in ('-', '_') else '_' for c in serial)
+            return f"cam_{safe_serial}"
+
+        # Try hardware ID
+        hw_id = device_info.get('hardware_id') or device_info.get('HardwareId')
+        if hw_id and hw_id not in ('Unknown', '', None):
+            safe_hw = "".join(c if c.isalnum() or c in ('-', '_') else '_' for c in hw_id)
+            return f"cam_{safe_hw}"
+
+        # Fallback to sanitized name (for backward compatibility with existing recordings)
+        name = camera.get('name', 'unknown')
+        sanitized = "".join(c if c.isalnum() or c in (' ', '-', '_') else '_' for c in name)
+        return sanitized
+
+    def get_camera_by_id(self, camera_id: str) -> Optional[Dict[str, Any]]:
+        """Get camera configuration by ID"""
+        for camera in self.cameras:
+            if camera.get('id') == camera_id:
+                return camera
+        return None
+
+    def get_camera_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        """Get camera configuration by name"""
+        for camera in self.cameras:
+            if camera.get('name') == name:
+                return camera
+        return None
+
+    def update_camera_name(self, camera_id: str, new_name: str) -> bool:
+        """Update camera name while preserving ID"""
+        cameras = self.cameras
+        for camera in cameras:
+            if camera.get('id') == camera_id:
+                camera['name'] = new_name
+                self.set('cameras', cameras)
+                self.save()
+                return True
         return False
 
 

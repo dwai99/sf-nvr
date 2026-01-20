@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SF-NVR - Playback</title>
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -148,6 +149,21 @@
             cursor: default;
         }
 
+        .video-timestamp-overlay {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            color: #4a9eff;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            font-weight: bold;
+            z-index: 10;
+            pointer-events: none;
+        }
+
         .video-player.zoomed {
             cursor: grab;
         }
@@ -223,6 +239,12 @@
             justify-content: center;
             transition: background 0.2s;
             flex-shrink: 0;
+        }
+
+        .play-button:disabled {
+            background: #555;
+            cursor: not-allowed;
+            opacity: 0.5;
         }
 
         .play-button:hover {
@@ -302,9 +324,50 @@
             left: 10px;
             right: 10px;
             height: 8px;
-            background: #444;
+            background: #333;
             border-radius: 4px;
             transform: translateY(-50%);
+            overflow: hidden;
+        }
+
+        .timeline-segment {
+            position: absolute;
+            top: 0;
+            height: 100%;
+            background: #4a9eff;
+            opacity: 0.7;
+        }
+
+        .timeline-segment:hover {
+            opacity: 1;
+            background: #5aafff;
+        }
+
+        .timeline-gap {
+            position: absolute;
+            top: 0;
+            height: 100%;
+            background: #222;
+            border-left: 1px solid #444;
+            border-right: 1px solid #444;
+        }
+
+        .timeline-motion-marker {
+            position: absolute;
+            top: 0;
+            height: 100%;
+            background: rgba(255, 165, 0, 0.5);
+            width: 2px;
+            pointer-events: none;
+        }
+
+        .timeline-detection-marker {
+            position: absolute;
+            top: 0;
+            height: 100%;
+            background: rgba(255, 0, 0, 0.6);
+            width: 3px;
+            pointer-events: none;
         }
 
         .timeline-progress {
@@ -312,7 +375,8 @@
             top: 0;
             left: 0;
             height: 100%;
-            background: #4a9eff;
+            background: rgba(74, 158, 255, 0.3);
+            pointer-events: none;
             border-radius: 4px;
             transition: width 0.1s linear;
         }
@@ -743,34 +807,33 @@
         </div>
         <div class="header-actions">
             <button class="btn" onclick="window.location.href='/'">← Live View</button>
-            <button class="btn btn-success" onclick="showExportPanel()">📥 Export for Law Enforcement</button>
+            <button class="btn btn-success" onclick="showExportPanel()">📥 Export Recording</button>
         </div>
     </div>
 
-    <div class="controls-panel">
+    <div class="controls-panel" style="flex-wrap: wrap;">
         <div class="control-group">
             <label>Date</label>
             <input type="date" id="playback-date" onchange="loadRecordings()">
         </div>
         <div class="control-group">
             <label>Start Time</label>
-            <input type="time" id="start-time" step="1" onchange="updateTimeRange()">
+            <input type="time" id="start-time" onchange="onStartTimeChange()">
         </div>
         <div class="control-group">
             <label>End Time</label>
-            <input type="time" id="end-time" step="1" onchange="updateTimeRange()">
+            <input type="time" id="end-time" onchange="updateTimeRange()">
         </div>
         <div class="control-group">
             <label>&nbsp;</label>
-            <button class="btn" onclick="loadRecordings()">Load Recordings</button>
+            <button class="btn" onclick="loadRecordings()" title="Manually refresh recordings">🔄 Refresh</button>
         </div>
-        <div class="control-group">
-            <label>&nbsp;</label>
-            <button class="btn" onclick="setQuickRange('last-hour')">Last Hour</button>
-        </div>
-        <div class="control-group">
-            <label>&nbsp;</label>
-            <button class="btn" onclick="setQuickRange('last-4-hours')">Last 4 Hours</button>
+        <div style="flex-basis: 100%; display: flex; gap: 8px; align-items: center; padding: 0 0 10px 0;">
+            <span style="color: #888; font-size: 0.9em;">Duration:</span>
+            <button class="btn" style="padding: 4px 12px; font-size: 0.85em;" onclick="setDuration(5)" title="Set end time to 5 minutes after start">+5m</button>
+            <button class="btn" style="padding: 4px 12px; font-size: 0.85em;" onclick="setDuration(10)" title="Set end time to 10 minutes after start">+10m</button>
+            <button class="btn" style="padding: 4px 12px; font-size: 0.85em;" onclick="setDuration(30)" title="Set end time to 30 minutes after start">+30m</button>
+            <button class="btn" style="padding: 4px 12px; font-size: 0.85em;" onclick="setDuration(60)" title="Set end time to 1 hour after start">+1h</button>
         </div>
     </div>
 
@@ -785,7 +848,7 @@
 
     <div class="timeline-panel">
         <div class="playback-controls">
-            <button class="play-button paused" id="play-button" onclick="togglePlayPause()"></button>
+            <button class="play-button paused" id="play-button" onclick="togglePlayPause()" disabled></button>
 
             <div class="timeline-container">
                 <div class="timeline-slider-wrapper" id="timeline-slider"
@@ -819,6 +882,18 @@
 
         <div class="legend">
             <div class="legend-events">
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #4a9eff; width: 20px; height: 8px;"></div>
+                    <span>Available Footage</span>
+                </div>
+
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #222; border: 1px solid #444; width: 20px; height: 8px;"></div>
+                    <span>Gap (No Recording)</span>
+                </div>
+
+                <div class="filter-divider"></div>
+
                 <div class="legend-item">
                     <div class="legend-color" style="background: #ff4a4a;"></div>
                     <span>Motion Events</span>
@@ -854,7 +929,7 @@
     <!-- Export Modal -->
     <div class="overlay" id="export-overlay" onclick="hideExportPanel(); hideShortcuts()"></div>
     <div class="export-panel" id="export-panel">
-        <div class="export-header">📥 Export Recording for Law Enforcement</div>
+        <div class="export-header">📥 Export Recording</div>
         <div class="export-info">
             <div><strong>Date:</strong> <span id="export-date">--</span></div>
             <div><strong>Time Range:</strong> <span id="export-time-range">--</span></div>
@@ -923,12 +998,21 @@
         };
 
         async function init() {
-            // Set default date to today
-            const today = new Date().toISOString().split('T')[0];
+            // Set default date to today in CST (server timezone)
+            const now = new Date();
+            const todayCst = now.toLocaleString('en-US', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                timeZone: 'America/Chicago'
+            });
+            // Convert MM/DD/YYYY to YYYY-MM-DD
+            const [month, day, year] = todayCst.split('/');
+            const today = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
             document.getElementById('playback-date').value = today;
 
-            // Set default time to last 4 hours
-            setQuickRange('last-4-hours');
+            // Set default time to last 10 minutes for faster loading
+            setQuickRange('last-hour');
 
             // Load cameras
             await loadCameras();
@@ -986,14 +1070,14 @@
                     const checkbox = document.createElement('input');
                     checkbox.type = 'checkbox';
                     checkbox.value = camera.name;
-                    checkbox.checked = true;
+                    checkbox.checked = false;  // No cameras selected by default
                     checkbox.onchange = () => toggleCamera(camera.name, checkbox.checked);
 
                     label.appendChild(checkbox);
                     label.appendChild(document.createTextNode(camera.name));
                     container.appendChild(label);
 
-                    selectedCameras.add(camera.name);
+                    // Don't add to selectedCameras - user must select manually
                 });
 
                 // Show initial message prompting user to load recordings
@@ -1010,28 +1094,113 @@
             } else {
                 selectedCameras.delete(cameraName);
             }
-            updateVideoGrid();
+
+            // Auto-load recordings when camera selection changes
+            if (selectedCameras.size > 0) {
+                loadRecordings();
+            } else {
+                updateVideoGrid();
+            }
         }
 
         function setQuickRange(range) {
             const now = new Date();
-            const endTime = now.toTimeString().split(' ')[0];
+
+            // Get time in CST (server timezone) regardless of browser timezone
+            const endTimeCst = now.toLocaleString('en-US', {
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false,
+                timeZone: 'America/Chicago'
+            }).split(', ')[1] || now.toLocaleString('en-US', {
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false,
+                timeZone: 'America/Chicago'
+            });
 
             let startDate;
             if (range === 'last-hour') {
-                startDate = new Date(now.getTime() - 60 * 60 * 1000);
+                startDate = new Date(now.getTime() - 10 * 60 * 1000);  // 10 minutes ago
             } else if (range === 'last-4-hours') {
-                startDate = new Date(now.getTime() - 4 * 60 * 60 * 1000);
+                startDate = new Date(now.getTime() - 30 * 60 * 1000);  // 30 minutes ago
             }
 
-            const startTime = startDate.toTimeString().split(' ')[0];
+            const startTimeCst = startDate.toLocaleString('en-US', {
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false,
+                timeZone: 'America/Chicago'
+            }).split(', ')[1] || startDate.toLocaleString('en-US', {
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false,
+                timeZone: 'America/Chicago'
+            });
 
-            document.getElementById('start-time').value = startTime;
-            document.getElementById('end-time').value = endTime;
+            document.getElementById('start-time').value = startTimeCst;
+            document.getElementById('end-time').value = endTimeCst;
+
+            // Auto-load recordings when time range changes (if cameras selected)
+            if (selectedCameras.size > 0) {
+                loadRecordings();
+            }
         }
 
         function updateTimeRange() {
-            // Time range updated, will be used when loading recordings
+            // Auto-load recordings when time inputs change manually
+            if (selectedCameras.size > 0) {
+                // Debounce to avoid loading on every keystroke
+                clearTimeout(updateTimeRange.timeout);
+                updateTimeRange.timeout = setTimeout(() => {
+                    loadRecordings();
+                }, 1000); // Wait 1 second after user stops typing
+            }
+        }
+
+        function setDuration(minutes) {
+            const startTimeInput = document.getElementById('start-time');
+            const endTimeInput = document.getElementById('end-time');
+            const dateInput = document.getElementById('playback-date');
+
+            if (!startTimeInput.value || !dateInput.value) {
+                alert('Please select a date and start time first');
+                return;
+            }
+
+            // Parse start time in CST (add :00 for seconds if not present)
+            const startTimeValue = startTimeInput.value.includes(':') && startTimeInput.value.split(':').length === 2
+                ? startTimeInput.value + ':00'
+                : startTimeInput.value;
+            const startDateTime = `${dateInput.value}T${startTimeValue}`;
+            const startDate = new Date(startDateTime);
+
+            // Add duration
+            const endDate = new Date(startDate.getTime() + minutes * 60 * 1000);
+
+            // Format end time as HH:MM in CST
+            const endTimeCst = endDate.toLocaleString('en-US', {
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false,
+                timeZone: 'America/Chicago'
+            }).split(', ')[1] || endDate.toLocaleTimeString('en-US', {
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false
+            });
+
+            endTimeInput.value = endTimeCst;
+
+            // Auto-load if cameras selected
+            if (selectedCameras.size > 0) {
+                loadRecordings();
+            }
+        }
+
+        function onStartTimeChange() {
+            // Auto-load recordings when start time changes
+            updateTimeRange();
         }
 
         async function loadRecordings() {
@@ -1044,8 +1213,12 @@
                 return;
             }
 
-            const startDateTime = `${date}T${startTime}`;
-            const endDateTime = `${date}T${endTime}`;
+            // Add :00 for seconds if not present (time inputs without step attribute return HH:MM)
+            const startTimeWithSeconds = startTime.split(':').length === 2 ? startTime + ':00' : startTime;
+            const endTimeWithSeconds = endTime.split(':').length === 2 ? endTime + ':00' : endTime;
+
+            const startDateTime = `${date}T${startTimeWithSeconds}`;
+            const endDateTime = `${date}T${endTimeWithSeconds}`;
 
             try {
                 // Load recordings for all cameras
@@ -1084,7 +1257,7 @@
 
             // Show message if no recordings have been loaded yet
             if (!currentRecordings || Object.keys(currentRecordings).length === 0) {
-                grid.innerHTML = '<div class="no-recording" style="grid-column: 1 / -1; text-align: center; padding: 4rem 2rem; font-size: 1.2em;">Select a date and time range above, then click "Load Recordings" to view footage</div>';
+                grid.innerHTML = '<div class="no-recording" style="grid-column: 1 / -1; text-align: center; padding: 4rem 2rem; font-size: 1.2em;">Select one or more cameras above to automatically load recordings</div>';
                 return;
             }
 
@@ -1107,78 +1280,93 @@
                 player.className = 'video-player';
 
                 if (currentRecordings[cameraName] && currentRecordings[cameraName].length > 0) {
-                    // Add loading indicator with segment count
-                    const segmentCount = currentRecordings[cameraName].length;
-                    player.classList.add('lazy-loading');
-                    player.innerHTML = `<div class="loading-spinner"></div><div style="color: #888; margin-top: 10px; font-size: 0.9em;">Loading ${segmentCount} segment${segmentCount > 1 ? 's' : ''}...</div>`;
-
                     const video = document.createElement('video');
-                    video.controls = true;
-                    video.preload = 'none';  // Don't preload - let user click play when ready
+                    video.controls = false;  // Hide native controls - we have our own timeline
+                    video.preload = 'metadata';  // Preload metadata for instant playback
+                    video.autoplay = true;  // Auto-start video when loaded
                     video.id = `video-${cameraName}`;
 
                     // Use playback API to serve video
                     const startTime = document.getElementById('start-time').value;
                     const endTime = document.getElementById('end-time').value;
                     const date = document.getElementById('playback-date').value;
-                    const startDateTime = `${date}T${startTime}`;
-                    const endDateTime = `${date}T${endTime}`;
+
+                    // Add :00 for seconds if not present
+                    const startTimeWithSeconds = startTime.split(':').length === 2 ? startTime + ':00' : startTime;
+                    const endTimeWithSeconds = endTime.split(':').length === 2 ? endTime + ':00' : endTime;
+
+                    const startDateTime = `${date}T${startTimeWithSeconds}`;
+                    const endDateTime = `${date}T${endTimeWithSeconds}`;
 
                     // Use API endpoint to serve video properly
-                    const videoUrl = `/api/playback/video/${encodeURIComponent(cameraName)}?start_time=${encodeURIComponent(startDateTime)}&end_time=${encodeURIComponent(endDateTime)}`;
+                    // Add cache-buster to force reload when time range changes
+                    const cacheBuster = Date.now();
+                    const videoUrl = `/api/playback/video/${encodeURIComponent(cameraName)}?start_time=${encodeURIComponent(startDateTime)}&end_time=${encodeURIComponent(endDateTime)}&_=${cacheBuster}`;
 
-                    console.log(`Loading video for ${cameraName}: ${videoUrl}`);
+                    console.log(`Loading video for ${cameraName}:`);
+                    console.log(`  Date: ${date}, Start Time: ${startTime}, End Time: ${endTime}`);
+                    console.log(`  Combined: ${startDateTime} to ${endDateTime}`);
+                    console.log(`  URL: ${videoUrl}`);
 
-                    // Set a timeout to detect if video never loads
-                    const loadTimeout = setTimeout(() => {
-                        if (player.classList.contains('lazy-loading')) {
-                            player.classList.remove('lazy-loading');
-                            player.innerHTML = '<div class="no-recording">Video loading timed out. The time range may be too large or no recordings exist.</div>';
-                            console.error(`Video load timeout for ${cameraName}`);
-                        }
-                    }, 120000); // 120 second timeout for large concatenated videos
+                    video.onloadeddata = () => {
+                        console.log(`Video data loaded for ${cameraName}`);
 
-                    // Show video immediately - don't wait for metadata
-                    clearTimeout(loadTimeout);
-                    player.classList.remove('lazy-loading');
-                    player.innerHTML = '';
-                    player.appendChild(video);
+                        // Clear player and add video
+                        player.innerHTML = '';
+                        player.appendChild(video);
 
-                    // Add zoom controls
-                    const zoomIndicator = document.createElement('div');
-                    zoomIndicator.className = 'zoom-indicator';
-                    zoomIndicator.id = `zoom-indicator-${cameraName}`;
-                    zoomIndicator.textContent = '100%';
+                        // Add zoom controls after video loads
+                        const zoomIndicator = document.createElement('div');
+                        zoomIndicator.className = 'zoom-indicator';
+                        zoomIndicator.id = `zoom-indicator-${cameraName}`;
+                        zoomIndicator.textContent = '100%';
 
-                    const zoomControls = document.createElement('div');
-                    zoomControls.className = 'zoom-controls';
-                    zoomControls.innerHTML = `
-                        <button class="zoom-btn select-area-btn" data-camera="${cameraName}" title="Select Area to Zoom">⊡</button>
-                        <button class="zoom-btn" onclick="zoomVideo('${cameraName}', 'in')" title="Zoom In (+)">+</button>
-                        <button class="zoom-btn" onclick="zoomVideo('${cameraName}', 'out')" title="Zoom Out (-)">−</button>
-                        <button class="zoom-btn" onclick="zoomVideo('${cameraName}', 'reset')" title="Reset Zoom (0)">⌂</button>
-                    `;
+                        const zoomControls = document.createElement('div');
+                        zoomControls.className = 'zoom-controls';
+                        zoomControls.innerHTML = `
+                            <button class="zoom-btn select-area-btn" data-camera="${cameraName}" title="Select Area to Zoom">⊡</button>
+                            <button class="zoom-btn" onclick="zoomVideo('${cameraName}', 'in')" title="Zoom In (+)">+</button>
+                            <button class="zoom-btn" onclick="zoomVideo('${cameraName}', 'out')" title="Zoom Out (-)">−</button>
+                            <button class="zoom-btn" onclick="zoomVideo('${cameraName}', 'reset')" title="Reset Zoom (0)">⌂</button>
+                            <button class="zoom-btn" onclick="enterFullscreenPlayback('${cameraName}')" title="Fullscreen (F)">⛶</button>
+                        `;
 
-                    const selectionBox = document.createElement('div');
-                    selectionBox.className = 'zoom-selection-box';
-                    selectionBox.id = `zoom-selection-${cameraName}`;
+                        const selectionBox = document.createElement('div');
+                        selectionBox.className = 'zoom-selection-box';
+                        selectionBox.id = `zoom-selection-${cameraName}`;
 
-                    player.appendChild(zoomIndicator);
-                    player.appendChild(zoomControls);
-                    player.appendChild(selectionBox);
+                        // Add timestamp overlay
+                        const timestampOverlay = document.createElement('div');
+                        timestampOverlay.className = 'video-timestamp-overlay';
+                        timestampOverlay.id = `timestamp-${cameraName}`;
+                        timestampOverlay.textContent = '--:--:--';
 
-                    // Add zoom data to player
-                    player.dataset.zoomScale = '1';
-                    player.dataset.zoomX = '0';
-                    player.dataset.zoomY = '0';
+                        player.appendChild(zoomIndicator);
+                        player.appendChild(zoomControls);
+                        player.appendChild(selectionBox);
+                        player.appendChild(timestampOverlay);
 
-                    // Set video source last - this triggers loading
+                        // Add zoom data to player
+                        player.dataset.zoomScale = '1';
+                        player.dataset.zoomX = '0';
+                        player.dataset.zoomY = '0';
+                    };
+
+                    // Set video source - this triggers loading
                     video.src = videoUrl;
+
+                    // Update timestamp overlay as video plays
+                    video.ontimeupdate = () => {
+                        updateVideoTimestamp(cameraName, video);
+                    };
+
+                    // Double-click to enter fullscreen
+                    video.ondblclick = () => {
+                        enterFullscreenPlayback(cameraName);
+                    };
 
                     // Handle errors
                     video.onerror = () => {
-                        clearTimeout(loadTimeout);
-                        player.classList.remove('lazy-loading');
                         player.innerHTML = '<div class="no-recording">Error loading video. Check console for details.</div>';
                         console.error(`Failed to load video for ${cameraName}:`, video.error);
                     };
@@ -1192,17 +1380,85 @@
                 container.appendChild(player);
                 grid.appendChild(container);
             });
+
+            // Enable play button if videos were loaded
+            const playButton = document.getElementById('play-button');
+            if (Object.keys(videoElements).length > 0) {
+                playButton.disabled = false;
+            } else {
+                playButton.disabled = true;
+            }
         }
 
         function updateTimeline() {
             const markersContainer = document.getElementById('timeline-markers');
+            const timelineTrack = document.querySelector('.timeline-track');
+
+            // Clear existing markers and segments
             markersContainer.innerHTML = '';
+
+            // Remove old segments and gaps
+            timelineTrack.querySelectorAll('.timeline-segment, .timeline-gap').forEach(el => el.remove());
 
             if (!playbackState.startTime || !playbackState.endTime) return;
 
             const startMs = new Date(playbackState.startTime).getTime();
             const endMs = new Date(playbackState.endTime).getTime();
             const rangeMs = endMs - startMs;
+
+            // Render segments and gaps for each selected camera
+            selectedCameras.forEach(cameraName => {
+                if (!currentRecordings[cameraName]) return;
+
+                const segments = currentRecordings[cameraName];
+
+                // Sort segments by start time
+                const sortedSegments = [...segments].sort((a, b) =>
+                    new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
+                );
+
+                // Render each segment
+                sortedSegments.forEach((segment, index) => {
+                    const segmentStartMs = new Date(segment.start_time).getTime();
+                    const segmentEndMs = new Date(segment.end_time).getTime();
+
+                    // Calculate position and width as percentage
+                    const startPercent = Math.max(0, ((segmentStartMs - startMs) / rangeMs) * 100);
+                    const endPercent = Math.min(100, ((segmentEndMs - startMs) / rangeMs) * 100);
+                    const widthPercent = endPercent - startPercent;
+
+                    if (widthPercent > 0) {
+                        const segmentEl = document.createElement('div');
+                        segmentEl.className = 'timeline-segment';
+                        segmentEl.style.left = startPercent + '%';
+                        segmentEl.style.width = widthPercent + '%';
+                        segmentEl.title = `${cameraName}: ${formatTime(segment.start_time)} - ${formatTime(segment.end_time)}`;
+                        segmentEl.onclick = () => seekToTime(segmentStartMs);
+                        timelineTrack.appendChild(segmentEl);
+                    }
+
+                    // Render gap between this segment and next
+                    if (index < sortedSegments.length - 1) {
+                        const nextSegment = sortedSegments[index + 1];
+                        const gapStartMs = segmentEndMs;
+                        const gapEndMs = new Date(nextSegment.start_time).getTime();
+
+                        const gapStartPercent = ((gapStartMs - startMs) / rangeMs) * 100;
+                        const gapEndPercent = ((gapEndMs - startMs) / rangeMs) * 100;
+                        const gapWidthPercent = gapEndPercent - gapStartPercent;
+
+                        if (gapWidthPercent > 0.1) { // Only show gaps > 0.1%
+                            const gapEl = document.createElement('div');
+                            gapEl.className = 'timeline-gap';
+                            gapEl.style.left = gapStartPercent + '%';
+                            gapEl.style.width = gapWidthPercent + '%';
+                            const gapDuration = Math.round((gapEndMs - gapStartMs) / 1000);
+                            gapEl.title = `Gap: ${gapDuration}s (no recording)`;
+                            timelineTrack.appendChild(gapEl);
+                        }
+                    }
+                });
+            });
 
             // Add motion event markers
             Object.keys(motionEvents).forEach(cameraName => {
@@ -1258,6 +1514,48 @@
             return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
         }
 
+        function updateVideoTimestamp(cameraName, video) {
+            const overlay = document.getElementById(`timestamp-${cameraName}`);
+            if (!overlay) return;
+
+            // Get the current segment being played
+            if (!currentRecordings[cameraName] || currentRecordings[cameraName].length === 0) {
+                overlay.textContent = '--:--:--';
+                return;
+            }
+
+            // Parse the video source to find which segment is playing
+            const videoSrc = video.src;
+            const startTimeMatch = videoSrc.match(/start_time=([^&]+)/);
+
+            if (startTimeMatch) {
+                const segmentStartTime = decodeURIComponent(startTimeMatch[1]);
+
+                // Server times are in CST (UTC-6). Append timezone offset if not present.
+                const timeWithTZ = segmentStartTime.includes('-06:00') || segmentStartTime.includes('Z')
+                    ? segmentStartTime
+                    : segmentStartTime + '-06:00';
+
+                const segmentStartMs = new Date(timeWithTZ).getTime();
+                const currentTimeMs = segmentStartMs + (video.currentTime * 1000);
+                const currentDate = new Date(currentTimeMs);
+
+                // Format in CST timezone
+                const formatted = currentDate.toLocaleString('en-US', {
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    hour12: false,
+                    timeZone: 'America/Chicago'  // CST/CDT timezone
+                });
+
+                overlay.textContent = formatted;
+            }
+        }
+
         function togglePlayPause() {
             playbackState.playing = !playbackState.playing;
             const playButton = document.getElementById('play-button');
@@ -1309,8 +1607,12 @@
         function seekToPosition(event) {
             const slider = document.getElementById('timeline-slider');
             const rect = slider.getBoundingClientRect();
-            const x = event.clientX - rect.left;
-            const percent = Math.max(0, Math.min(100, (x / rect.width) * 100));
+            const padding = 10; // Timeline track has 10px padding on each side
+
+            // Calculate position relative to the actual track (accounting for padding)
+            const x = event.clientX - rect.left - padding;
+            const trackWidth = rect.width - (padding * 2);
+            const percent = Math.max(0, Math.min(100, (x / trackWidth) * 100));
 
             updateTimelinePosition(percent);
 
@@ -1323,13 +1625,8 @@
 
             playbackState.currentTime = (targetTimeMs - startMs) / 1000;
 
-            // Seek all video players
-            Object.values(videoElements).forEach(video => {
-                const videoDuration = video.duration || 0;
-                if (videoDuration > 0) {
-                    video.currentTime = Math.min(playbackState.currentTime, videoDuration);
-                }
-            });
+            // Seek to the target time
+            seekToTime(targetTimeMs);
         }
 
         function seekToTime(timestampMs) {
@@ -1343,13 +1640,78 @@
             updateTimelinePosition(percent);
             playbackState.currentTime = (timestampMs - startMs) / 1000;
 
-            Object.values(videoElements).forEach(video => {
-                const videoDuration = video.duration || 0;
-                if (videoDuration > 0) {
-                    video.currentTime = Math.min(playbackState.currentTime, videoDuration);
+            // For each camera, load the appropriate segment and seek within it
+            selectedCameras.forEach(cameraName => {
+                const video = videoElements[cameraName];
+                if (!video || !currentRecordings[cameraName]) return;
+
+                const segments = currentRecordings[cameraName];
+
+                // Find segment that contains this timestamp
+                const matchingSegment = segments.find(seg => {
+                    const segStart = new Date(seg.start_time).getTime();
+                    const segEnd = new Date(seg.end_time).getTime();
+                    return timestampMs >= segStart && timestampMs <= segEnd;
+                });
+
+                if (matchingSegment) {
+                    const segmentStart = matchingSegment.start_time.replace(' ', 'T');
+                    const segmentEnd = matchingSegment.end_time.replace(' ', 'T');
+                    const segmentStartMs = new Date(matchingSegment.start_time).getTime();
+
+                    // Calculate offset within this segment (in seconds)
+                    const offsetSeconds = (timestampMs - segmentStartMs) / 1000;
+
+                    // Build URL for this specific segment
+                    const cacheBuster = Date.now();
+                    const newSrc = `/api/playback/video/${encodeURIComponent(cameraName)}?start_time=${encodeURIComponent(segmentStart)}&end_time=${encodeURIComponent(segmentEnd)}&_=${cacheBuster}`;
+
+                    // Check if we're already showing this segment by comparing timestamps
+                    const currentSrc = video.src;
+                    let needsReload = true;
+
+                    if (currentSrc) {
+                        const currentSegmentMatch = currentSrc.match(/start_time=([^&]+)/);
+                        if (currentSegmentMatch) {
+                            const currentSegmentStart = decodeURIComponent(currentSegmentMatch[1]);
+                            // Normalize both times to timestamps for accurate comparison
+                            const currentSegmentStartMs = new Date(currentSegmentStart).getTime();
+
+                            // If timestamps match (within 1 second tolerance), it's the same segment
+                            needsReload = Math.abs(currentSegmentStartMs - segmentStartMs) > 1000;
+                        }
+                    }
+
+                    if (!needsReload) {
+                        // Same segment, just seek within current video
+                        console.log(`Seeking within current segment for ${cameraName}: ${offsetSeconds}s / ${video.duration}s`);
+                        video.currentTime = Math.min(offsetSeconds, video.duration || 0);
+
+                        // Resume playback if we were playing
+                        if (playbackState.playing && video.paused) {
+                            video.play();
+                        }
+                    } else {
+                        // Different segment, need to load it
+                        console.log(`Loading new segment for ${cameraName}: ${segmentStart} to ${segmentEnd}, will seek to ${offsetSeconds}s`);
+
+                        video.src = newSrc;
+
+                        // Seek to the correct position once metadata is loaded
+                        video.onloadedmetadata = () => {
+                            console.log(`Metadata loaded for ${cameraName}, duration: ${video.duration}s, seeking to: ${offsetSeconds}s`);
+                            video.currentTime = Math.min(offsetSeconds, video.duration);
+
+                            // Resume playback if we were playing
+                            if (playbackState.playing) {
+                                video.play();
+                            }
+                        };
+                    }
                 }
             });
         }
+
 
         function updateTimelinePosition(percent) {
             const progress = document.getElementById('timeline-progress');
@@ -1362,8 +1724,12 @@
             const tooltip = document.getElementById('timeline-tooltip');
             const slider = document.getElementById('timeline-slider');
             const rect = slider.getBoundingClientRect();
-            const x = event.clientX - rect.left;
-            const percent = Math.max(0, Math.min(100, (x / rect.width) * 100));
+            const padding = 10; // Timeline track has 10px padding on each side
+
+            // Calculate position relative to the actual track (accounting for padding)
+            const x = event.clientX - rect.left - padding;
+            const trackWidth = rect.width - (padding * 2);
+            const percent = Math.max(0, Math.min(100, (x / trackWidth) * 100));
 
             if (!playbackState.startTime || !playbackState.endTime) return;
 
@@ -1467,6 +1833,15 @@
                     e.preventDefault();
                     changeSpeed(0.25);
                     break;
+
+                case 'f':  // f - fullscreen (first camera)
+                case 'F':
+                    e.preventDefault();
+                    const firstCamera = selectedCameras.values().next().value;
+                    if (firstCamera) {
+                        enterFullscreenPlayback(firstCamera);
+                    }
+                    break;
             }
         });
 
@@ -1497,6 +1872,27 @@
                     btn.click();
                 }
             });
+        }
+
+        function enterFullscreenPlayback(cameraName) {
+            const video = videoElements[cameraName];
+            if (!video) {
+                console.error(`Video element not found for camera: ${cameraName}`);
+                return;
+            }
+
+            // Use the video element's built-in fullscreen API
+            if (video.requestFullscreen) {
+                video.requestFullscreen();
+            } else if (video.webkitRequestFullscreen) {
+                video.webkitRequestFullscreen();
+            } else if (video.mozRequestFullScreen) {
+                video.mozRequestFullScreen();
+            } else if (video.msRequestFullscreen) {
+                video.msRequestFullscreen();
+            } else {
+                alert('Fullscreen not supported by your browser');
+            }
         }
 
         function showExportPanel() {

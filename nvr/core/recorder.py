@@ -31,9 +31,11 @@ class RTSPRecorder:
         segment_duration: int = 300,
         codec: str = 'h264',
         container: str = 'mp4',
-        playback_db=None
+        playback_db=None,
+        camera_id: Optional[str] = None
     ):
         self.camera_name = camera_name
+        self.camera_id = camera_id or self._sanitize_name(camera_name)  # Fallback to name if no ID
         self.rtsp_url = rtsp_url
         self.storage_path = storage_path
         self.segment_duration = segment_duration
@@ -62,8 +64,8 @@ class RTSPRecorder:
         # Callbacks
         self.on_motion_detected: Optional[Callable] = None
 
-        # Create camera storage directory
-        self.camera_storage = storage_path / self._sanitize_name(camera_name)
+        # Create camera storage directory using camera_id (stable across renames)
+        self.camera_storage = storage_path / self.camera_id
         self.camera_storage.mkdir(parents=True, exist_ok=True)
 
     def _sanitize_name(self, name: str) -> str:
@@ -158,8 +160,6 @@ class RTSPRecorder:
 
     def _record_frames(self, fps: float, width: int, height: int) -> None:
         """Record frames from stream"""
-        frames_since_start = 0
-        frames_per_segment = int(fps * self.segment_duration)
         consecutive_failures = 0
         max_consecutive_failures = 30  # Allow 30 consecutive failures before reconnecting
 
@@ -173,6 +173,10 @@ class RTSPRecorder:
             recording_height = int(height * scale)
 
         logger.info(f"Recording dimensions: {recording_width}x{recording_height} (source: {width}x{height})")
+
+        # Track when the next segment should start (aligned to clock intervals)
+        next_segment_time = self._get_next_segment_boundary()
+        current_segment_started = False
 
         while self.is_recording:
             ret, frame = self.capture.read()
@@ -193,49 +197,67 @@ class RTSPRecorder:
             if width > 1920:
                 frame = cv2.resize(frame, (recording_width, recording_height), interpolation=cv2.INTER_AREA)
 
-            # Start new segment if needed
-            if frames_since_start % frames_per_segment == 0:
+            # Check if it's time for a new segment (aligned to clock intervals)
+            now = datetime.now()
+            if not current_segment_started or now >= next_segment_time:
                 self._start_new_segment(fps, recording_width, recording_height)
-                frames_since_start = 0
+                next_segment_time = self._get_next_segment_boundary()
+                current_segment_started = True
 
             # Write frame to disk
             if self.writer:
-                success = self.writer.write(frame)
-                if frames_since_start == 1:  # Log only first frame
-                    logger.info(f"First frame write result: {success}, frame shape: {frame.shape}")
+                self.writer.write(frame)
 
-            # Only compress and queue every 2nd frame for live viewing to reduce memory load
-            # This gives us ~7-8 FPS for live view (good balance of smoothness and memory)
-            if frames_since_start % 2 == 0:
-                # Compress frame to JPEG for live viewing (saves memory)
-                # Quality 85 is good balance between size and quality
-                _, jpeg_bytes = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-                jpeg_data = jpeg_bytes.tobytes()
+            # Compress frame to JPEG for live viewing (saves memory)
+            # Quality 85 is good balance between size and quality
+            _, jpeg_bytes = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            jpeg_data = jpeg_bytes.tobytes()
 
-                # CRITICAL: Explicitly delete jpeg_bytes to free memory immediately
-                del jpeg_bytes
+            # CRITICAL: Explicitly delete jpeg_bytes to free memory immediately
+            del jpeg_bytes
 
-                # Put compressed frame in queue for live viewing
+            # Put compressed frame in queue for live viewing
+            try:
+                self.frame_queue.put_nowait(jpeg_data)
+            except queue.Full:
+                # Skip frame if queue is full
                 try:
+                    self.frame_queue.get_nowait()
                     self.frame_queue.put_nowait(jpeg_data)
-                except queue.Full:
-                    # Skip frame if queue is full
-                    try:
-                        self.frame_queue.get_nowait()
-                        self.frame_queue.put_nowait(jpeg_data)
-                    except queue.Empty:
-                        pass
+                except queue.Empty:
+                    pass
 
             # CRITICAL: Explicitly delete frame to free memory immediately
             # Without this, Python's garbage collector may not free memory fast enough
             del frame
 
-            frames_since_start += 1
+    def _get_next_segment_boundary(self) -> datetime:
+        """Calculate the next segment boundary aligned to clock intervals
 
-            # Force garbage collection every 50 frames to prevent memory accumulation
-            # This is critical for preventing Python from holding onto deleted numpy arrays
-            if frames_since_start % 50 == 0:
-                gc.collect()
+        For 5-minute (300 second) segments: aligns to 00:00, 00:05, 00:10, 00:15, etc.
+        This ensures consistent filenames across restarts.
+        """
+        now = datetime.now()
+
+        # Convert segment duration from seconds to minutes
+        segment_minutes = self.segment_duration // 60
+
+        # Calculate minutes since midnight
+        minutes_since_midnight = now.hour * 60 + now.minute
+
+        # Round up to next segment boundary
+        next_boundary_minutes = ((minutes_since_midnight // segment_minutes) + 1) * segment_minutes
+
+        # Convert back to hours and minutes
+        next_hour = next_boundary_minutes // 60
+        next_minute = next_boundary_minutes % 60
+
+        # Handle day rollover
+        if next_hour >= 24:
+            next_day = now + timedelta(days=1)
+            return datetime(next_day.year, next_day.month, next_day.day, 0, 0, 0)
+
+        return datetime(now.year, now.month, now.day, next_hour, next_minute, 0)
 
     def _start_new_segment(self, fps: float, width: int, height: int) -> None:
         """Start a new recording segment"""
@@ -257,8 +279,24 @@ class RTSPRecorder:
                 file_size
             )
 
-        # Generate filename with timestamp
-        self.current_segment_start = datetime.now()
+            # Queue segment for background transcoding for instant playback
+            try:
+                from nvr.core.transcoder import get_transcoder
+                transcoder = get_transcoder()
+                transcoder.queue_transcode(self.current_segment_path)
+            except Exception as e:
+                logger.warning(f"Failed to queue transcode for {self.current_segment_path}: {e}")
+
+        # Use current clock time rounded to segment boundary for consistent filenames
+        # This ensures files have predictable names like 20260119_143000.mp4 (2:30 PM)
+        now = datetime.now()
+        segment_minutes = self.segment_duration // 60
+        minutes_since_midnight = now.hour * 60 + now.minute
+        boundary_minutes = (minutes_since_midnight // segment_minutes) * segment_minutes
+        boundary_hour = boundary_minutes // 60
+        boundary_minute = boundary_minutes % 60
+
+        self.current_segment_start = datetime(now.year, now.month, now.day, boundary_hour, boundary_minute, 0)
         timestamp = self.current_segment_start.strftime("%Y%m%d_%H%M%S")
         filename = f"{timestamp}.{self.container}"
         filepath = self.camera_storage / filename
@@ -307,6 +345,7 @@ class RTSPRecorder:
         if self.playback_db:
             self.playback_db.add_segment(
                 camera_name=self.camera_name,
+                camera_id=self.camera_id,
                 file_path=str(filepath),
                 start_time=self.current_segment_start,
                 fps=fps,
@@ -414,6 +453,7 @@ class RecorderManager:
         self,
         camera_name: str,
         rtsp_url: str,
+        camera_id: Optional[str] = None,
         auto_start: bool = True
     ) -> RTSPRecorder:
         """Add a camera recorder"""
@@ -426,7 +466,8 @@ class RecorderManager:
             rtsp_url=rtsp_url,
             storage_path=self.storage_path,
             segment_duration=self.segment_duration,
-            playback_db=self.playback_db
+            playback_db=self.playback_db,
+            camera_id=camera_id
         )
 
         self.recorders[camera_name] = recorder

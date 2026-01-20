@@ -967,6 +967,7 @@
                             <div class="camera-details">
                                 ${camera.rtsp_url ? camera.rtsp_url.replace(/:[^:@]+@/, ':***@') : 'No RTSP URL'}
                             </div>
+                            ${camera.id ? `<div class="camera-details" style="color: #666; font-size: 0.85em; margin-top: 4px;">ID: ${camera.id}</div>` : ''}
                         </div>
                     </div>
                     <div class="camera-actions">

@@ -61,6 +61,16 @@ fi
 # Kill any remaining python3 NVR processes
 pkill -9 -f "python3 main.py" 2>/dev/null && echo -e "${GREEN}✓ Cleaned up remaining processes${NC}" || true
 
+# Clean up cached transcoded files to free disk space
+if [ -d "recordings/.transcoded" ]; then
+    FILE_COUNT=$(find recordings/.transcoded -name "*.mp4" 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$FILE_COUNT" -gt 0 ]; then
+        echo -e "${BLUE}  Cleaning up $FILE_COUNT cached transcoded files...${NC}"
+        rm -rf recordings/.transcoded
+        echo -e "${GREEN}✓ Freed disk space${NC}"
+    fi
+fi
+
 echo ""
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${GREEN}Server stopped successfully${NC}"

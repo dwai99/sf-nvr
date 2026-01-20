@@ -90,21 +90,69 @@ class PlaybackDatabase:
         """Migrate existing database schemas to current version"""
         # Check if event_type column exists in motion_events
         cursor.execute("PRAGMA table_info(motion_events)")
-        columns = [row[1] for row in cursor.fetchall()]
+        motion_columns = [row[1] for row in cursor.fetchall()]
 
-        if 'event_type' not in columns:
+        if 'event_type' not in motion_columns:
             logger.info("Migrating motion_events table: adding event_type column")
             cursor.execute("""
                 ALTER TABLE motion_events
                 ADD COLUMN event_type TEXT DEFAULT 'motion'
             """)
-            logger.info("Migration complete")
+            logger.info("Migration complete: added event_type column")
+
+        # Check if camera_id column exists in recording_segments
+        cursor.execute("PRAGMA table_info(recording_segments)")
+        segments_columns = [row[1] for row in cursor.fetchall()]
+
+        if 'camera_id' not in segments_columns:
+            logger.info("Migrating recording_segments table: adding camera_id column")
+            cursor.execute("""
+                ALTER TABLE recording_segments
+                ADD COLUMN camera_id TEXT
+            """)
+
+            # Backfill camera_id with sanitized camera_name for backward compatibility
+            cursor.execute("""
+                UPDATE recording_segments
+                SET camera_id = camera_name
+                WHERE camera_id IS NULL
+            """)
+
+            # Create index on camera_id
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_segments_camera_id
+                ON recording_segments(camera_id, start_time, end_time)
+            """)
+            logger.info("Migration complete: added camera_id column and index")
+
+        # Check if camera_id column exists in motion_events
+        if 'camera_id' not in motion_columns:
+            logger.info("Migrating motion_events table: adding camera_id column")
+            cursor.execute("""
+                ALTER TABLE motion_events
+                ADD COLUMN camera_id TEXT
+            """)
+
+            # Backfill camera_id with camera_name
+            cursor.execute("""
+                UPDATE motion_events
+                SET camera_id = camera_name
+                WHERE camera_id IS NULL
+            """)
+
+            # Create index on camera_id
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_motion_camera_id
+                ON motion_events(camera_id, event_time)
+            """)
+            logger.info("Migration complete: added camera_id column to motion_events")
 
     def add_segment(
         self,
         camera_name: str,
         file_path: str,
         start_time: datetime,
+        camera_id: Optional[str] = None,
         end_time: Optional[datetime] = None,
         duration_seconds: Optional[int] = None,
         file_size_bytes: Optional[int] = None,
@@ -117,11 +165,11 @@ class PlaybackDatabase:
             cursor = conn.cursor()
             cursor.execute("""
                 INSERT OR REPLACE INTO recording_segments
-                (camera_name, file_path, start_time, end_time, duration_seconds,
+                (camera_name, camera_id, file_path, start_time, end_time, duration_seconds,
                  file_size_bytes, fps, width, height)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                camera_name, file_path, start_time, end_time,
+                camera_name, camera_id or camera_name, file_path, start_time, end_time,
                 duration_seconds, file_size_bytes, fps, width, height
             ))
             return cursor.lastrowid
@@ -171,13 +219,31 @@ class PlaybackDatabase:
         """Get all recording segments for a camera within a time range"""
         with self._get_connection() as conn:
             cursor = conn.cursor()
+            # Find segments that overlap with the requested range:
+            # - Segment starts before requested end time
+            # - Segment ends after requested start time OR is currently recording (NULL end_time)
+            # Support lookup by either camera_name OR camera_id (for compatibility)
             cursor.execute("""
                 SELECT * FROM recording_segments
-                WHERE camera_name = ?
-                AND start_time <= ?
-                AND (end_time >= ? OR end_time IS NULL)
+                WHERE (camera_name = ? OR camera_id = ?)
+                AND start_time < ?
+                AND (end_time > ? OR end_time IS NULL)
                 ORDER BY start_time ASC
-            """, (camera_name, end_time, start_time))
+            """, (camera_name, camera_name, end_time, start_time))
+
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def get_all_segments(self, camera_name: str) -> List[Dict]:
+        """Get all recording segments for a camera, ordered by start time"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            # Support lookup by either camera_name OR camera_id (for compatibility)
+            cursor.execute("""
+                SELECT * FROM recording_segments
+                WHERE (camera_name = ? OR camera_id = ?)
+                ORDER BY start_time ASC
+            """, (camera_name, camera_name))
 
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
@@ -218,12 +284,13 @@ class PlaybackDatabase:
         """Get motion events for a camera within a time range"""
         with self._get_connection() as conn:
             cursor = conn.cursor()
+            # Support lookup by either camera_name OR camera_id (for compatibility)
             cursor.execute("""
                 SELECT * FROM motion_events
-                WHERE camera_name = ?
+                WHERE (camera_name = ? OR camera_id = ?)
                 AND event_time BETWEEN ? AND ?
                 ORDER BY event_time ASC
-            """, (camera_name, start_time, end_time))
+            """, (camera_name, camera_name, start_time, end_time))
 
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
@@ -258,12 +325,13 @@ class PlaybackDatabase:
         """Get list of dates that have recordings for a camera"""
         with self._get_connection() as conn:
             cursor = conn.cursor()
+            # Support lookup by either camera_name OR camera_id (for compatibility)
             cursor.execute("""
                 SELECT DISTINCT DATE(start_time) as record_date
                 FROM recording_segments
-                WHERE camera_name = ?
+                WHERE (camera_name = ? OR camera_id = ?)
                 ORDER BY record_date DESC
-            """, (camera_name,))
+            """, (camera_name, camera_name))
 
             rows = cursor.fetchall()
             return [row['record_date'] for row in rows]

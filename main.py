@@ -13,19 +13,32 @@ os.environ['OPENCV_LOG_LEVEL'] = 'ERROR'
 os.environ['OPENCV_VIDEOIO_DEBUG'] = '0'
 
 import logging
+import logging.handlers
 import sys
 from pathlib import Path
 
 import uvicorn
 
-# Setup logging
+# Setup logging with rotation
+# Log files will rotate when they reach 10MB, keeping last 5 files (50MB total max)
+log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+# Rotating file handler - rotates at 10MB, keeps 5 backup files
+file_handler = logging.handlers.RotatingFileHandler(
+    'nvr.log',
+    maxBytes=10 * 1024 * 1024,  # 10MB
+    backupCount=5  # Keep last 5 files (nvr.log.1, nvr.log.2, etc.)
+)
+file_handler.setFormatter(log_formatter)
+
+# Console handler
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setFormatter(log_formatter)
+
+# Configure root logger
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler('nvr.log')
-    ]
+    handlers=[console_handler, file_handler]
 )
 
 logger = logging.getLogger(__name__)
@@ -36,6 +49,17 @@ def main():
     logger.info("=" * 60)
     logger.info("SF-NVR - Network Video Recorder")
     logger.info("=" * 60)
+
+    # Clean up cached transcoded files on startup (saves disk space)
+    transcode_cache = Path("recordings/.transcoded")
+    if transcode_cache.exists():
+        import shutil
+        try:
+            file_count = len(list(transcode_cache.glob("*.mp4")))
+            shutil.rmtree(transcode_cache)
+            logger.info(f"Cleaned up {file_count} cached transcoded files")
+        except Exception as e:
+            logger.warning(f"Failed to clean transcoded cache: {e}")
 
     # Ensure required directories exist
     Path("recordings").mkdir(exist_ok=True)

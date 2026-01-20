@@ -57,19 +57,29 @@ python3 scripts/tests/check_playback.py
 4. ✓ Temp file cleanup added (prevents disk filling)
 5. ✓ Video player shows immediately (no timeout waiting for metadata)
 6. ✓ Increased timeout to 120s for large concatenated videos
+7. ✓ **Auto-adjust time range**: If requested range has no recordings, automatically finds closest recordings not earlier than start time
+8. ✓ **Optimized default time ranges**: Changed "Last Hour" to "Last 10 Minutes" and "Last 4 Hours" to "Last 30 Minutes" to prevent browser timeouts from long concatenation times
+9. ✓ **Streaming concatenation**: Implemented progressive streaming - videos start playing in 3-5 seconds while concatenation continues in background
 
 ## Technical Details
 
 - **Single segment:** Serves file directly, loads instantly
-- **Multiple segments:** Concatenates with ffmpeg (~2 seconds for 10-15 segments)
+- **Multiple segments:** Streams as concatenating - playback starts immediately (~3-5 seconds), no waiting for full file
+- **Streaming:** FFmpeg outputs directly to HTTP response using movflags frag_keyframe+empty_moov
 - **Cleanup:** Temp files deleted automatically after streaming (BackgroundTasks)
 - **Preload:** Set to 'none' so videos don't preload until user clicks play
+- **Auto-adjust:** When no recordings found in requested range:
+  - Searches for closest recording not earlier than start time
+  - Maintains same duration as originally requested
+  - Logs adjustment: "Adjusted time range to [start] - [end], found N segment(s)"
+  - Works for all cameras
 
 ## Known Limitations
 
-- Very large time ranges (>2 hours with many cameras) may be slow to concatenate
+- Large time ranges (>30 minutes) may be slow to concatenate (60+ seconds for 1 hour)
+- Browser timeouts occur if concatenation takes >60 seconds - use shorter time ranges
 - macOS uses mp4v codec (works but not as efficient as H.264)
-- If no recordings exist for selected time range, videos will show "no recordings found"
+- Concatenation is blocking - server prepares entire video before streaming begins
 
 ## Verification
 

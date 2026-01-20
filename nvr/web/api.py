@@ -59,6 +59,35 @@ async def startup_event():
 
     logger.info("Starting NVR...")
 
+    # Start background cache cleaner for transcoded files
+    from nvr.core.cache_cleaner import get_cache_cleaner
+    get_cache_cleaner()  # Starts automatically
+
+    # Queue existing mp4v files for background transcoding
+    from nvr.core.transcoder import get_transcoder
+    import subprocess
+    transcoder = get_transcoder()
+    queued_count = 0
+    for video_file in Path("recordings").rglob("*.mp4"):
+        # Check if it's mp4v (mpeg4)
+        try:
+            probe_result = subprocess.run(
+                ['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+                 '-show_entries', 'stream=codec_name', '-of', 'default=noprint_wrappers=1:nokey=1',
+                 str(video_file)],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if probe_result.stdout.strip() == 'mpeg4':
+                transcoder.queue_transcode(video_file)
+                queued_count += 1
+        except Exception as e:
+            logger.warning(f"Failed to check codec for {video_file.name}: {e}")
+
+    if queued_count > 0:
+        logger.info(f"Queued {queued_count} existing mp4v files for background transcoding")
+
     # Optimize OpenCV for multi-threading
     import os
     num_threads = os.cpu_count() or 4
@@ -123,11 +152,12 @@ async def startup_event():
             continue
 
         camera_name = camera['name']
+        camera_id = camera.get('id', camera_name)  # Fallback to name if no ID
         rtsp_url = camera['rtsp_url']
 
         # Add recorder and start only if recording is enabled
         if recording_enabled:
-            await recorder_manager.add_camera(camera_name, rtsp_url, auto_start=True)
+            await recorder_manager.add_camera(camera_name, rtsp_url, camera_id=camera_id, auto_start=True)
 
         # Add motion detector if enabled
         if config.get('motion_detection.enabled', True):
@@ -184,6 +214,15 @@ async def startup_event():
 async def shutdown_event():
     """Clean up on shutdown"""
     logger.info("Shutting down NVR...")
+
+    # Stop background cache cleaner
+    from nvr.core.cache_cleaner import shutdown_cache_cleaner
+    shutdown_cache_cleaner()
+
+    # Stop background transcoder
+    from nvr.core.transcoder import shutdown_transcoder
+    shutdown_transcoder()
+
     if webrtc_manager:
         await webrtc_manager.close_all()
     if recorder_manager:
@@ -307,6 +346,7 @@ async def get_cameras() -> List[Dict[str, Any]]:
 
         result.append({
             'name': camera_name,
+            'id': camera.get('id', camera_name),
             'enabled': camera.get('enabled', True),
             'recording': recorder is not None and recorder.is_recording if recorder else False,
             'rtsp_url': camera.get('rtsp_url', ''),
