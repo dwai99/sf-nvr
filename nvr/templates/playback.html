@@ -5,6 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SF-NVR - Playback</title>
     <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+
+    <!-- UI Utilities -->
+    <script src="/static/notifications.js"></script>
+    <script src="/static/ui-utils.js"></script>
+    <script src="/static/timeline-selector.js?v=3"></script>
+
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -402,6 +408,72 @@
 
         .timeline-marker.ai-vehicle {
             background: #ffff00;
+        }
+
+        /* Motion visualization layer above timeline */
+        .motion-visualization {
+            position: absolute;
+            bottom: 100%;
+            left: 0;
+            right: 0;
+            height: 30px;
+            margin-bottom: 5px;
+            pointer-events: none;
+        }
+
+        .motion-bar {
+            position: absolute;
+            bottom: 0;
+            height: 100%;
+            background: linear-gradient(to top, rgba(255, 77, 77, 0.8), rgba(255, 77, 77, 0.3));
+            border-radius: 2px 2px 0 0;
+            transition: opacity 0.2s;
+        }
+
+        .motion-bar.low {
+            height: 30%;
+            background: linear-gradient(to top, rgba(76, 175, 80, 0.6), rgba(76, 175, 80, 0.2));
+        }
+
+        .motion-bar.medium {
+            height: 60%;
+            background: linear-gradient(to top, rgba(255, 152, 0, 0.7), rgba(255, 152, 0, 0.3));
+        }
+
+        .motion-bar.high {
+            height: 100%;
+            background: linear-gradient(to top, rgba(244, 67, 54, 0.8), rgba(244, 67, 54, 0.3));
+        }
+
+        .motion-bar.ai-detection {
+            background: linear-gradient(to top, rgba(156, 39, 176, 0.8), rgba(156, 39, 176, 0.3));
+        }
+
+        /* Toggle button for motion visualization */
+        .motion-viz-toggle {
+            background: #333;
+            border: 1px solid #4a9eff;
+            color: #e0e0e0;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            margin-left: 10px;
+            transition: all 0.2s;
+        }
+
+        .motion-viz-toggle.active {
+            background: #4a9eff;
+            color: white;
+        }
+
+        .motion-viz-toggle:hover {
+            background: #444;
+            border-color: #5aafff;
+        }
+
+        .motion-viz-toggle.active:hover {
+            background: #5aafff;
         }
 
         .timeline-handle {
@@ -809,10 +881,16 @@
         <div class="header-actions">
             <button class="btn" onclick="window.location.href='/'">← Live View</button>
             <button class="btn btn-success" onclick="showExportPanel()">📥 Export Recording</button>
+            <button class="btn" onclick="loadTestRange()" style="background: #e74c3c;">🧪 Test 3hr</button>
         </div>
     </div>
 
-    <div class="controls-panel" style="flex-wrap: wrap;">
+    <!-- Timeline Selector Panel -->
+    <div id="timeline-selector-panel" style="display: none;">
+        <div id="timeline-selector-container"></div>
+    </div>
+
+    <div class="controls-panel" id="controls-panel" style="flex-wrap: wrap;">
         <div class="control-group">
             <label>Date</label>
             <input type="date" id="playback-date" onchange="loadRecordings()">
@@ -824,6 +902,10 @@
         <div class="control-group">
             <label>End Time</label>
             <input type="time" id="end-time" onchange="updateTimeRange()">
+        </div>
+        <div class="control-group">
+            <label>&nbsp;</label>
+            <button class="btn" onclick="toggleTimelineSelector()" id="timeline-selector-btn" title="Visual timeline selector for choosing time ranges" data-tooltip="Open visual timeline to select playback range">📊 Timeline</button>
         </div>
         <div class="control-group">
             <label>&nbsp;</label>
@@ -857,6 +939,7 @@
                      onmousemove="handleDrag(event)"
                      onmouseleave="hideTooltip()">
                     <div class="timeline-track">
+                        <div class="motion-visualization" id="motion-visualization"></div>
                         <div class="timeline-progress" id="timeline-progress"></div>
                         <div id="timeline-markers"></div>
                     </div>
@@ -909,6 +992,16 @@
                             <div class="toggle-slider"></div>
                         </div>
                         <span>AI Detections</span>
+                    </label>
+                </div>
+
+                <div class="detection-toggle">
+                    <label>
+                        <input type="checkbox" id="show-motion-viz" class="toggle-input" checked onchange="toggleMotionVisualization()">
+                        <div class="toggle-switch active" id="motion-viz-switch" onclick="toggleMotionVizSwitch()">
+                            <div class="toggle-slider"></div>
+                        </div>
+                        <span data-tooltip="Show motion intensity bars above timeline">Motion Bars</span>
                     </label>
                 </div>
 
@@ -995,7 +1088,8 @@
             startTime: null,
             endTime: null,
             isDragging: false,
-            showAIDetections: true
+            showAIDetections: true,
+            showMotionVisualization: true
         };
 
         async function init() {
@@ -1162,6 +1256,53 @@
                     loadRecordings();
                 }, 1000); // Wait 1 second after user stops typing
             }
+        }
+
+        function loadTestRange() {
+            console.log('\n🧪 === LOADING TEST RANGE ===');
+            const now = new Date();
+
+            // Calculate 3 hours ago and 2 hours ago in local time
+            const threeHoursAgo = new Date(now.getTime() - 3 * 60 * 60 * 1000);
+            const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
+
+            // Format date as YYYY-MM-DD (local date, not UTC)
+            const year = threeHoursAgo.getFullYear();
+            const month = String(threeHoursAgo.getMonth() + 1).padStart(2, '0');
+            const day = String(threeHoursAgo.getDate()).padStart(2, '0');
+            const dateStr = `${year}-${month}-${day}`;
+
+            // Format times as HH:MM (local time)
+            const startTime = String(threeHoursAgo.getHours()).padStart(2, '0') + ':' +
+                             String(threeHoursAgo.getMinutes()).padStart(2, '0');
+            const endTime = String(twoHoursAgo.getHours()).padStart(2, '0') + ':' +
+                           String(twoHoursAgo.getMinutes()).padStart(2, '0');
+
+            console.log(`Test range: ${dateStr} ${startTime} to ${endTime}`);
+            console.log(`  Start: ${threeHoursAgo.toLocaleString()}`);
+            console.log(`  End: ${twoHoursAgo.toLocaleString()}`);
+
+            // Set the form values
+            document.getElementById('playback-date').value = dateStr;
+            document.getElementById('start-time').value = startTime;
+            document.getElementById('end-time').value = endTime;
+
+            // If no camera selected, select the first available
+            if (selectedCameras.size === 0 && cameras.length > 0) {
+                const firstCamera = cameras[0];
+                console.log(`Auto-selecting camera: ${firstCamera.name}`);
+
+                // Simulate checkbox click to properly select camera
+                const checkboxes = document.querySelectorAll('#camera-checkboxes input[type="checkbox"]');
+                if (checkboxes.length > 0) {
+                    checkboxes[0].checked = true;
+                    toggleCamera(firstCamera.name, true);
+                }
+            }
+
+            // Load recordings
+            console.log('Loading recordings for test range...\n');
+            loadRecordings();
         }
 
         function setDuration(minutes) {
@@ -1366,6 +1507,12 @@
                         updateVideoTimestamp(cameraName, video);
                     };
 
+                    // Auto-skip to next segment when current segment ends
+                    video.onended = () => {
+                        console.log(`Video segment ended for ${cameraName}, checking for next segment...`);
+                        skipToNextSegment(cameraName);
+                    };
+
                     // Double-click to enter fullscreen
                     video.ondblclick = () => {
                         enterFullscreenPlayback(cameraName);
@@ -1439,7 +1586,8 @@
                         segmentEl.style.left = startPercent + '%';
                         segmentEl.style.width = widthPercent + '%';
                         segmentEl.title = `${cameraName}: ${formatTime(segment.start_time)} - ${formatTime(segment.end_time)}`;
-                        segmentEl.onclick = () => seekToTime(segmentStartMs);
+                        // Remove segment onclick - let the timeline slider handle all seeks
+                        // segmentEl.onclick = () => seekToTime(segmentStartMs);
                         timelineTrack.appendChild(segmentEl);
                     }
 
@@ -1496,16 +1644,127 @@
                         }
 
                         marker.style.left = position + '%';
-                        marker.onclick = () => seekToTime(eventTime);
+                        // Remove marker onclick - let the timeline slider handle all seeks
+                        // marker.onclick = () => seekToTime(eventTime);
                         markersContainer.appendChild(marker);
                     }
                 });
             });
 
+            // Render motion visualization bars
+            renderMotionVisualization();
+
             // Update time labels
             document.getElementById('start-label').textContent = formatTime(playbackState.startTime);
             document.getElementById('end-label').textContent = formatTime(playbackState.endTime);
             document.getElementById('total-time-display').textContent = formatDuration(rangeMs / 1000);
+        }
+
+        function renderMotionVisualization() {
+            const vizContainer = document.getElementById('motion-visualization');
+            if (!vizContainer) return;
+
+            // Clear existing bars
+            vizContainer.innerHTML = '';
+
+            // Don't render if visualization is disabled
+            if (!playbackState.showMotionVisualization) {
+                vizContainer.style.display = 'none';
+                return;
+            }
+            vizContainer.style.display = 'block';
+
+            if (!playbackState.startTime || !playbackState.endTime) return;
+
+            const startMs = new Date(playbackState.startTime).getTime();
+            const endMs = new Date(playbackState.endTime).getTime();
+            const rangeMs = endMs - startMs;
+
+            // Group motion events into time buckets for visualization
+            const bucketSize = Math.max(5000, rangeMs / 100); // At least 5 seconds, max 100 buckets
+            const buckets = new Map();
+
+            // Collect all motion events across selected cameras
+            Object.keys(motionEvents).forEach(cameraName => {
+                if (!selectedCameras.has(cameraName)) return;
+
+                motionEvents[cameraName].forEach(event => {
+                    const eventTime = new Date(event.event_time).getTime();
+
+                    // Calculate which bucket this event belongs to
+                    const bucketIndex = Math.floor((eventTime - startMs) / bucketSize);
+
+                    if (!buckets.has(bucketIndex)) {
+                        buckets.set(bucketIndex, {
+                            count: 0,
+                            hasAI: false,
+                            startTime: startMs + (bucketIndex * bucketSize),
+                            endTime: startMs + ((bucketIndex + 1) * bucketSize)
+                        });
+                    }
+
+                    const bucket = buckets.get(bucketIndex);
+                    bucket.count++;
+
+                    // Check if this bucket has AI detections
+                    const isAIDetection = event.event_type === 'ai_person' || event.event_type === 'ai_vehicle';
+                    if (isAIDetection) {
+                        bucket.hasAI = true;
+                    }
+                });
+            });
+
+            // Render motion bars
+            buckets.forEach((bucket, index) => {
+                const position = ((bucket.startTime - startMs) / rangeMs) * 100;
+                const width = (bucketSize / rangeMs) * 100;
+
+                if (position >= 0 && position <= 100) {
+                    const bar = document.createElement('div');
+                    bar.className = 'motion-bar';
+
+                    // Determine intensity level
+                    if (bucket.hasAI) {
+                        bar.classList.add('ai-detection');
+                        bar.title = `AI Detection (${bucket.count} events)`;
+                    } else if (bucket.count >= 5) {
+                        bar.classList.add('high');
+                        bar.title = `High Motion (${bucket.count} events)`;
+                    } else if (bucket.count >= 2) {
+                        bar.classList.add('medium');
+                        bar.title = `Medium Motion (${bucket.count} events)`;
+                    } else {
+                        bar.classList.add('low');
+                        bar.title = `Low Motion (${bucket.count} event${bucket.count > 1 ? 's' : ''})`;
+                    }
+
+                    bar.style.left = position + '%';
+                    bar.style.width = width + '%';
+
+                    vizContainer.appendChild(bar);
+                }
+            });
+        }
+
+        function toggleMotionVisualization() {
+            playbackState.showMotionVisualization = !playbackState.showMotionVisualization;
+            renderMotionVisualization();
+        }
+
+        function toggleMotionVizSwitch() {
+            const checkbox = document.getElementById('show-motion-viz');
+            const toggleSwitch = document.getElementById('motion-viz-switch');
+
+            checkbox.checked = !checkbox.checked;
+            playbackState.showMotionVisualization = checkbox.checked;
+
+            if (checkbox.checked) {
+                toggleSwitch.classList.add('active');
+            } else {
+                toggleSwitch.classList.remove('active');
+            }
+
+            renderMotionVisualization();
         }
 
         function formatTime(isoString) {
@@ -1537,16 +1796,12 @@
             if (startTimeMatch) {
                 const segmentStartTime = decodeURIComponent(startTimeMatch[1]);
 
-                // Server times are in CST (UTC-6). Append timezone offset if not present.
-                const timeWithTZ = segmentStartTime.includes('-06:00') || segmentStartTime.includes('Z')
-                    ? segmentStartTime
-                    : segmentStartTime + '-06:00';
-
-                const segmentStartMs = new Date(timeWithTZ).getTime();
+                // Parse as local time (no timezone conversion)
+                const segmentStartMs = new Date(segmentStartTime).getTime();
                 const currentTimeMs = segmentStartMs + (video.currentTime * 1000);
                 const currentDate = new Date(currentTimeMs);
 
-                // Format in CST timezone
+                // Format as local time with MM/DD/YYYY, HH:MM:SS
                 const formatted = currentDate.toLocaleString('en-US', {
                     year: 'numeric',
                     month: '2-digit',
@@ -1554,11 +1809,77 @@
                     hour: '2-digit',
                     minute: '2-digit',
                     second: '2-digit',
-                    hour12: false,
-                    timeZone: 'America/Chicago'  // CST/CDT timezone
+                    hour12: false
                 });
 
                 overlay.textContent = formatted;
+            }
+        }
+
+        function skipToNextSegment(cameraName) {
+            // Get segments for this camera
+            const segments = currentRecordings[cameraName];
+            if (!segments || segments.length === 0) {
+                console.log(`No segments available for ${cameraName}`);
+                return;
+            }
+
+            // Get current video element
+            const video = videoElements[cameraName];
+            if (!video) return;
+
+            // Parse current segment start time from video source
+            const videoSrc = video.src;
+            const startTimeMatch = videoSrc.match(/start_time=([^&]+)/);
+            if (!startTimeMatch) {
+                console.log('Could not parse current segment time');
+                return;
+            }
+
+            const currentSegmentStart = decodeURIComponent(startTimeMatch[1]);
+            const currentSegmentMs = new Date(currentSegmentStart).getTime();
+
+            // Find next segment after current one
+            const sortedSegments = [...segments].sort((a, b) =>
+                new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
+            );
+
+            let nextSegment = null;
+            for (const segment of sortedSegments) {
+                const segmentMs = new Date(segment.start_time).getTime();
+                if (segmentMs > currentSegmentMs) {
+                    nextSegment = segment;
+                    break;
+                }
+            }
+
+            if (nextSegment) {
+                console.log(`Skipping to next segment: ${nextSegment.start_time}`);
+
+                // Calculate gap duration
+                const gapStart = new Date(videoSrc.match(/end_time=([^&]+)/)?.[1] || currentSegmentStart);
+                const gapEnd = new Date(nextSegment.start_time);
+                const gapSeconds = Math.round((gapEnd - gapStart) / 1000);
+
+                // Load next segment
+                const cacheBuster = Date.now();
+                const endDateTime = playbackState.endTime;
+                const newSrc = `/api/playback/video/${encodeURIComponent(cameraName)}?start_time=${encodeURIComponent(nextSegment.start_time)}&end_time=${encodeURIComponent(endDateTime)}&_=${cacheBuster}`;
+
+                console.log(`Gap skipped: ${gapSeconds}s. Loading: ${newSrc}`);
+
+                // Update video source and play
+                video.src = newSrc;
+                if (playbackState.playing) {
+                    video.play();
+                }
+            } else {
+                console.log(`No more segments available for ${cameraName}`);
+                // Pause playback when we reach the end
+                playbackState.playing = false;
+                const playButton = document.getElementById('play-button');
+                playButton.classList.remove('playing');
+                playButton.classList.add('paused');
             }
         }
 
@@ -1596,17 +1917,46 @@
         }
 
         // Timeline slider interaction
+        let mouseDownX = 0;
+        let mouseDownTime = 0;
+        let isDragging = false;
+
         function startDrag(event) {
+            mouseDownX = event.clientX;
+            mouseDownTime = Date.now();
+            isDragging = false;
             playbackState.isDragging = true;
-            seekToPosition(event);
         }
 
         function handleDrag(event) {
             if (playbackState.isDragging) {
-                seekToPosition(event);
+                // Check if mouse moved enough to be dragging
+                const moved = Math.abs(event.clientX - mouseDownX);
+                if (moved > 3) {
+                    isDragging = true;
+                    seekToPosition(event);
+                }
             }
             showTooltip(event);
         }
+
+        function stopDrag(event) {
+            if (playbackState.isDragging) {
+                const moved = Math.abs(event.clientX - mouseDownX);
+                const duration = Date.now() - mouseDownTime;
+
+                // Always seek on mouseup (whether click or drag end)
+                // This ensures we seek exactly once for clicks
+                console.log(`Mouse released: moved=${moved}px, duration=${duration}ms, isDragging=${isDragging}`);
+                seekToPosition(event);
+
+                playbackState.isDragging = false;
+                isDragging = false;
+            }
+        }
+
+        // Add mouseup listener to stop dragging
+        document.addEventListener('mouseup', stopDrag);
 
         function seekToPosition(event) {
             const slider = document.getElementById('timeline-slider');
@@ -1616,7 +1966,18 @@
             // Calculate position relative to the actual track (accounting for padding)
             const x = event.clientX - rect.left - padding;
             const trackWidth = rect.width - (padding * 2);
-            const percent = Math.max(0, Math.min(100, (x / trackWidth) * 100));
+            let percent = (x / trackWidth) * 100;
+
+            // Clamp between 0 and 100
+            percent = Math.max(0, Math.min(100, percent));
+
+            console.log(`\n🎯 Click Position Calculation:`);
+            console.log(`  clientX: ${event.clientX}`);
+            console.log(`  rect.left: ${rect.left}, rect.width: ${rect.width}`);
+            console.log(`  padding: ${padding}px on each side`);
+            console.log(`  x (relative to track): ${x.toFixed(2)}`);
+            console.log(`  trackWidth (minus padding): ${trackWidth.toFixed(2)}`);
+            console.log(`  percent: ${percent.toFixed(2)}%`);
 
             updateTimelinePosition(percent);
 
@@ -1645,7 +2006,10 @@
             const clickedDate = new Date(timestampMs);
             console.log(`\n=== TIMELINE SEEK ===`);
             console.log(`Clicked time: ${clickedDate.toLocaleString()} (${clickedDate.toISOString()})`);
+            console.log(`Target timestamp: ${timestampMs}`);
             console.log(`Timeline range: ${playbackState.startTime} to ${playbackState.endTime}`);
+            console.log(`Timeline range (ms): ${startMs} to ${endMs}`);
+            console.log(`Percent: ${percent.toFixed(2)}%`);
 
             updateTimelinePosition(percent);
             playbackState.currentTime = (timestampMs - startMs) / 1000;
@@ -1657,12 +2021,30 @@
 
                 const segments = currentRecordings[cameraName];
 
-                // Find segment that contains this timestamp
-                const matchingSegment = segments.find(seg => {
+                console.log(`\nCamera: ${cameraName} (${segments.length} segments available)`);
+                segments.forEach((seg, idx) => {
                     const segStart = new Date(seg.start_time).getTime();
                     const segEnd = new Date(seg.end_time).getTime();
-                    return timestampMs >= segStart && timestampMs <= segEnd;
+                    const contains = timestampMs >= segStart && timestampMs <= segEnd;
+                    console.log(`  [${idx}] ${seg.start_time} to ${seg.end_time} (${segStart} - ${segEnd}) ${contains ? '← TARGET' : ''}`);
                 });
+
+                // Find segment that contains this timestamp
+                // Prefer segment that starts exactly at the timestamp (avoids boundary issues)
+                let matchingSegment = segments.find(seg => {
+                    const segStart = new Date(seg.start_time).getTime();
+                    return segStart === timestampMs;
+                });
+
+                // If no exact start match, find segment that contains the timestamp
+                // Use exclusive end boundary to avoid matching two segments at boundary
+                if (!matchingSegment) {
+                    matchingSegment = segments.find(seg => {
+                        const segStart = new Date(seg.start_time).getTime();
+                        const segEnd = new Date(seg.end_time).getTime();
+                        return timestampMs >= segStart && timestampMs < segEnd;
+                    });
+                }
 
                 if (matchingSegment) {
                     const segmentStart = matchingSegment.start_time.replace(' ', 'T');
@@ -1699,12 +2081,33 @@
 
                     if (!needsReload) {
                         // Same segment, just seek within current video
-                        console.log(`Seeking within current segment for ${cameraName}: ${offsetSeconds}s / ${video.duration}s`);
-                        video.currentTime = Math.min(offsetSeconds, video.duration || 0);
+                        console.log(`Seeking within current segment for ${cameraName}: ${offsetSeconds}s (duration: ${video.duration}s, readyState: ${video.readyState})`);
+
+                        // Wait for video to be ready before seeking
+                        if (video.readyState >= 1 && isFinite(video.duration) && video.duration > 0) {
+                            // Video metadata is loaded and duration is valid, we can seek
+                            const seekTime = Math.max(0, Math.min(offsetSeconds, video.duration));
+                            console.log(`  Setting currentTime to ${seekTime}s`);
+                            video.currentTime = seekTime;
+                        } else {
+                            // Video not ready or duration not available, wait for metadata
+                            console.log(`  Video not ready (readyState: ${video.readyState}, duration: ${video.duration}), waiting for metadata...`);
+                            const metadataHandler = () => {
+                                if (isFinite(video.duration) && video.duration > 0) {
+                                    const seekTime = Math.max(0, Math.min(offsetSeconds, video.duration));
+                                    console.log(`  Metadata loaded, duration: ${video.duration}s, setting currentTime to ${seekTime}s`);
+                                    video.currentTime = seekTime;
+                                } else {
+                                    console.warn(`  Metadata loaded but duration still invalid: ${video.duration}`);
+                                }
+                            };
+                            video.removeEventListener('loadedmetadata', metadataHandler);
+                            video.addEventListener('loadedmetadata', metadataHandler, { once: true });
+                        }
 
                         // Resume playback if we were playing
                         if (playbackState.playing && video.paused) {
-                            video.play();
+                            video.play().catch(err => console.warn(`Failed to resume playback for ${cameraName}:`, err));
                         }
                     } else {
                         // Different segment, need to load it
@@ -1715,14 +2118,25 @@
                         // Seek to the correct position once metadata is loaded
                         video.onloadedmetadata = () => {
                             console.log(`Metadata loaded for ${cameraName}, duration: ${video.duration}s, seeking to: ${offsetSeconds}s`);
-                            video.currentTime = Math.min(offsetSeconds, video.duration);
+
+                            if (isFinite(video.duration) && video.duration > 0) {
+                                const seekTime = Math.max(0, Math.min(offsetSeconds, video.duration));
+                                video.currentTime = seekTime;
+                            } else {
+                                console.warn(`Duration invalid for ${cameraName}: ${video.duration}, seeking to ${offsetSeconds}s anyway`);
+                                video.currentTime = offsetSeconds;
+                            }
 
                             // Resume playback if we were playing
                             if (playbackState.playing) {
-                                video.play();
+                                video.play().catch(err => console.warn(`Failed to start playback for ${cameraName}:`, err));
                             }
                         };
                     }
+                } else {
+                    console.warn(`⚠️  No segment found for ${cameraName} at timestamp ${timestampMs} (${clickedDate.toLocaleString()})`);
+                    console.warn(`  Timeline range: ${startMs} to ${endMs}`);
+                    console.warn(`  Clicked is ${timestampMs < startMs ? 'BEFORE' : 'AFTER'} timeline range`);
                 }
             });
         }
@@ -1754,7 +2168,17 @@
             const targetTimeMs = startMs + (rangeMs * percent / 100);
             const targetDate = new Date(targetTimeMs);
 
-            tooltip.textContent = targetDate.toLocaleTimeString();
+            // Format as "6:32:51 PM" with date if different from start
+            const startDate = new Date(playbackState.startTime);
+            const timeStr = targetDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+            // Add date if it's different from the start date
+            if (targetDate.toDateString() !== startDate.toDateString()) {
+                tooltip.textContent = targetDate.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + timeStr;
+            } else {
+                tooltip.textContent = timeStr;
+            }
+
             tooltip.style.left = percent + '%';
             tooltip.style.display = 'block';
         }
@@ -2285,20 +2709,42 @@
             // Get first video's current time as reference
             const firstVideo = Object.values(videoElements)[0];
             if (firstVideo && !playbackState.isDragging) {
-                playbackState.currentTime = firstVideo.currentTime || 0;
-
-                // Update progress bar
                 const duration = firstVideo.duration || 0;
-                if (duration > 0) {
-                    const percent = (playbackState.currentTime / duration) * 100;
-                    updateTimelinePosition(percent);
+                const videoCurrentTime = firstVideo.currentTime || 0;
+
+                // Update progress bar - calculate position within ENTIRE TIMELINE RANGE
+                if (duration > 0 && playbackState.startTime && playbackState.endTime) {
+                    // Get the segment's start time from the video source URL
+                    const videoSrc = firstVideo.src;
+                    const startTimeMatch = videoSrc.match(/start_time=([^&]+)/);
+
+                    if (startTimeMatch) {
+                        const segmentStartTime = decodeURIComponent(startTimeMatch[1]);
+                        const segmentStartMs = new Date(segmentStartTime).getTime();
+
+                        // Calculate actual timestamp = segment start + video current time
+                        const currentTimestampMs = segmentStartMs + (videoCurrentTime * 1000);
+
+                        // Calculate percentage within timeline range
+                        const startMs = new Date(playbackState.startTime).getTime();
+                        const endMs = new Date(playbackState.endTime).getTime();
+                        const rangeMs = endMs - startMs;
+
+                        if (rangeMs > 0) {
+                            const percent = ((currentTimestampMs - startMs) / rangeMs) * 100;
+                            updateTimelinePosition(percent);
+
+                            // Update playbackState.currentTime as offset from timeline start
+                            playbackState.currentTime = (currentTimestampMs - startMs) / 1000;
+                        }
+                    }
                 }
 
-                // Update time display
-                document.getElementById('current-time-display').textContent = formatDuration(playbackState.currentTime);
+                // Update time display (shows position within current segment)
+                document.getElementById('current-time-display').textContent = formatDuration(videoCurrentTime);
 
-                // Auto-pause at end
-                if (playbackState.currentTime >= duration && playbackState.playing) {
+                // Auto-pause at end of segment
+                if (videoCurrentTime >= duration && playbackState.playing) {
                     togglePlayPause();
                 }
             }
@@ -2526,6 +2972,95 @@
                 setTimeout(() => notification.remove(), 300);
             }, 700);
         }
+
+        // Timeline Selector Integration
+        let timelineSelector = null;
+
+        function toggleTimelineSelector() {
+            const panel = document.getElementById('timeline-selector-panel');
+            const controlsPanel = document.getElementById('controls-panel');
+            const videoGrid = document.querySelector('.video-grid');
+            const timelinePanel = document.querySelector('.timeline-panel');
+            const btn = document.getElementById('timeline-selector-btn');
+
+            if (panel.style.display === 'none') {
+                // Show timeline selector
+                panel.style.display = 'block';
+                controlsPanel.style.display = 'none';
+                videoGrid.style.display = 'none';
+                timelinePanel.style.display = 'none';
+                btn.style.background = '#3a8eef';
+                btn.textContent = '✕ Close';
+
+                // Initialize timeline selector if not already created
+                if (!timelineSelector) {
+                    initTimelineSelector();
+                } else {
+                    // Refresh with current settings
+                    timelineSelector.refresh();
+                }
+            } else {
+                // Hide timeline selector
+                panel.style.display = 'none';
+                controlsPanel.style.display = 'flex';
+                videoGrid.style.display = 'grid';
+                timelinePanel.style.display = 'block';
+                btn.style.background = '#4a9eff';
+                btn.textContent = '📊 Timeline';
+            }
+        }
+
+        function initTimelineSelector() {
+            const date = document.getElementById('playback-date').value;
+            const cameras = Array.from(selectedCameras);
+
+            if (cameras.length === 0) {
+                showNotification('Please select at least one camera', 'warning');
+                toggleTimelineSelector(); // Close the panel
+                return;
+            }
+
+            timelineSelector = new TimelineSelector('timeline-selector-container', {
+                date: date ? new Date(date + 'T00:00:00') : new Date(),
+                cameras: cameras,
+                height: 180,
+                onRangeSelected: (range) => {
+                    applyTimelineSelection(range);
+                }
+            });
+        }
+
+        function applyTimelineSelection(range) {
+            // Convert selected times to input values
+            const dateStr = range.startTime.toISOString().split('T')[0];
+            const startTimeStr = range.startTime.toTimeString().substring(0, 5);
+            const endTimeStr = range.endTime.toTimeString().substring(0, 5);
+
+            // Set the form values
+            document.getElementById('playback-date').value = dateStr;
+            document.getElementById('start-time').value = startTimeStr;
+            document.getElementById('end-time').value = endTimeStr;
+
+            // Close timeline selector and show playback
+            toggleTimelineSelector();
+
+            // Load the recordings
+            showNotification('Loading selected time range...', 'info');
+            setTimeout(() => {
+                loadRecordings();
+            }, 100);
+        }
+
+        // Update timeline selector when cameras change
+        const originalToggleCamera = toggleCamera;
+        window.toggleCamera = function(cameraName, enabled) {
+            originalToggleCamera(cameraName, enabled);
+
+            // Update timeline selector if it's open
+            if (timelineSelector && document.getElementById('timeline-selector-panel').style.display !== 'none') {
+                timelineSelector.setCameras(Array.from(selectedCameras));
+            }
+        };
 
         // Show keyboard shortcuts help on ? key
         document.addEventListener('keydown', (e) => {

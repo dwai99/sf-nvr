@@ -1,7 +1,22 @@
 {
   "permissions": {
     "allow": [
-      "Bash(open:*)"
+      "Bash(open:*)",
+      "Bash(python -m nvr.app*)",
+      "Bash(python nvr/app.py*)",
+      "Bash(pytest*)",
+      "Bash(pip install*)",
+      "Bash(pip freeze*)",
+      "Bash(ffmpeg -version*)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git add*)",
+      "Bash(git commit*)",
+      "Bash(ls*)",
+      "Bash(cat*)",
+      "Bash(tail*)",
+      "Bash(head*)"
     ]
   }
 }
