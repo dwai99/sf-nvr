@@ -18,7 +18,8 @@ class StorageManager:
         playback_db=None,
         retention_days: int = 7,
         cleanup_threshold_percent: float = 85.0,
-        target_percent: float = 75.0
+        target_percent: float = 75.0,
+        reserved_space_gb: float = 0.0
     ):
         """
         Initialize storage manager
@@ -29,12 +30,14 @@ class StorageManager:
             retention_days: Maximum age of recordings to keep
             cleanup_threshold_percent: Disk usage % that triggers cleanup
             target_percent: Target disk usage % after cleanup
+            reserved_space_gb: Minimum free space in GB to maintain on disk
         """
         self.storage_path = Path(storage_path)
         self.playback_db = playback_db
         self.retention_days = retention_days
         self.cleanup_threshold = cleanup_threshold_percent
         self.target_percent = target_percent
+        self.reserved_space_gb = reserved_space_gb
 
     def check_and_cleanup(self) -> Dict[str, Any]:
         """
@@ -59,10 +62,17 @@ class StorageManager:
 
             logger.info(f"Storage usage: {usage_percent:.1f}% ({disk.used / (1024**3):.1f} GB / {disk.total / (1024**3):.1f} GB)")
 
+            # Check if reserved space is violated
+            free_gb = disk.free / (1024**3)
+            reserved_violated = self.reserved_space_gb > 0 and free_gb < self.reserved_space_gb
+
             # Check if cleanup is needed
-            if usage_percent < self.cleanup_threshold:
-                logger.info(f"Disk usage ({usage_percent:.1f}%) below threshold ({self.cleanup_threshold}%), no cleanup needed")
+            if usage_percent < self.cleanup_threshold and not reserved_violated:
+                logger.info(f"Disk usage ({usage_percent:.1f}%) below threshold ({self.cleanup_threshold}%), free space {free_gb:.1f} GB, no cleanup needed")
                 return stats
+
+            if reserved_violated:
+                logger.warning(f"Free space ({free_gb:.1f} GB) below reserved minimum ({self.reserved_space_gb} GB), starting cleanup")
 
             stats['cleanup_triggered'] = True
             logger.warning(f"Disk usage ({usage_percent:.1f}%) exceeds threshold ({self.cleanup_threshold}%), starting cleanup")
@@ -118,11 +128,18 @@ class StorageManager:
             target_used = disk.total * (self.target_percent / 100)
             space_to_free = current_used - target_used
 
+            # Also ensure reserved space is met
+            if self.reserved_space_gb > 0:
+                reserved_bytes = self.reserved_space_gb * (1024**3)
+                space_needed_for_reserve = reserved_bytes - disk.free
+                if space_needed_for_reserve > space_to_free:
+                    space_to_free = space_needed_for_reserve
+
             if space_to_free <= 0:
                 logger.info("Target usage already met, no files to delete")
                 return deleted_count, bytes_freed
 
-            logger.info(f"Need to free {space_to_free / (1024**3):.2f} GB to reach {self.target_percent}% usage")
+            logger.info(f"Need to free {space_to_free / (1024**3):.2f} GB to reach {self.target_percent}% usage (reserved: {self.reserved_space_gb} GB)")
 
             # Delete files until we reach target usage or run out of old files
             retention_cutoff = datetime.now() - timedelta(days=self.retention_days)

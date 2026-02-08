@@ -24,6 +24,7 @@ class ConfigUpdate(BaseModel):
     ai_detection: Dict[str, Any] = None
     web: Dict[str, Any] = None
     onvif: Dict[str, Any] = None
+    storage: Dict[str, Any] = None
     cameras: list = None
 
 
@@ -36,6 +37,7 @@ async def get_config():
         "ai_detection": config.get('ai_detection', {}),
         "web": config.get('web', {}),
         "onvif": config.get('onvif', {}),
+        "storage": config.get('storage', {}),
         "cameras": config.cameras or []
     }
 
@@ -63,6 +65,10 @@ async def update_config(updates: ConfigUpdate):
         # Update ONVIF settings
         if updates.onvif:
             config.set('onvif', updates.onvif)
+
+        # Update storage settings
+        if updates.storage:
+            config.set('storage', updates.storage)
 
         # Update cameras list
         if updates.cameras is not None:

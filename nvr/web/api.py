@@ -61,7 +61,7 @@ sd_card_manager = None
 @app.on_event("startup")
 async def startup_event():
     """Initialize NVR on startup"""
-    global recorder_manager, motion_monitor, ai_monitor, playback_db, recording_mode_manager, webrtc_manager, webrtc_passthrough, rtsp_proxy, mse_proxy, sd_card_manager
+    global recorder_manager, motion_monitor, ai_monitor, playback_db, storage_manager, recording_mode_manager, webrtc_manager, webrtc_passthrough, rtsp_proxy, mse_proxy, sd_card_manager
 
     logger.info("Starting NVR...")
 
@@ -138,7 +138,8 @@ async def startup_event():
         playback_db=playback_db,
         retention_days=config.get('storage.retention_days', config.get('recording.retention_days', 7)),
         cleanup_threshold_percent=config.get('storage.cleanup_threshold_percent', 85.0),
-        target_percent=config.get('storage.target_percent', 75.0)
+        target_percent=config.get('storage.target_percent', 75.0),
+        reserved_space_gb=config.get('storage.reserved_space_gb', 0.0)
     )
     logger.info(f"Storage manager initialized: {storage_manager.retention_days} day retention, cleanup at {storage_manager.cleanup_threshold}%")
 
@@ -1008,15 +1009,23 @@ async def get_recording(camera_id: str, filename: str):
         camera_storage = config.storage_path / camera_id.replace(' ', '_')
         video_file = camera_storage / filename
 
-        if not video_file.exists():
+        # Prevent path traversal
+        resolved_file = video_file.resolve()
+        resolved_storage = config.storage_path.resolve()
+        if not str(resolved_file).startswith(str(resolved_storage)):
+            raise HTTPException(status_code=403, detail="Access denied")
+
+        if not resolved_file.exists():
             raise HTTPException(status_code=404, detail="Recording not found")
 
         return FileResponse(
-            video_file,
+            resolved_file,
             media_type="video/mp4",
-            filename=filename
+            filename=resolved_file.name
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error retrieving recording: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1226,7 +1235,8 @@ async def get_cleanup_status():
             'cleanup_config': {
                 'retention_days': storage_manager.retention_days,
                 'cleanup_threshold_percent': storage_manager.cleanup_threshold,
-                'target_percent': storage_manager.target_percent
+                'target_percent': storage_manager.target_percent,
+                'reserved_space_gb': storage_manager.reserved_space_gb
             },
             'retention_stats': retention_stats
         }

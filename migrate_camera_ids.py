@@ -198,8 +198,8 @@ def main():
     parser = argparse.ArgumentParser(description='Migrate camera recordings to use physical IDs')
     parser.add_argument('--dry-run', action='store_true', help='Show what would be done without making changes')
     parser.add_argument('--config', default='config/config.yaml', help='Path to config file')
-    parser.add_argument('--db', default='recordings/playback.db', help='Path to database')
-    parser.add_argument('--storage', default='recordings', help='Path to recordings storage')
+    parser.add_argument('--db', default=None, help='Path to database (default: <storage_path>/playback.db)')
+    parser.add_argument('--storage', default=None, help='Path to recordings storage (default: from config)')
 
     args = parser.parse_args()
 
@@ -213,6 +213,10 @@ def main():
     # Load configuration
     logger.info(f"\n1. Loading configuration from {args.config}")
     config = load_config(args.config)
+
+    # Resolve storage and db paths from config if not provided
+    storage_path = args.storage or config.get('recording', {}).get('storage_path', './recordings')
+    db_path = args.db or str(Path(storage_path) / "playback.db")
 
     # Build mapping
     logger.info("\n2. Building camera name → ID mapping")
@@ -228,19 +232,19 @@ def main():
 
     # Update database
     if not args.dry_run:
-        logger.info(f"\n3. Updating database at {args.db}")
-        update_database(args.db, mapping)
+        logger.info(f"\n3. Updating database at {db_path}")
+        update_database(db_path, mapping)
     else:
         logger.info("\n3. [DRY RUN] Skipping database update")
 
     # Migrate filesystem
-    logger.info(f"\n4. Migrating filesystem at {args.storage}")
-    migrate_filesystem(args.storage, mapping, dry_run=args.dry_run)
+    logger.info(f"\n4. Migrating filesystem at {storage_path}")
+    migrate_filesystem(storage_path, mapping, dry_run=args.dry_run)
 
     # Verify
     if not args.dry_run:
         logger.info("\n5. Verifying migration")
-        verify_migration(args.db, args.storage)
+        verify_migration(db_path, storage_path)
 
     logger.info("\n" + "=" * 70)
     if args.dry_run:

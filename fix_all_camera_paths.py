@@ -5,9 +5,12 @@ import sqlite3
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent))
+from nvr.core.config import config
+
 def fix_camera_paths():
     """Update all file paths to use camera_id instead of camera_name"""
-    db_path = Path("recordings/playback.db")
+    db_path = config.storage_path / "playback.db"
 
     if not db_path.exists():
         print(f"Database not found at {db_path}")

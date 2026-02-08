@@ -1285,29 +1285,29 @@
                 cleanupDiv.innerHTML = `
                     <div class="setting-row">
                         <div class="setting-label">
-                            <div class="setting-label-main">Retention Period</div>
-                            <div class="setting-label-desc">Recordings older than this are deleted</div>
-                        </div>
-                        <div class="setting-control">
-                            <strong>${config.retention_days} days</strong>
-                        </div>
-                    </div>
-                    <div class="setting-row">
-                        <div class="setting-label">
                             <div class="setting-label-main">Cleanup Threshold</div>
-                            <div class="setting-label-desc">Automatic cleanup triggers at this disk usage</div>
+                            <div class="setting-label-desc">Automatic cleanup triggers at this disk usage %</div>
                         </div>
                         <div class="setting-control">
-                            <strong>${config.cleanup_threshold_percent}%</strong>
+                            <input type="number" id="cleanup-threshold" value="${config.cleanup_threshold_percent}" min="50" max="99" step="1" style="width: 70px"> %
                         </div>
                     </div>
                     <div class="setting-row">
                         <div class="setting-label">
                             <div class="setting-label-main">Target Usage</div>
-                            <div class="setting-label-desc">Cleanup stops when disk usage reaches this level</div>
+                            <div class="setting-label-desc">Cleanup stops when disk usage drops to this %</div>
                         </div>
                         <div class="setting-control">
-                            <strong>${config.target_percent}%</strong>
+                            <input type="number" id="target-percent" value="${config.target_percent}" min="10" max="95" step="1" style="width: 70px"> %
+                        </div>
+                    </div>
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="setting-label-main">Reserved Space</div>
+                            <div class="setting-label-desc">Minimum free space to keep on disk (0 = disabled)</div>
+                        </div>
+                        <div class="setting-control">
+                            <input type="number" id="reserved-space-gb" value="${config.reserved_space_gb || 0}" min="0" max="${Math.floor(diskUsage.total_gb)}" step="1" style="width: 70px"> GB
                         </div>
                     </div>
                     <div class="setting-row">
@@ -1316,12 +1316,14 @@
                             <div class="setting-label-desc">
                                 ${diskUsage.percent >= config.cleanup_threshold_percent ?
                                     'Cleanup needed - disk usage high' :
-                                    'All good - disk usage normal'}
+                                    (config.reserved_space_gb > 0 && diskUsage.free_gb < config.reserved_space_gb ?
+                                        'Cleanup needed - below reserved space' :
+                                        'All good - disk usage normal')}
                             </div>
                         </div>
                         <div class="setting-control">
-                            <strong style="color: ${diskUsage.percent >= config.cleanup_threshold_percent ? '#e74c3c' : '#4a9eff'}">
-                                ${diskUsage.percent >= config.cleanup_threshold_percent ? 'High' : 'Normal'}
+                            <strong style="color: ${diskUsage.percent >= config.cleanup_threshold_percent || (config.reserved_space_gb > 0 && diskUsage.free_gb < config.reserved_space_gb) ? '#e74c3c' : '#4a9eff'}">
+                                ${diskUsage.percent >= config.cleanup_threshold_percent || (config.reserved_space_gb > 0 && diskUsage.free_gb < config.reserved_space_gb) ? 'High' : 'Normal'}
                             </strong>
                         </div>
                     </div>
@@ -1785,6 +1787,12 @@
                     onvif: {
                         auto_discover: isToggleOn('onvif-auto-discover'),
                         discovery_timeout: parseInt(getElementValue('onvif-timeout', '2'))
+                    },
+                    storage: {
+                        cleanup_threshold_percent: parseFloat(getElementValue('cleanup-threshold', '85')),
+                        target_percent: parseFloat(getElementValue('target-percent', '75')),
+                        reserved_space_gb: parseFloat(getElementValue('reserved-space-gb', '0')),
+                        retention_days: parseInt(getElementValue('retention-days', '7'))
                     },
                     cameras: config.cameras || [] // Keep existing cameras
                 };

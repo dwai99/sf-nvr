@@ -7,6 +7,7 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
+from nvr.core.config import config
 from nvr.core.playback_db import PlaybackDatabase
 from nvr.core.db_maintenance import run_maintenance
 import logging
@@ -22,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 def main():
     """Run database maintenance tasks"""
-    db_path = Path("recordings/playback.db")
+    db_path = config.storage_path / "playback.db"
 
     if not db_path.exists():
         logger.error(f"Database not found at {db_path}")

@@ -90,3 +90,9 @@ playwright/.cache/
 
 # Claude Code
 .claude/
+
+# Session summaries and work logs (auto-generated)
+*SESSION_SUMMARY*.md
+*TEST_PROGRESS*.md
+*TEST_SUITE*.md
+*INVESTIGATION*.md

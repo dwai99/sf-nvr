@@ -11,10 +11,12 @@ import subprocess
 import tempfile
 import os
 
+from nvr.core.config import config as nvr_config
+
 logger = logging.getLogger(__name__)
 
 # Cache directory for speed-processed videos
-SPEED_CACHE_DIR = Path("recordings/.speed_cache")
+SPEED_CACHE_DIR = nvr_config.storage_path / ".speed_cache"
 
 
 def get_speed_processed_video(source_file: Path, speed: float) -> Optional[Path]:
@@ -95,9 +97,13 @@ def get_speed_processed_video(source_file: Path, speed: float) -> Optional[Path]
 
     except subprocess.TimeoutExpired:
         logger.error(f"FFmpeg speed processing timed out for {source_file.name}")
+        if cached_file.exists():
+            cached_file.unlink(missing_ok=True)
         return None
     except Exception as e:
         logger.error(f"Error creating speed-processed video: {e}")
+        if cached_file.exists():
+            cached_file.unlink(missing_ok=True)
         return None
 
 
@@ -794,7 +800,7 @@ async def stream_sd_card_recording(
         process = subprocess.Popen(
             ffmpeg_cmd,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
             bufsize=10485760  # 10MB buffer
         )
 
@@ -803,7 +809,11 @@ async def stream_sd_card_recording(
             try:
                 if process.poll() is None:
                     process.terminate()
-                    process.wait(timeout=5)
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=2)
                 logger.info(f"Cleaned up SD card streaming process for {camera_id}")
             except Exception as e:
                 logger.error(f"Error cleaning up SD card stream process: {e}")
@@ -819,16 +829,21 @@ async def stream_sd_card_recording(
                         break
                     yield chunk
 
-                # Check for errors
                 process.wait()
                 if process.returncode != 0:
-                    stderr = process.stderr.read().decode('utf-8')
-                    logger.error(f"FFmpeg SD card streaming error: {stderr[-500:]}")
+                    logger.error(f"FFmpeg SD card streaming exited with code {process.returncode}")
+            except GeneratorExit:
+                logger.info(f"SD card stream client disconnected for {camera_id}")
             except Exception as e:
                 logger.error(f"Error in SD card stream generator: {e}")
             finally:
                 if process.poll() is None:
                     process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=2)
 
         return StreamingResponse(
             stream_sd_card(),
@@ -881,6 +896,7 @@ async def get_sd_card_status():
 
 async def _concatenate_segments(camera_id: str, segments: List[dict], start_dt: datetime, background_tasks: BackgroundTasks):
     """Concatenate multiple video segments using ffmpeg with streaming output"""
+    list_file = None
     try:
         # Create temporary file list for ffmpeg concat
         with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
@@ -908,7 +924,7 @@ async def _concatenate_segments(camera_id: str, segments: List[dict], start_dt: 
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
             bufsize=10485760  # 10MB buffer
         )
 
@@ -917,7 +933,11 @@ async def _concatenate_segments(camera_id: str, segments: List[dict], start_dt: 
             try:
                 if process.poll() is None:
                     process.terminate()
-                    process.wait(timeout=5)
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=2)
                 os.unlink(list_file)
                 logger.info(f"Cleaned up streaming process for {camera_id}")
             except Exception as e:
@@ -934,16 +954,21 @@ async def _concatenate_segments(camera_id: str, segments: List[dict], start_dt: 
                         break
                     yield chunk
 
-                # Check for errors
                 process.wait()
                 if process.returncode != 0:
-                    stderr = process.stderr.read().decode('utf-8')
-                    logger.error(f"ffmpeg streaming error: {stderr[-500:]}")
+                    logger.error(f"ffmpeg streaming exited with code {process.returncode}")
+            except GeneratorExit:
+                logger.info(f"Stream client disconnected for {camera_id}")
             except Exception as e:
                 logger.error(f"Error in stream_video generator: {e}")
             finally:
                 if process.poll() is None:
                     process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=2)
 
         # Return streaming response
         return StreamingResponse(
@@ -955,6 +980,12 @@ async def _concatenate_segments(camera_id: str, segments: List[dict], start_dt: 
         )
 
     except Exception as e:
+        # Clean up temp file if process failed to start
+        if list_file:
+            try:
+                os.unlink(list_file)
+            except OSError:
+                pass
         logger.error(f"Error setting up streaming concatenation: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 

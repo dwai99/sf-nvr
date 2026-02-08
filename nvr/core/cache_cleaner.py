@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class CacheCleaner:
     """Periodically cleans up old cached transcoded files"""
 
-    def __init__(self, cache_dir: str = "recordings/.transcoded", max_age_minutes: int = 60, check_interval_minutes: int = 10):
+    def __init__(self, cache_dir: str = ".transcoded", max_age_minutes: int = 60, check_interval_minutes: int = 10):
         """
         Initialize cache cleaner
 
