@@ -1,0 +1,141 @@
+# SF-NVR Configuration - Bar Setup Example
+# Continuous recording during business hours, motion-only after hours
+
+ai_detection:
+  detect_person: true
+  detect_vehicle: true
+  enabled: false
+
+cameras:
+- device_info:
+    firmware: WCM-FWIP4L-BS-U-V2_2.0.6
+    manufacturer: Night Owl SP
+    model: WCM-FWIP4L-BS-U-V2
+    serial: Z4459S4L26FS
+  enabled: true
+  id: cam_Z4459S4L26FS
+  name: Alley
+  onvif_host: 192.168.0.12
+  onvif_port: 8089
+  password: admin
+  rtsp_url: rtsp://admin:admin@192.168.0.12:554/ch0_0.264
+  username: admin
+
+- enabled: true
+  id: Patio
+  name: Patio
+  onvif_host: 192.168.0.144
+  onvif_port: 8089
+  password: admin
+  rtsp_url: rtsp://admin:admin@192.168.0.144:554/ch0_0.264
+  username: admin
+
+- enabled: true
+  id: Patio Gate
+  name: Patio Gate
+  onvif_host: 192.168.0.52
+  onvif_port: 8089
+  password: admin
+  rtsp_url: rtsp://admin:admin@192.168.0.52:554/ch0_0.264
+  username: admin
+
+- enabled: true
+  id: Tool Room
+  name: Tool Room
+  onvif_host: 192.168.0.76
+  onvif_port: 8089
+  password: admin
+  rtsp_url: rtsp://admin:admin@192.168.0.76:554/ch0_0.264
+  username: admin
+
+- enabled: true
+  id: Liquor Storage
+  name: Liquor Storage
+  onvif_host: 192.168.0.118
+  onvif_port: 8089
+  password: admin
+  rtsp_url: rtsp://admin:admin@192.168.0.118:554/ch0_0.264
+  username: admin
+
+motion_detection:
+  enabled: false
+  sensitivity: 25
+
+onvif:
+  auto_discover: true
+  discovery_timeout: 2
+
+recording:
+  container_format: mp4
+  enabled: true
+  retention_days: 7
+  segment_duration: 300
+  storage_path: ./recordings
+  video_codec: h264
+
+  # 🎯 RECORDING MODES - Configured for bar hours
+  # Motion-scheduled = continuous during schedule, motion-only outside schedule
+  default_mode: motion_scheduled
+
+  # Optional: Override mode for specific cameras
+  # Uncomment to customize individual cameras:
+  # camera_modes:
+  #   "Liquor Storage": continuous  # Always record valuable inventory
+  #   "Tool Room": motion_only      # Only record when someone enters
+
+recording_schedules:
+  # Bar business hours
+  # Continuous recording: 4 PM - 2 AM
+  # Motion-only recording: 2 AM - 4 PM
+  bar_hours:
+    start_hour: 16  # 4 PM
+    end_hour: 2     # 2 AM (next day)
+    days: [0, 1, 2, 3, 4, 5, 6]  # Every day (0=Mon, 6=Sun)
+
+  # Optional: Different hours for different days
+  # Uncomment if you have varying hours:
+  # weekday_hours:
+  #   start_hour: 16
+  #   end_hour: 0
+  #   days: [0, 1, 2, 3]  # Mon-Thu close at midnight
+  #
+  # weekend_hours:
+  #   start_hour: 16
+  #   end_hour: 2
+  #   days: [4, 5]  # Fri-Sat close at 2 AM
+
+storage:
+  cleanup_threshold_percent: 85.0  # Trigger automatic cleanup at this disk usage %
+  target_percent: 75.0             # Stop cleanup when disk usage reaches this %
+  retention_days: 7                # Maximum age of recordings to keep (in days)
+
+transcoder:
+  enabled: true                    # Enable background transcoding for instant playback
+  max_workers: 2                   # Number of concurrent transcode operations
+  replace_original: true           # Replace original file after transcode (saves disk space)
+  preferred_encoder: auto          # auto, nvenc, qsv, videotoolbox, amf, or x264
+
+web:
+  host: 0.0.0.0
+  port: 8080
+  stream_quality: medium
+
+# 📊 EXPECTED STORAGE USAGE WITH THIS CONFIGURATION:
+#
+# Business Hours (16:00-02:00): 10 hours continuous recording
+# After Hours (02:00-16:00): 14 hours motion-only recording (assume 10% activity)
+#
+# Per Camera Daily:
+#   Business: 10 hours × 2 GB/hour = 20 GB
+#   After hours: 14 hours × 0.2 GB/hour = 2.8 GB
+#   Total: ~23 GB/day per camera
+#
+# 5 Cameras:
+#   Daily: 5 × 23 GB = 115 GB
+#   7-day retention: 115 GB × 7 = 805 GB total
+#
+# Storage Savings: 52% compared to continuous 24/7 recording!
+#
+# 💾 Disk Space Recommendation:
+#   - Minimum: 1 TB
+#   - Recommended: 2 TB (gives you buffer for high-activity nights)

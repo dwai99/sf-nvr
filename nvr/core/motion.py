@@ -109,28 +109,43 @@ class MotionDetector:
         # Update previous frame
         self.prev_frame = gray
 
-        # Determine if motion detected
+        # Determine if motion detected in this frame
         has_motion = len(motion_boxes) > 0
+        now = datetime.now()
 
-        # Handle motion state changes
-        if has_motion and not self.motion_detected:
-            self._on_motion_started()
-        elif not has_motion and self.motion_detected:
-            self._on_motion_stopped()
+        # Cooldown period: don't end motion event until no motion for this many seconds
+        # This prevents rapid start/stop cycles from creating many tiny events
+        MOTION_COOLDOWN_SECONDS = 3.0
 
-        # Log motion frames continuously while motion is happening
-        if has_motion and self.recorder:
+        # Handle motion state changes with cooldown
+        if has_motion:
+            # Motion detected - start event if not already in one
+            if not self.motion_detected:
+                self._on_motion_started()
+            self.last_motion_time = now
+            self.motion_detected = True
+        else:
+            # No motion in this frame - check cooldown before ending event
+            if self.motion_detected and self.last_motion_time:
+                time_since_motion = (now - self.last_motion_time).total_seconds()
+                if time_since_motion >= MOTION_COOLDOWN_SECONDS:
+                    # Cooldown expired, end the motion event
+                    self._on_motion_stopped()
+                    self.motion_detected = False
+
+        # Log motion frames continuously while in motion state
+        if self.motion_detected and self.recorder:
             self.recorder.log_motion_event()
 
-        self.motion_detected = has_motion
-        if has_motion:
-            self.last_motion_time = datetime.now()
+        # Update recorder's motion state for recording mode decisions
+        if self.recorder and hasattr(self.recorder, 'update_motion_state'):
+            self.recorder.update_motion_state(self.motion_detected)
 
         return has_motion, motion_boxes
 
     def _on_motion_started(self) -> None:
         """Called when motion starts"""
-        logger.info(f"Motion detected on {self.camera_name}")
+        logger.debug(f"Motion detected on {self.camera_name}")
 
         # Log to recorder/database
         if self.recorder:
@@ -144,7 +159,7 @@ class MotionDetector:
 
     def _on_motion_stopped(self) -> None:
         """Called when motion stops"""
-        logger.info(f"Motion ended on {self.camera_name}")
+        logger.debug(f"Motion ended on {self.camera_name}")
 
         # End motion event in recorder/database
         if self.recorder:

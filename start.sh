@@ -13,7 +13,19 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-LOG_FILE="/tmp/nvr_server.log"
+# Read log file path from config, default to ./logs/nvr.log
+CONFIG_FILE="config/config.yaml"
+if [ -f "$CONFIG_FILE" ]; then
+    LOG_FILE=$(grep -A1 "^logging:" "$CONFIG_FILE" | grep "file:" | sed 's/.*file:\s*//' | tr -d ' "'"'" || echo "./logs/nvr.log")
+    # Handle empty result
+    [ -z "$LOG_FILE" ] && LOG_FILE="./logs/nvr.log"
+else
+    LOG_FILE="./logs/nvr.log"
+fi
+
+# Ensure log directory exists
+mkdir -p "$(dirname "$LOG_FILE")"
+
 PID_FILE="/tmp/nvr_server.pid"
 PORT=8080
 

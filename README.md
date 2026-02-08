@@ -1,5 +1,10 @@
 # SF-NVR - Network Video Recorder
 
+[![CI/CD Pipeline](https://github.com/sfrederick/sf-nvr/actions/workflows/ci.yml/badge.svg)](https://github.com/sfrederick/sf-nvr/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/sfrederick/sf-nvr/branch/main/graph/badge.svg)](https://codecov.io/gh/sfrederick/sf-nvr)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 A Python-based Network Video Recorder (NVR) with support for ONVIF camera discovery and RTSP streaming.
 
 ## Features

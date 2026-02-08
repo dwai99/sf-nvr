@@ -24,12 +24,12 @@ class CameraUpdate(BaseModel):
     rtsp_url: Optional[str] = None
 
 
-@router.post("/api/cameras/{camera_name}/rename")
-async def rename_camera(camera_name: str, rename: CameraRename):
+@router.post("/api/cameras/{camera_id}/rename")
+async def rename_camera(camera_id: str, rename: CameraRename):
     """Rename a camera - updates both config and running recorder"""
     from nvr.web.api import recorder_manager
 
-    logger.info(f"Rename request received: camera_name={camera_name}, rename={rename}")
+    logger.info(f"Rename request received: camera_id={camera_id}, rename={rename}")
 
     try:
         # Validate names
@@ -39,22 +39,28 @@ async def rename_camera(camera_name: str, rename: CameraRename):
         if not new_name or not new_name.strip():
             raise HTTPException(status_code=400, detail="New name cannot be empty")
 
-        # Find camera in config
+        # Find camera in config by id (or name for backward compatibility)
         cameras = config.cameras
         camera_found = False
+        target_camera = None
 
-        logger.debug(f"Searching for camera '{old_name}' in {len(cameras)} cameras")
+        logger.debug(f"Searching for camera with id '{camera_id}' in {len(cameras)} cameras")
+
+        # Check for duplicate name (another camera already has this name)
+        for camera in cameras:
+            if camera['name'] == new_name and camera.get('id') != camera_id:
+                raise HTTPException(status_code=400, detail=f"Another camera already has the name '{new_name}'")
 
         for camera in cameras:
-            if camera['name'] == old_name:
-                logger.info(f"Found camera '{old_name}', renaming to '{new_name}'")
+            if camera.get('id') == camera_id or camera['name'] == camera_id:
+                logger.info(f"Found camera '{camera['name']}' (id: {camera.get('id')}), renaming to '{new_name}'")
                 camera['name'] = new_name
                 camera_found = True
                 break
 
         if not camera_found:
-            logger.warning(f"Camera '{old_name}' not found in config")
-            raise HTTPException(status_code=404, detail=f"Camera '{old_name}' not found")
+            logger.warning(f"Camera with id '{camera_id}' not found in config")
+            raise HTTPException(status_code=404, detail=f"Camera '{camera_id}' not found")
 
         # Save config
         logger.debug("Saving config...")
@@ -63,12 +69,13 @@ async def rename_camera(camera_name: str, rename: CameraRename):
 
         # Update recorder if it exists
         if recorder_manager:
-            recorder = recorder_manager.get_recorder(old_name)
+            recorder = recorder_manager.get_recorder_by_id(camera_id)
             if recorder:
-                logger.info(f"Updating recorder name from '{old_name}' to '{new_name}'")
+                old_recorder_name = recorder.camera_name
+                logger.info(f"Updating recorder name from '{old_recorder_name}' to '{new_name}'")
                 recorder.camera_name = new_name
                 # Update the recorder manager's dictionary key
-                recorder_manager.recorders[new_name] = recorder_manager.recorders.pop(old_name)
+                recorder_manager.recorders[new_name] = recorder_manager.recorders.pop(old_recorder_name)
                 logger.info("Recorder updated successfully")
 
         logger.info(f"Renamed camera: {old_name} → {new_name}")
@@ -86,18 +93,18 @@ async def rename_camera(camera_name: str, rename: CameraRename):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.patch("/api/cameras/{camera_name}")
-async def update_camera(camera_name: str, update: CameraUpdate):
+@router.patch("/api/cameras/{camera_id}")
+async def update_camera(camera_id: str, update: CameraUpdate):
     """Update camera properties"""
     from nvr.core.config import config
 
     try:
-        # Find and update camera
+        # Find and update camera by id (or name for backward compatibility)
         cameras = config.cameras
         camera_found = False
 
         for camera in cameras:
-            if camera['name'] == camera_name:
+            if camera.get('id') == camera_id or camera['name'] == camera_id:
                 if update.name:
                     camera['name'] = update.name
                 if update.enabled is not None:

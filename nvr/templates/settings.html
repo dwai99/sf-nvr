@@ -4,6 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Settings - SF-NVR</title>
+
+    <!-- UI Utilities -->
+    <script src="/static/notifications.js"></script>
+    <script src="/static/ui-utils.js"></script>
+
     <style>
         * {
             margin: 0;
@@ -628,6 +633,20 @@
                                 </select>
                             </div>
                         </div>
+
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="setting-label-main">Recording Resolution</div>
+                                <div class="setting-label-desc">Lower resolution = smaller files, longer retention</div>
+                            </div>
+                            <div class="setting-control">
+                                <select id="max-resolution">
+                                    <option value="1080">1080p (Full HD - High Storage)</option>
+                                    <option value="720">720p (Recommended - Balanced)</option>
+                                    <option value="480">480p (Low Storage)</option>
+                                </select>
+                            </div>
+                        </div>
                     </div>
 
                     <div class="setting-group">
@@ -642,6 +661,21 @@
                                 <input type="number" id="retention-days" value="7" min="1" max="365">
                             </div>
                         </div>
+                    </div>
+
+                    <div class="setting-group">
+                        <div class="setting-group-title">Recording Modes</div>
+                        <div class="setting-label-desc" style="margin-bottom: 1rem; color: #888;">
+                            Configure when cameras should record. Motion-only mode saves storage by only recording when motion is detected.
+                        </div>
+
+                        <div id="recording-modes-list">
+                            <!-- Will be populated by JavaScript -->
+                        </div>
+
+                        <button class="btn btn-secondary" onclick="showRecordingModeModal()" style="margin-top: 1rem;">
+                            Configure Recording Modes
+                        </button>
                     </div>
                 </div>
 
@@ -664,8 +698,43 @@
                     </div>
 
                     <div class="setting-group">
-                        <div class="setting-group-title">Storage Status</div>
+                        <div class="setting-group-title">Disk Usage</div>
                         <div id="storage-status">
+                            <!-- Will be populated by JavaScript -->
+                        </div>
+                    </div>
+
+                    <div class="setting-group">
+                        <div class="setting-group-title">Automatic Cleanup</div>
+                        <div id="cleanup-status">
+                            <!-- Will be populated by JavaScript -->
+                        </div>
+                        <div class="setting-row">
+                            <button class="btn btn-secondary" onclick="runManualCleanup()">Run Cleanup Now</button>
+                            <span id="cleanup-result" style="margin-left: 1rem; color: #4a9eff;"></span>
+                        </div>
+                    </div>
+
+                    <div class="setting-group">
+                        <div class="setting-group-title">Retention Statistics</div>
+                        <div id="retention-stats">
+                            <!-- Will be populated by JavaScript -->
+                        </div>
+                    </div>
+
+                    <div class="setting-group">
+                        <div class="setting-group-title">Deletion History</div>
+                        <div id="deletion-stats" style="margin-bottom: 1rem;">
+                            <!-- Will be populated by JavaScript -->
+                        </div>
+                        <div id="deletion-history" style="max-height: 300px; overflow-y: auto;">
+                            <!-- Will be populated by JavaScript -->
+                        </div>
+                    </div>
+
+                    <div class="setting-group">
+                        <div class="setting-group-title">Hardware Acceleration</div>
+                        <div id="encoder-status">
                             <!-- Will be populated by JavaScript -->
                         </div>
                     </div>
@@ -685,6 +754,20 @@
                             </div>
                             <div class="setting-control">
                                 <div class="toggle-switch" id="motion-enabled"></div>
+                            </div>
+                        </div>
+
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="setting-label-main">Detection Method</div>
+                                <div class="setting-label-desc">Choose between speed and precision</div>
+                            </div>
+                            <div class="setting-control">
+                                <select id="motion-method">
+                                    <option value="frame_diff">Frame Difference (Low CPU, all motion)</option>
+                                    <option value="ai_only">AI Only (Higher CPU, people/vehicles)</option>
+                                    <option value="both">Both (Highest CPU, comprehensive)</option>
+                                </select>
                             </div>
                         </div>
 
@@ -855,8 +938,25 @@
 
     <!-- Add/Edit Camera Modal -->
     <div class="modal" id="camera-modal">
-        <div class="modal-content">
+        <div class="modal-content" style="max-width: 600px;">
             <div class="modal-header">Add Camera</div>
+
+            <!-- Network Discovery Section -->
+            <div class="form-group" style="background: #252525; padding: 1rem; border-radius: 8px; margin-bottom: 1.5rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                    <label class="form-label" style="margin: 0;">Discover Cameras on Network</label>
+                    <button class="btn btn-secondary" onclick="scanForCameras()" id="scan-btn" style="padding: 0.4rem 0.8rem; font-size: 0.85em;">
+                        Scan Network
+                    </button>
+                </div>
+                <div id="discovered-cameras" style="margin-top: 0.5rem; max-height: 150px; overflow-y: auto;">
+                    <div style="color: #666; font-size: 0.9em;">Click "Scan Network" to find cameras</div>
+                </div>
+            </div>
+
+            <div style="text-align: center; color: #666; margin-bottom: 1rem; font-size: 0.9em;">
+                - or enter camera details manually -
+            </div>
 
             <div class="form-group">
                 <label class="form-label">Camera Name</label>
@@ -864,7 +964,42 @@
             </div>
 
             <div class="form-group">
-                <label class="form-label">RTSP URL</label>
+                <label class="form-label">IP Address</label>
+                <input type="text" id="modal-ip-address" placeholder="192.168.1.100" onchange="updateRtspUrl()">
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">Username</label>
+                <input type="text" id="modal-username" placeholder="admin" value="admin" onchange="updateRtspUrl()">
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">Password</label>
+                <input type="password" id="modal-password" placeholder="password" value="admin" onchange="updateRtspUrl()">
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">RTSP Port</label>
+                <input type="number" id="modal-rtsp-port" value="554" min="1" max="65535" onchange="updateRtspUrl()">
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">Stream Path (URL Pattern)</label>
+                <select id="modal-stream-path" onchange="updateRtspUrl()">
+                    <option value="/ch0_0.264">Night Owl (/ch0_0.264)</option>
+                    <option value="/stream1">Generic (/stream1)</option>
+                    <option value="/Streaming/Channels/101">Hikvision Main (/Streaming/Channels/101)</option>
+                    <option value="/Streaming/Channels/102">Hikvision Sub (/Streaming/Channels/102)</option>
+                    <option value="/cam/realmonitor?channel=1&subtype=0">Dahua Main</option>
+                    <option value="/cam/realmonitor?channel=1&subtype=1">Dahua Sub</option>
+                    <option value="/live/ch00_0">Amcrest (/live/ch00_0)</option>
+                    <option value="/h264Preview_01_main">Reolink (/h264Preview_01_main)</option>
+                    <option value="custom">Custom...</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">RTSP URL (auto-generated or custom)</label>
                 <input type="text" id="modal-rtsp-url" placeholder="rtsp://username:password@192.168.1.100:554/stream">
             </div>
 
@@ -876,16 +1011,6 @@
             <div class="form-group">
                 <label class="form-label">ONVIF Port</label>
                 <input type="number" id="modal-onvif-port" value="8089">
-            </div>
-
-            <div class="form-group">
-                <label class="form-label">Username</label>
-                <input type="text" id="modal-username" placeholder="admin">
-            </div>
-
-            <div class="form-group">
-                <label class="form-label">Password</label>
-                <input type="password" id="modal-password" placeholder="password">
             </div>
 
             <div class="form-group">
@@ -916,6 +1041,35 @@
         </div>
     </div>
 
+    <!-- Recording Mode Modal -->
+    <div class="modal" id="recording-mode-modal">
+        <div class="modal-content" style="max-width: 900px; max-height: 80vh; overflow-y: auto;">
+            <div class="modal-header">Per-Camera Recording Settings</div>
+
+            <div style="margin-bottom: 15px; padding: 12px; background: #1a2a1a; border-radius: 6px; border: 1px solid #2a4a2a;">
+                <div style="color: #4caf50; font-weight: bold; margin-bottom: 5px;">Storage Optimization Tips</div>
+                <div style="color: #888; font-size: 0.9em;">
+                    <strong>Motion-only mode</strong> can reduce storage by 70-90%. Use it for indoor cameras like storage rooms and stairways.<br>
+                    <strong>480p resolution</strong> is sufficient for indoor areas with good lighting. Use 720p for outdoor/entrance cameras.
+                </div>
+            </div>
+
+            <div id="recording-camera-list" style="display: flex; flex-direction: column; gap: 15px;">
+                <!-- Camera cards will be inserted here -->
+            </div>
+
+            <div style="margin-top: 15px; padding: 12px; background: #2a2a1a; border-radius: 6px; border: 1px solid #4a4a2a;">
+                <div style="color: #ff9800; font-size: 0.9em;">
+                    Note: Resolution changes require a server restart to take effect. Recording mode changes apply immediately.
+                </div>
+            </div>
+
+            <div class="modal-actions">
+                <button class="btn btn-primary" onclick="closeRecordingModeModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         let config = {};
         let hasUnsavedChanges = false;
@@ -928,6 +1082,7 @@
                 populateSettings();
                 loadCameras();
                 updateStorageStatus();
+                loadRecordingModes();
             } catch (error) {
                 console.error('Error loading config:', error);
             }
@@ -943,6 +1098,7 @@
             document.getElementById('segment-duration').value = recording.segment_duration || 300;
             document.getElementById('video-codec').value = recording.video_codec || 'h264';
             document.getElementById('container-format').value = recording.container_format || 'mp4';
+            document.getElementById('max-resolution').value = recording.max_resolution || 720;
             document.getElementById('retention-days').value = recording.retention_days || 7;
             toggleSwitch('recording-enabled', recording.enabled !== false);
 
@@ -953,6 +1109,7 @@
             const motion = config.motion_detection || {};
             toggleSwitch('motion-enabled', motion.enabled === true);
             document.getElementById('motion-sensitivity').value = motion.sensitivity || 25;
+            document.getElementById('motion-method').value = motion.method || 'frame_diff';
 
             // AI detection
             const ai = config.ai_detection || {};
@@ -1115,6 +1272,428 @@
             } catch (error) {
                 console.error('Error loading storage status:', error);
             }
+
+            // Load cleanup status
+            try {
+                const cleanupResponse = await fetch('/api/storage/cleanup/status');
+                const cleanup = await cleanupResponse.json();
+
+                const cleanupDiv = document.getElementById('cleanup-status');
+                const diskUsage = cleanup.disk_usage;
+                const config = cleanup.cleanup_config;
+
+                cleanupDiv.innerHTML = `
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="setting-label-main">Retention Period</div>
+                            <div class="setting-label-desc">Recordings older than this are deleted</div>
+                        </div>
+                        <div class="setting-control">
+                            <strong>${config.retention_days} days</strong>
+                        </div>
+                    </div>
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="setting-label-main">Cleanup Threshold</div>
+                            <div class="setting-label-desc">Automatic cleanup triggers at this disk usage</div>
+                        </div>
+                        <div class="setting-control">
+                            <strong>${config.cleanup_threshold_percent}%</strong>
+                        </div>
+                    </div>
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="setting-label-main">Target Usage</div>
+                            <div class="setting-label-desc">Cleanup stops when disk usage reaches this level</div>
+                        </div>
+                        <div class="setting-control">
+                            <strong>${config.target_percent}%</strong>
+                        </div>
+                    </div>
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="setting-label-main">Current Status</div>
+                            <div class="setting-label-desc">
+                                ${diskUsage.percent >= config.cleanup_threshold_percent ?
+                                    'Cleanup needed - disk usage high' :
+                                    'All good - disk usage normal'}
+                            </div>
+                        </div>
+                        <div class="setting-control">
+                            <strong style="color: ${diskUsage.percent >= config.cleanup_threshold_percent ? '#e74c3c' : '#4a9eff'}">
+                                ${diskUsage.percent >= config.cleanup_threshold_percent ? 'High' : 'Normal'}
+                            </strong>
+                        </div>
+                    </div>
+                `;
+
+                // Load retention stats
+                const retentionDiv = document.getElementById('retention-stats');
+                const retention = cleanup.retention_stats;
+
+                retentionDiv.innerHTML = `
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="setting-label-main">Total Recordings</div>
+                            <div class="setting-label-desc">${retention.total_size_gb.toFixed(2)} GB in ${retention.total_files} files</div>
+                        </div>
+                        <div class="setting-control">
+                            <strong>${retention.total_files} files</strong>
+                        </div>
+                    </div>
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="setting-label-main">Oldest Recording</div>
+                            <div class="setting-label-desc">Age of oldest file</div>
+                        </div>
+                        <div class="setting-control">
+                            <strong>${retention.oldest_file_age_days} days old</strong>
+                        </div>
+                    </div>
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="setting-label-main">Can Cleanup</div>
+                            <div class="setting-label-desc">Files older than retention period</div>
+                        </div>
+                        <div class="setting-control">
+                            <strong>${retention.can_cleanup_gb.toFixed(2)} GB</strong>
+                        </div>
+                    </div>
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="setting-label-main">Files by Age</div>
+                            <div class="setting-label-desc">
+                                &lt;1 day: ${retention.files_by_age['<1day']},
+                                1-3 days: ${retention.files_by_age['1-3days']},
+                                3-7 days: ${retention.files_by_age['3-7days']},
+                                &gt;7 days: ${retention.files_by_age['>7days']}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            } catch (error) {
+                console.error('Error loading cleanup status:', error);
+            }
+
+            // Load deletion history
+            try {
+                const statsResponse = await fetch('/api/storage/deletion-stats');
+                const stats = await statsResponse.json();
+
+                const historyResponse = await fetch('/api/storage/deletion-history?limit=50');
+                const history = await historyResponse.json();
+
+                const statsDiv = document.getElementById('deletion-stats');
+                statsDiv.innerHTML = `
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="setting-label-main">Last 24 Hours</div>
+                            <div class="setting-label-desc">Files deleted in the past day</div>
+                        </div>
+                        <div class="setting-control">
+                            <strong>${stats.last_24h.files} files (${stats.last_24h.size_gb} GB)</strong>
+                        </div>
+                    </div>
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="setting-label-main">Last 7 Days</div>
+                            <div class="setting-label-desc">Files deleted in the past week</div>
+                        </div>
+                        <div class="setting-control">
+                            <strong>${stats.last_7d.files} files (${stats.last_7d.size_gb} GB)</strong>
+                        </div>
+                    </div>
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="setting-label-main">All Time</div>
+                            <div class="setting-label-desc">Total files ever deleted</div>
+                        </div>
+                        <div class="setting-control">
+                            <strong>${stats.total.files} files (${stats.total.size_gb} GB)</strong>
+                        </div>
+                    </div>
+                `;
+
+                const historyDiv = document.getElementById('deletion-history');
+                if (history.history.length === 0) {
+                    historyDiv.innerHTML = '<div style="color: #888; padding: 1rem;">No deletion history yet</div>';
+                } else {
+                    historyDiv.innerHTML = `
+                        <table style="width: 100%; border-collapse: collapse; font-size: 0.85em;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid #333;">
+                                    <th style="text-align: left; padding: 0.5rem;">Camera</th>
+                                    <th style="text-align: left; padding: 0.5rem;">File</th>
+                                    <th style="text-align: right; padding: 0.5rem;">Size</th>
+                                    <th style="text-align: left; padding: 0.5rem;">Deleted</th>
+                                    <th style="text-align: left; padding: 0.5rem;">Reason</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${history.history.map(entry => `
+                                    <tr style="border-bottom: 1px solid #222;">
+                                        <td style="padding: 0.5rem; color: #4a9eff;">${entry.camera_name}</td>
+                                        <td style="padding: 0.5rem; color: #888;">${entry.file_path.split('/').pop()}</td>
+                                        <td style="padding: 0.5rem; text-align: right;">${entry.file_size_mb} MB</td>
+                                        <td style="padding: 0.5rem; color: #888;">${new Date(entry.deleted_at).toLocaleString()}</td>
+                                        <td style="padding: 0.5rem; color: #e74c3c;">${entry.deletion_reason || 'Unknown'}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    `;
+                }
+            } catch (error) {
+                console.error('Error loading deletion history:', error);
+            }
+
+            // Load encoder status
+            try {
+                const encoderResponse = await fetch('/api/system/encoder');
+                const encoder = await encoderResponse.json();
+
+                const encoderDiv = document.getElementById('encoder-status');
+
+                encoderDiv.innerHTML = `
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="setting-label-main">Video Encoder</div>
+                            <div class="setting-label-desc">${encoder.description}</div>
+                        </div>
+                        <div class="setting-control">
+                            <strong style="color: ${encoder.encoder_type === 'GPU' ? '#4a9eff' : '#888'}">
+                                ${encoder.encoder_type === 'GPU' ? '🚀 ' : ''}${encoder.encoder_type}
+                            </strong>
+                        </div>
+                    </div>
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="setting-label-main">Encoder Name</div>
+                            <div class="setting-label-desc">FFmpeg codec being used</div>
+                        </div>
+                        <div class="setting-control">
+                            <strong>${encoder.encoder}</strong>
+                        </div>
+                    </div>
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="setting-label-main">Worker Threads</div>
+                            <div class="setting-label-desc">Concurrent transcode operations</div>
+                        </div>
+                        <div class="setting-control">
+                            <strong>${encoder.max_workers}</strong>
+                        </div>
+                    </div>
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="setting-label-main">Queue Size</div>
+                            <div class="setting-label-desc">Videos waiting to be transcoded</div>
+                        </div>
+                        <div class="setting-control">
+                            <strong>${encoder.queue_size}</strong>
+                        </div>
+                    </div>
+                `;
+            } catch (error) {
+                console.error('Error loading encoder status:', error);
+            }
+        }
+
+        // Manual cleanup function
+        async function runManualCleanup() {
+            const resultSpan = document.getElementById('cleanup-result');
+            resultSpan.textContent = 'Running cleanup...';
+            resultSpan.style.color = '#888';
+
+            try {
+                const response = await fetch('/api/storage/cleanup/run', {
+                    method: 'POST'
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    resultSpan.textContent = result.message;
+                    resultSpan.style.color = '#4a9eff';
+
+                    // Reload storage status after cleanup
+                    setTimeout(() => {
+                        loadStorageStatus();
+                        resultSpan.textContent = '';
+                    }, 3000);
+                } else {
+                    resultSpan.textContent = 'Cleanup failed';
+                    resultSpan.style.color = '#e74c3c';
+                }
+            } catch (error) {
+                console.error('Error running cleanup:', error);
+                resultSpan.textContent = 'Error: ' + error.message;
+                resultSpan.style.color = '#e74c3c';
+            }
+        }
+
+        // Load recording modes
+        async function loadRecordingModes() {
+            try {
+                const response = await fetch('/api/recording/modes');
+                const data = await response.json();
+
+                if (!data.success) {
+                    console.error('Failed to load recording modes');
+                    return;
+                }
+
+                const listDiv = document.getElementById('recording-modes-list');
+                const cameraNames = config.cameras ? config.cameras.map(c => c.name) : [];
+
+                if (cameraNames.length === 0) {
+                    listDiv.innerHTML = '<div style="color: #888; padding: 1rem 0;">No cameras configured</div>';
+                    return;
+                }
+
+                let html = '';
+                for (const cameraName of cameraNames) {
+                    const cameraMode = data.camera_modes[cameraName] || data.default_mode;
+                    const modeLabel = getModeLabel(cameraMode.mode);
+                    const modeColor = getModeColor(cameraMode.mode);
+
+                    html += `
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="setting-label-main">${cameraName}</div>
+                                <div class="setting-label-desc">Recording mode for this camera</div>
+                            </div>
+                            <div class="setting-control">
+                                <span style="color: ${modeColor}; font-weight: 500;">${modeLabel}</span>
+                            </div>
+                        </div>
+                    `;
+                }
+
+                listDiv.innerHTML = html;
+            } catch (error) {
+                console.error('Error loading recording modes:', error);
+            }
+        }
+
+        function getModeLabel(mode) {
+            const labels = {
+                'continuous': 'Continuous (24/7)',
+                'motion_only': 'Motion Only',
+                'scheduled': 'Scheduled',
+                'motion_scheduled': 'Motion + Scheduled'
+            };
+            return labels[mode] || mode;
+        }
+
+        function getModeColor(mode) {
+            const colors = {
+                'continuous': '#4a9eff',
+                'motion_only': '#f39c12',
+                'scheduled': '#9b59b6',
+                'motion_scheduled': '#e74c3c'
+            };
+            return colors[mode] || '#888';
+        }
+
+        async function showRecordingModeModal() {
+            const modal = document.getElementById('recording-mode-modal');
+            const cameraList = document.getElementById('recording-camera-list');
+
+            try {
+                // Fetch current recording settings
+                const response = await fetch('/api/cameras/recording-settings');
+                const data = await response.json();
+                const cameras = data.cameras || [];
+
+                // Build camera cards
+                cameraList.innerHTML = cameras.map(camera => {
+                    const safeId = (camera.camera_id || camera.camera_name).replace(/[^a-zA-Z0-9-_]/g, '_');
+                    const resolution = camera.resolution || 720;
+                    const mode = camera.recording_mode || 'continuous';
+
+                    return `
+                    <div style="background: #1a1a1a; padding: 15px; border-radius: 6px; border: 1px solid #333;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                            <div style="font-size: 1.1em; font-weight: bold; color: #4a9eff;">
+                                ${camera.camera_name}
+                            </div>
+                            <span style="font-size: 0.8em; color: ${mode === 'motion_only' ? '#4caf50' : '#888'};">
+                                ${mode === 'motion_only' ? 'Saving storage' : 'Recording continuously'}
+                            </span>
+                        </div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr 120px; gap: 15px; align-items: end;">
+                            <div>
+                                <label style="display: block; font-size: 0.9em; color: #888; margin-bottom: 5px;">
+                                    Recording Mode
+                                </label>
+                                <select id="rec-mode-${safeId}"
+                                        style="width: 100%; padding: 8px; background: #2a2a2a; border: 1px solid #444; color: #fff; border-radius: 4px;">
+                                    <option value="continuous" ${mode === 'continuous' ? 'selected' : ''}>Continuous (24/7)</option>
+                                    <option value="motion_only" ${mode === 'motion_only' ? 'selected' : ''}>Motion Only</option>
+                                    <option value="scheduled" ${mode === 'scheduled' ? 'selected' : ''}>Scheduled Hours</option>
+                                    <option value="motion_scheduled" ${mode === 'motion_scheduled' ? 'selected' : ''}>Motion + Scheduled</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label style="display: block; font-size: 0.9em; color: #888; margin-bottom: 5px;">
+                                    Resolution
+                                </label>
+                                <select id="rec-res-${safeId}"
+                                        style="width: 100%; padding: 8px; background: #2a2a2a; border: 1px solid #444; color: #fff; border-radius: 4px;">
+                                    <option value="1080" ${resolution === 1080 ? 'selected' : ''}>1080p (HD)</option>
+                                    <option value="720" ${resolution === 720 ? 'selected' : ''}>720p</option>
+                                    <option value="480" ${resolution === 480 ? 'selected' : ''}>480p</option>
+                                    <option value="360" ${resolution === 360 ? 'selected' : ''}>360p</option>
+                                </select>
+                            </div>
+                            <button class="btn btn-primary" onclick="saveCameraRecordingSettings('${camera.camera_id || camera.camera_name}', '${safeId}')"
+                                    style="padding: 8px 16px;">
+                                Save
+                            </button>
+                        </div>
+                    </div>`;
+                }).join('');
+
+                modal.classList.add('active');
+            } catch (error) {
+                console.error('Error loading recording settings:', error);
+                showNotification('Failed to load recording settings', 'error');
+            }
+        }
+
+        function closeRecordingModeModal() {
+            document.getElementById('recording-mode-modal').classList.remove('active');
+        }
+
+        async function saveCameraRecordingSettings(cameraId, safeId) {
+            const mode = document.getElementById(`rec-mode-${safeId}`).value;
+            const resolution = parseInt(document.getElementById(`rec-res-${safeId}`).value);
+
+            try {
+                const response = await fetch(`/api/cameras/${encodeURIComponent(cameraId)}/recording-settings`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        recording_mode: mode,
+                        resolution: resolution
+                    })
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    let message = 'Recording settings saved';
+                    if (result.requires_restart) {
+                        message += ' (restart required for resolution change)';
+                    }
+                    showNotification(message, 'success');
+                } else {
+                    showNotification(result.detail || 'Failed to save settings', 'error');
+                }
+            } catch (error) {
+                console.error('Error saving recording settings:', error);
+                showNotification('Failed to save recording settings', 'error');
+            }
         }
 
         // Tab navigation
@@ -1184,12 +1763,14 @@
                         segment_duration: parseInt(getElementValue('segment-duration', '300')),
                         video_codec: getElementValue('video-codec', 'h264'),
                         container_format: getElementValue('container-format', 'mp4'),
+                        max_resolution: parseInt(getElementValue('max-resolution', '720')),
                         retention_days: parseInt(getElementValue('retention-days', '7')),
                         storage_path: getElementValue('storage-path', './recordings')
                     },
                     motion_detection: {
                         enabled: isToggleOn('motion-enabled'),
-                        sensitivity: parseInt(getElementValue('motion-sensitivity', '25'))
+                        sensitivity: parseInt(getElementValue('motion-sensitivity', '25')),
+                        method: getElementValue('motion-method', 'frame_diff')
                     },
                     ai_detection: {
                         enabled: isToggleOn('ai-enabled'),
@@ -1207,8 +1788,6 @@
                     },
                     cameras: config.cameras || [] // Keep existing cameras
                 };
-
-                console.log('Saving config:', updatedConfig);
 
                 const response = await fetch('/api/config', {
                     method: 'POST',
@@ -1228,7 +1807,7 @@
                 }
             } catch (error) {
                 console.error('Error saving settings:', error);
-                alert(`Error saving settings: ${error.message}\nCheck console for details.`);
+                showNotification(`Error saving settings: ${error.message}`, 'error', 5000);
             }
         }
 
@@ -1245,6 +1824,122 @@
 
         function closeCameraModal() {
             document.getElementById('camera-modal').classList.remove('active');
+            // Clear discovered cameras when closing
+            document.getElementById('discovered-cameras').innerHTML =
+                '<div style="color: #666; font-size: 0.9em;">Click "Scan Network" to find cameras</div>';
+        }
+
+        async function scanForCameras() {
+            const scanBtn = document.getElementById('scan-btn');
+            const discoveredDiv = document.getElementById('discovered-cameras');
+
+            // Show scanning state
+            scanBtn.disabled = true;
+            scanBtn.textContent = 'Scanning...';
+            discoveredDiv.innerHTML = '<div style="color: #4a9eff; font-size: 0.9em;">Scanning network for cameras...</div>';
+
+            try {
+                const response = await fetch('/api/cameras/discover', { method: 'POST' });
+                const data = await response.json();
+
+                if (data.cameras && data.cameras.length > 0) {
+                    discoveredDiv.innerHTML = data.cameras.map(cam => `
+                        <div onclick="selectDiscoveredCamera(${JSON.stringify(cam).replace(/"/g, '&quot;')})"
+                             style="padding: 0.6rem; background: #333; border-radius: 4px; margin-bottom: 0.5rem; cursor: pointer; transition: background 0.2s;"
+                             onmouseover="this.style.background='#444'" onmouseout="this.style.background='#333'">
+                            <div style="font-weight: 500; color: #4a9eff;">${cam.name || 'Unknown Camera'}</div>
+                            <div style="font-size: 0.85em; color: #888;">
+                                ${cam.onvif_host || 'Unknown IP'}
+                                ${cam.device_info?.manufacturer ? ' - ' + cam.device_info.manufacturer : ''}
+                                ${cam.device_info?.model ? ' ' + cam.device_info.model : ''}
+                            </div>
+                        </div>
+                    `).join('');
+                } else {
+                    discoveredDiv.innerHTML = `
+                        <div style="color: #f39c12; font-size: 0.9em;">
+                            No new cameras found. Try:
+                            <ul style="margin: 0.5rem 0 0 1.5rem; padding: 0;">
+                                <li>Check camera is powered on and connected to network</li>
+                                <li>Ensure camera supports ONVIF</li>
+                                <li>Enter details manually below</li>
+                            </ul>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                console.error('Scan error:', error);
+                discoveredDiv.innerHTML = `
+                    <div style="color: #e74c3c; font-size: 0.9em;">
+                        Scan failed: ${error.message}. Try entering details manually.
+                    </div>
+                `;
+            } finally {
+                scanBtn.disabled = false;
+                scanBtn.textContent = 'Scan Network';
+            }
+        }
+
+        function selectDiscoveredCamera(camera) {
+            // Auto-fill the form with discovered camera details
+            document.getElementById('modal-camera-name').value = camera.name || '';
+            document.getElementById('modal-ip-address').value = camera.onvif_host || '';
+            document.getElementById('modal-onvif-host').value = camera.onvif_host || '';
+            document.getElementById('modal-onvif-port').value = camera.onvif_port || 8089;
+            document.getElementById('modal-username').value = camera.username || 'admin';
+            document.getElementById('modal-password').value = camera.password || 'admin';
+
+            // Try to detect stream path from RTSP URL
+            const rtspUrl = camera.rtsp_url || '';
+            if (rtspUrl) {
+                // Extract port and path from RTSP URL
+                const match = rtspUrl.match(/rtsp:\/\/[^@]+@[^:]+:(\d+)(\/.*)/);
+                if (match) {
+                    document.getElementById('modal-rtsp-port').value = match[1];
+                    const path = match[2];
+                    // Try to match known paths
+                    const pathSelect = document.getElementById('modal-stream-path');
+                    let found = false;
+                    for (let option of pathSelect.options) {
+                        if (option.value === path) {
+                            pathSelect.value = path;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        pathSelect.value = 'custom';
+                    }
+                }
+            }
+
+            // Set the RTSP URL
+            document.getElementById('modal-rtsp-url').value = rtspUrl;
+
+            // Highlight the selected camera
+            showNotification(`Selected: ${camera.name}. Review details and click Save.`, 'success');
+        }
+
+        function updateRtspUrl() {
+            const ip = document.getElementById('modal-ip-address').value;
+            const port = document.getElementById('modal-rtsp-port').value || '554';
+            const username = document.getElementById('modal-username').value || 'admin';
+            const password = document.getElementById('modal-password').value || 'admin';
+            const pathSelect = document.getElementById('modal-stream-path');
+            const path = pathSelect.value;
+
+            if (!ip) return;
+
+            if (path === 'custom') {
+                // Don't overwrite custom URL
+                return;
+            }
+
+            const rtspUrl = `rtsp://${username}:${password}@${ip}:${port}${path}`;
+            document.getElementById('modal-rtsp-url').value = rtspUrl;
+
+            // Also update ONVIF host
+            document.getElementById('modal-onvif-host').value = ip;
         }
 
         async function saveCameraModal() {
@@ -1259,7 +1954,7 @@
             };
 
             if (!camera.name || !camera.rtsp_url) {
-                alert('Please fill in camera name and RTSP URL');
+                showNotification('Please fill in camera name and RTSP URL', 'warning');
                 return;
             }
 
@@ -1277,16 +1972,16 @@
                 if (response.ok) {
                     closeCameraModal();
                     loadCameras();
-                    alert('Camera added successfully! Restart the server to apply changes.');
+                    showNotification('Camera added successfully! Restart the server to apply changes.', 'success', 5000);
                 }
             } catch (error) {
                 console.error('Error saving camera:', error);
-                alert('Error saving camera');
+                showNotification('Error saving camera', 'error');
             }
         }
 
         function editCamera(name) {
-            alert('Edit camera functionality coming soon!');
+            showNotification('Edit camera functionality coming soon!', 'info');
         }
 
         async function deleteCamera(name) {
@@ -1305,11 +2000,11 @@
 
                 if (response.ok) {
                     loadCameras();
-                    alert('Camera deleted successfully! Restart the server to apply changes.');
+                    showNotification('Camera deleted successfully! Restart the server to apply changes.', 'success', 5000);
                 }
             } catch (error) {
                 console.error('Error deleting camera:', error);
-                alert('Error deleting camera');
+                showNotification('Error deleting camera', 'error');
             }
         }
 
@@ -1362,7 +2057,9 @@
             const cameras = await response.json();
 
             // Build camera cards
-            cameraList.innerHTML = cameras.map(camera => `
+            cameraList.innerHTML = cameras.map(camera => {
+                const safeId = (camera.id || camera.name).replace(/[^a-zA-Z0-9-_]/g, '_');
+                return `
                 <div style="background: #1a1a1a; padding: 15px; border-radius: 6px; border: 1px solid #333;">
                     <div style="font-size: 1.1em; font-weight: bold; margin-bottom: 10px; color: #4a9eff;">
                         ${camera.name}
@@ -1373,7 +2070,7 @@
                                 Sensitivity (0-100)
                             </label>
                             <input type="number"
-                                   id="motion-sens-${camera.name}"
+                                   id="motion-sens-${safeId}"
                                    value="${camera.motion_sensitivity || 25}"
                                    min="0" max="100"
                                    style="width: 100%; padding: 8px; background: #2a2a2a; border: 1px solid #444; color: #fff; border-radius: 4px;">
@@ -1383,7 +2080,7 @@
                                 Min Area (pixels)
                             </label>
                             <input type="number"
-                                   id="motion-area-${camera.name}"
+                                   id="motion-area-${safeId}"
                                    value="${camera.motion_min_area || 500}"
                                    min="100" max="10000" step="100"
                                    style="width: 100%; padding: 8px; background: #2a2a2a; border: 1px solid #444; color: #fff; border-radius: 4px;">
@@ -1391,12 +2088,12 @@
                     </div>
                     <div style="margin-top: 10px;">
                         <button class="btn btn-primary" style="padding: 6px 12px; font-size: 0.9em;"
-                                onclick="saveCameraMotionSettings('${camera.name}')">
+                                onclick="saveCameraMotionSettings('${camera.id}', '${safeId}')">
                             Save Settings
                         </button>
                     </div>
                 </div>
-            `).join('');
+            `}).join('');
 
             modal.classList.add('active');
         }
@@ -1405,12 +2102,12 @@
             document.getElementById('motion-camera-modal').classList.remove('active');
         }
 
-        async function saveCameraMotionSettings(cameraName) {
-            const sensitivity = parseInt(document.getElementById(`motion-sens-${cameraName}`).value);
-            const minArea = parseInt(document.getElementById(`motion-area-${cameraName}`).value);
+        async function saveCameraMotionSettings(cameraId, safeId) {
+            const sensitivity = parseInt(document.getElementById(`motion-sens-${safeId}`).value);
+            const minArea = parseInt(document.getElementById(`motion-area-${safeId}`).value);
 
             try {
-                const response = await fetch(`/api/cameras/${encodeURIComponent(cameraName)}/motion-settings`, {
+                const response = await fetch(`/api/cameras/${encodeURIComponent(cameraId)}/motion-settings`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -1420,13 +2117,13 @@
                 });
 
                 if (response.ok) {
-                    alert(`Motion settings saved for ${cameraName}`);
+                    showNotification('Motion settings saved', 'success');
                 } else {
-                    alert('Failed to save motion settings');
+                    showNotification('Failed to save motion settings', 'error');
                 }
             } catch (error) {
                 console.error('Error saving motion settings:', error);
-                alert('Error saving motion settings');
+                showNotification('Error saving motion settings', 'error');
             }
         }
 

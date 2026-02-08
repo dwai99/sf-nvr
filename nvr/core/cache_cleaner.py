@@ -104,8 +104,9 @@ def get_cache_cleaner() -> CacheCleaner:
     """Get or create global cache cleaner instance"""
     global _cache_cleaner
     if _cache_cleaner is None:
+        from nvr.core.config import config
         _cache_cleaner = CacheCleaner(
-            cache_dir="recordings/.transcoded",
+            cache_dir=str(config.storage_path / ".transcoded"),
             max_age_minutes=60,      # Delete files older than 60 minutes
             check_interval_minutes=10  # Check every 10 minutes
         )

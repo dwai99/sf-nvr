@@ -114,6 +114,7 @@ class StorageManager:
             # Calculate how much space we need to free
             disk = psutil.disk_usage(str(self.storage_path))
             current_used = disk.used
+            current_usage = disk.percent  # For deletion reason logging
             target_used = disk.total * (self.target_percent / 100)
             space_to_free = current_used - target_used
 
@@ -141,21 +142,59 @@ class StorageManager:
                     # Delete the file
                     file_path = file_info['path']
                     file_size = file_info['size']
+                    camera_id = file_path.parent.name
+                    filename = file_path.name
+
+                    # Get segment info before deletion for logging and motion cleanup
+                    segment_start = None
+                    segment_end = None
+                    camera_name = camera_id  # Default to folder name
+
+                    if self.playback_db:
+                        try:
+                            # Try to get segment details from database
+                            segments = self.playback_db.get_all_segments(camera_id)
+                            for seg in segments:
+                                if filename in seg.get('file_path', ''):
+                                    segment_start = datetime.fromisoformat(seg['start_time']) if seg.get('start_time') else None
+                                    segment_end = datetime.fromisoformat(seg['end_time']) if seg.get('end_time') else None
+                                    camera_name = seg.get('camera_name', camera_id)
+                                    break
+                        except Exception as e:
+                            logger.debug(f"Could not get segment info: {e}")
+
+                    # Delete the file
                     file_path.unlink()
                     deleted_count += 1
                     bytes_freed += file_size
 
-                    logger.debug(f"Deleted {file_path.name} ({file_size / (1024**2):.1f} MB, age: {(datetime.now() - file_info['mtime']).days} days)")
+                    age_days = (datetime.now() - file_info['mtime']).days
+                    logger.info(f"Deleted {file_path.name} ({file_size / (1024**2):.1f} MB, age: {age_days} days)")
 
-                    # Remove from database if we have access
+                    # Remove from database and log deletion
                     if self.playback_db:
                         try:
-                            # Extract camera ID and filename from path
-                            camera_id = file_path.parent.name
-                            filename = file_path.name
+                            # Log the deletion
+                            self.playback_db.log_deletion(
+                                camera_id=camera_id,
+                                file_path=str(file_path),
+                                file_size_bytes=file_size,
+                                recording_start=segment_start,
+                                recording_end=segment_end,
+                                deletion_reason=f"Storage cleanup (disk at {current_usage:.1f}%)",
+                                camera_name=camera_name
+                            )
+
+                            # Delete segment from database
                             self.playback_db.delete_segment_by_path(camera_id, filename)
+
+                            # Delete associated motion events
+                            if segment_start and segment_end:
+                                self.playback_db.delete_motion_events_in_range(
+                                    camera_id, segment_start, segment_end
+                                )
                         except Exception as db_err:
-                            logger.warning(f"Failed to remove {file_path.name} from database: {db_err}")
+                            logger.warning(f"Failed to update database for {file_path.name}: {db_err}")
 
                 except Exception as e:
                     logger.error(f"Failed to delete {file_info['path']}: {e}")

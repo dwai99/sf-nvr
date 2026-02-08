@@ -5,8 +5,10 @@ Network Video Recorder system with web-based playback and live viewing.
 ## Quick Start
 
 ```bash
-# Run the server
-python -m nvr.app
+# Server management
+./start.sh      # Start the server
+./stop.sh       # Stop the server
+./restart.sh    # Restart the server
 
 # Run tests
 pytest
@@ -66,6 +68,20 @@ nvr/
 - Flask for web framework
 - Jinja2 templates with inline JavaScript (no build step)
 - Use `console.log` for debug output in JS (remove before committing)
+
+## When to Restart Server
+
+**Requires `./restart.sh`:**
+- Python files (nvr/core/*.py, nvr/web/*.py, app.py)
+- Database schema changes
+- Configuration changes
+
+**Browser refresh only (no restart):**
+- HTML templates (nvr/templates/*.html)
+- Static files (nvr/static/*.js, *.css)
+- Frontend-only changes
+
+**After making changes that require restart, run `./restart.sh` immediately.**
 
 ## Common Issues
 

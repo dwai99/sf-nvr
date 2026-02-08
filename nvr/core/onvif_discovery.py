@@ -6,6 +6,7 @@ from nvr.core import compat  # noqa
 import asyncio
 import logging
 from typing import List, Dict, Optional, Any
+from datetime import datetime, timedelta, timezone
 from onvif import ONVIFCamera
 from zeep.exceptions import Fault
 import socket
@@ -94,6 +95,9 @@ class ONVIFDevice:
                 'HardwareId': getattr(device_info_obj, 'HardwareId', 'Unknown')
             }
 
+            # Get network interfaces (for MAC address)
+            await self._get_network_info(device_mgmt)
+
             # Get RTSP URLs
             await self._get_rtsp_urls()
 
@@ -109,6 +113,32 @@ class ONVIFDevice:
         except Exception as e:
             logger.error(f"Error connecting to {self.host}:{self.port}: {e}")
             return False
+
+    async def _get_network_info(self, device_mgmt) -> None:
+        """Retrieve network information including MAC address from camera"""
+        try:
+            network_interfaces = await asyncio.to_thread(device_mgmt.GetNetworkInterfaces)
+
+            for interface in network_interfaces:
+                # Get MAC address from HwAddress
+                hw_address = getattr(interface, 'Info', None)
+                if hw_address:
+                    mac = getattr(hw_address, 'HwAddress', None)
+                    if mac and mac != 'Unknown':
+                        self.device_info['MACAddress'] = mac
+                        logger.info(f"Found MAC address: {mac}")
+                        break
+
+                # Alternative location for MAC address
+                if hasattr(interface, 'HwAddress'):
+                    mac = interface.HwAddress
+                    if mac and mac != 'Unknown':
+                        self.device_info['MACAddress'] = mac
+                        logger.info(f"Found MAC address: {mac}")
+                        break
+
+        except Exception as e:
+            logger.debug(f"Could not get network interfaces from {self.host}: {e}")
 
     async def _get_rtsp_urls(self) -> None:
         """Retrieve RTSP stream URLs from camera"""
@@ -158,9 +188,215 @@ class ONVIFDevice:
                 'manufacturer': manufacturer,
                 'model': model,
                 'firmware': self.device_info.get('FirmwareVersion', 'Unknown'),
-                'serial': serial
+                'serial': serial,
+                'hardware_id': self.device_info.get('HardwareId', 'Unknown'),
+                'mac_address': self.device_info.get('MACAddress', 'Unknown'),
+                'supports_profile_g': self.device_info.get('supports_profile_g', False)
             }
         }
+
+    async def check_profile_g_support(self) -> bool:
+        """
+        Check if the camera supports ONVIF Profile G (Recording and Replay).
+
+        Profile G provides access to recordings stored on camera's SD card.
+
+        Returns:
+            True if Profile G is supported, False otherwise
+        """
+        if not self.camera:
+            logger.warning(f"Camera not connected: {self.host}")
+            return False
+
+        try:
+            # Try to create recording search service - only available with Profile G
+            search_service = await asyncio.to_thread(
+                self.camera.create_recording_service
+            )
+
+            if search_service:
+                # Try to get recordings to verify service works
+                try:
+                    await asyncio.to_thread(search_service.GetRecordings)
+                    self.device_info['supports_profile_g'] = True
+                    logger.info(f"Profile G supported on {self.host}")
+                    return True
+                except Exception as e:
+                    logger.debug(f"GetRecordings failed on {self.host}: {e}")
+                    self.device_info['supports_profile_g'] = False
+                    return False
+
+        except Exception as e:
+            logger.debug(f"Profile G not supported on {self.host}: {e}")
+            self.device_info['supports_profile_g'] = False
+            return False
+
+        return False
+
+    async def get_sd_recordings(
+        self,
+        start_time: datetime,
+        end_time: datetime
+    ) -> List[Dict[str, Any]]:
+        """
+        Get list of recordings from camera's SD card within a time range.
+
+        Uses ONVIF Recording Search service (Profile G).
+
+        Args:
+            start_time: Start of time range (timezone-aware or naive local)
+            end_time: End of time range (timezone-aware or naive local)
+
+        Returns:
+            List of recording segments with start_time, end_time, recording_token
+        """
+        if not self.camera:
+            logger.warning(f"Camera not connected: {self.host}")
+            return []
+
+        if not self.device_info.get('supports_profile_g', False):
+            logger.warning(f"Profile G not supported on {self.host}")
+            return []
+
+        try:
+            search_service = await asyncio.to_thread(
+                self.camera.create_search_service
+            )
+
+            # Ensure times are UTC for ONVIF
+            if start_time.tzinfo is None:
+                start_time_utc = start_time.replace(tzinfo=timezone.utc)
+            else:
+                start_time_utc = start_time.astimezone(timezone.utc)
+
+            if end_time.tzinfo is None:
+                end_time_utc = end_time.replace(tzinfo=timezone.utc)
+            else:
+                end_time_utc = end_time.astimezone(timezone.utc)
+
+            # Create search scope
+            scope = {
+                'IncludedSources': None,  # All sources
+                'IncludedRecordings': None,  # All recordings
+                'RecordingInformationFilter': None,
+                'Extension': None
+            }
+
+            # Start recording search
+            search_request = {
+                'Scope': scope,
+                'MaxMatches': 100,
+                'KeepAliveTime': 'PT60S'  # 60 seconds
+            }
+
+            # FindRecordings returns a SearchToken
+            search_result = await asyncio.wait_for(
+                asyncio.to_thread(search_service.FindRecordings, search_request),
+                timeout=30.0
+            )
+
+            if not search_result or not hasattr(search_result, 'SearchToken'):
+                logger.warning(f"No search token returned from {self.host}")
+                return []
+
+            search_token = search_result.SearchToken
+
+            # Get search results
+            results = await asyncio.wait_for(
+                asyncio.to_thread(
+                    search_service.GetRecordingSearchResults,
+                    {'SearchToken': search_token, 'MinResults': 1, 'MaxResults': 100, 'WaitTime': 'PT10S'}
+                ),
+                timeout=30.0
+            )
+
+            recordings = []
+
+            if results and hasattr(results, 'ResultList') and results.ResultList:
+                for result in results.ResultList.RecordingInformation:
+                    rec_token = getattr(result, 'RecordingToken', None)
+                    rec_start = getattr(result, 'EarliestRecording', None)
+                    rec_end = getattr(result, 'LatestRecording', None)
+
+                    if rec_token and rec_start and rec_end:
+                        # Filter by requested time range
+                        if rec_end >= start_time_utc and rec_start <= end_time_utc:
+                            recordings.append({
+                                'recording_token': rec_token,
+                                'start_time': rec_start.isoformat() if hasattr(rec_start, 'isoformat') else str(rec_start),
+                                'end_time': rec_end.isoformat() if hasattr(rec_end, 'isoformat') else str(rec_end),
+                                'source': 'sd_card'
+                            })
+
+            # End the search session
+            try:
+                await asyncio.to_thread(search_service.EndSearch, {'SearchToken': search_token})
+            except Exception:
+                pass  # Ignore errors ending search
+
+            logger.info(f"Found {len(recordings)} SD card recordings on {self.host}")
+            return recordings
+
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout getting SD recordings from {self.host}")
+            return []
+        except Exception as e:
+            logger.error(f"Error getting SD recordings from {self.host}: {e}")
+            return []
+
+    async def get_replay_uri(self, recording_token: str) -> Optional[str]:
+        """
+        Get RTSP replay URI for a recording on the camera's SD card.
+
+        Args:
+            recording_token: Token identifying the recording (from get_sd_recordings)
+
+        Returns:
+            RTSP URL for replaying the recording, or None if not available
+        """
+        if not self.camera:
+            logger.warning(f"Camera not connected: {self.host}")
+            return None
+
+        if not self.device_info.get('supports_profile_g', False):
+            logger.warning(f"Profile G not supported on {self.host}")
+            return None
+
+        try:
+            replay_service = await asyncio.to_thread(
+                self.camera.create_replay_service
+            )
+
+            # Request replay URI
+            stream_setup = {
+                'Stream': 'RTP-Unicast',
+                'Transport': {'Protocol': 'RTSP'}
+            }
+
+            replay_uri = await asyncio.wait_for(
+                asyncio.to_thread(
+                    replay_service.GetReplayUri,
+                    {'StreamSetup': stream_setup, 'RecordingToken': recording_token}
+                ),
+                timeout=10.0
+            )
+
+            if replay_uri and hasattr(replay_uri, 'Uri'):
+                uri = replay_uri.Uri
+                # Add authentication to URI if not present
+                if '@' not in uri and self.username and self.password:
+                    uri = uri.replace('rtsp://', f'rtsp://{self.username}:{self.password}@')
+                logger.info(f"Got replay URI for {recording_token} on {self.host}")
+                return uri
+
+            return None
+
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout getting replay URI from {self.host}")
+            return None
+        except Exception as e:
+            logger.error(f"Error getting replay URI from {self.host}: {e}")
+            return None
 
 
 class ONVIFDiscovery:
@@ -247,8 +483,21 @@ class ONVIFDiscovery:
                 if connected:
                     devices.append(device)
                     logger.info(f"✓ Found ONVIF camera at {ip}:{port}")
+                else:
+                    # ONVIF failed, try RTSP detection as fallback
+                    if port == 8089 or port == 80:  # Likely a camera
+                        rtsp_device = await self._try_rtsp_fallback(ip, port)
+                        if rtsp_device:
+                            devices.append(rtsp_device)
+                            logger.info(f"✓ Found camera via RTSP fallback at {ip}")
             except asyncio.TimeoutError:
                 logger.debug(f"Timeout connecting to {ip}:{port}")
+                # Try RTSP fallback on timeout too
+                if port == 8089 or port == 80:
+                    rtsp_device = await self._try_rtsp_fallback(ip, port)
+                    if rtsp_device:
+                        devices.append(rtsp_device)
+                        logger.info(f"✓ Found camera via RTSP fallback at {ip}")
             except Exception as e:
                 logger.debug(f"Error connecting to {ip}:{port}: {e}")
 
@@ -300,6 +549,43 @@ class ONVIFDiscovery:
 
         return None
 
+
+    async def _try_rtsp_fallback(self, ip: str, onvif_port: int) -> Optional[ONVIFDevice]:
+        """Try RTSP connection as fallback when ONVIF fails"""
+        # Common RTSP URLs for various camera brands
+        rtsp_patterns = [
+            f"rtsp://{self.username}:{self.password}@{ip}:554/ch0_0.264",  # Night Owl, generic
+            f"rtsp://{self.username}:{self.password}@{ip}:554/stream1",    # Generic
+            f"rtsp://{self.username}:{self.password}@{ip}:554/Streaming/Channels/101",  # Hikvision
+            f"rtsp://{self.username}:{self.password}@{ip}:554/cam/realmonitor?channel=1&subtype=0",  # Dahua
+        ]
+
+        # Try to connect to RTSP port
+        try:
+            conn = asyncio.open_connection(ip, 554)
+            reader, writer = await asyncio.wait_for(conn, timeout=0.5)
+            writer.close()
+            await writer.wait_closed()
+
+            # RTSP port is open - create a basic device
+            device = ONVIFDevice(ip, onvif_port, self.username, self.password)
+            device.device_info = {
+                'Manufacturer': 'Unknown',
+                'Model': 'Camera',
+                'FirmwareVersion': 'Unknown',
+                'SerialNumber': 'Unknown'
+            }
+            # Use the most common RTSP URL pattern
+            device.rtsp_urls = [rtsp_patterns[0]]
+            logger.info(f"RTSP port open on {ip}, using default URL pattern")
+            return device
+
+        except (asyncio.TimeoutError, ConnectionRefusedError, OSError):
+            pass
+        except Exception as e:
+            logger.debug(f"RTSP fallback failed for {ip}: {e}")
+
+        return None
 
     def _get_local_ip(self) -> Optional[str]:
         """Get local IP address"""

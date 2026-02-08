@@ -38,6 +38,8 @@ recordings/
 
 # Logs
 *.log
+nvr.log.*
+logs/
 system_monitor.log
 system_alerts.log
 
@@ -66,3 +68,25 @@ scripts/
 .DS_Store
 .AppleDouble
 .LSOverride
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+.benchmarks/
+test-results/
+playwright-report/
+coverage.xml
+junit.xml
+*.pyc
+.mypy_cache/
+
+# Node modules and dependencies
+node_modules/
+package-lock.json
+
+# Playwright
+playwright/.cache/
+
+# Claude Code
+.claude/

@@ -1,7 +1,7 @@
 """FastAPI web application for NVR"""
 
 import logging
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse
@@ -37,9 +37,11 @@ app.mount("/static", StaticFiles(directory="nvr/static"), name="static")
 from nvr.web.api_extensions import router as extensions_router
 from nvr.web.playback_api import router as playback_router
 from nvr.web.settings_api import router as settings_router
+from nvr.web.recording_api import router as recording_router
 app.include_router(extensions_router)
 app.include_router(playback_router)
 app.include_router(settings_router)
+app.include_router(recording_router)
 
 # Global instances
 recorder_manager: RecorderManager = None
@@ -48,16 +50,18 @@ ai_monitor: AIDetectionMonitor = None
 playback_db: PlaybackDatabase = None
 storage_manager = None
 alert_system = None
+recording_mode_manager = None
 webrtc_manager: WebRTCManager = None
 webrtc_passthrough: WebRTCPassthroughManager = None
 rtsp_proxy: RTSPProxy = None
 mse_proxy: MSEStreamProxy = None
+sd_card_manager = None
 
 
 @app.on_event("startup")
 async def startup_event():
     """Initialize NVR on startup"""
-    global recorder_manager, motion_monitor, ai_monitor, playback_db, webrtc_manager, webrtc_passthrough, rtsp_proxy, mse_proxy
+    global recorder_manager, motion_monitor, ai_monitor, playback_db, recording_mode_manager, webrtc_manager, webrtc_passthrough, rtsp_proxy, mse_proxy, sd_card_manager
 
     logger.info("Starting NVR...")
 
@@ -65,30 +69,38 @@ async def startup_event():
     from nvr.core.cache_cleaner import get_cache_cleaner
     get_cache_cleaner()  # Starts automatically
 
-    # Queue existing mp4v files for background transcoding
+    # Queue existing mp4v files for background transcoding (non-blocking)
     from nvr.core.transcoder import get_transcoder
     import subprocess
+    import threading
     transcoder = get_transcoder()
-    queued_count = 0
-    for video_file in Path("recordings").rglob("*.mp4"):
-        # Check if it's mp4v (mpeg4)
-        try:
-            probe_result = subprocess.run(
-                ['ffprobe', '-v', 'error', '-select_streams', 'v:0',
-                 '-show_entries', 'stream=codec_name', '-of', 'default=noprint_wrappers=1:nokey=1',
-                 str(video_file)],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if probe_result.stdout.strip() == 'mpeg4':
-                transcoder.queue_transcode(video_file)
-                queued_count += 1
-        except Exception as e:
-            logger.warning(f"Failed to check codec for {video_file.name}: {e}")
 
-    if queued_count > 0:
-        logger.info(f"Queued {queued_count} existing mp4v files for background transcoding")
+    def queue_mp4v_files_async():
+        """Background task to find and queue mp4v files for transcoding"""
+        queued_count = 0
+        for video_file in config.storage_path.rglob("*.mp4"):
+            # Check if it's mp4v (mpeg4)
+            try:
+                probe_result = subprocess.run(
+                    ['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+                     '-show_entries', 'stream=codec_name', '-of', 'default=noprint_wrappers=1:nokey=1',
+                     str(video_file)],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if probe_result.stdout.strip() == 'mpeg4':
+                    transcoder.queue_transcode(video_file)
+                    queued_count += 1
+            except Exception as e:
+                logger.warning(f"Failed to check codec for {video_file.name}: {e}")
+
+        if queued_count > 0:
+            logger.info(f"Queued {queued_count} existing mp4v files for background transcoding")
+
+    # Start the mp4v scan in background so it doesn't block server startup
+    threading.Thread(target=queue_mp4v_files_async, daemon=True, name="Mp4vScanner").start()
+    logger.info("Started background scan for mp4v files to transcode")
 
     # Optimize OpenCV for multi-threading
     import os
@@ -101,6 +113,19 @@ async def startup_event():
     playback_db = PlaybackDatabase(db_path)
     logger.info(f"Playback database initialized at {db_path}")
 
+    # Initialize SD card recordings manager for fallback access
+    from nvr.core.sd_card_manager import SDCardRecordingsManager
+    sd_card_config = config.get('sd_card_fallback', {})
+    sd_card_manager = SDCardRecordingsManager(
+        playback_db=playback_db,
+        cache_duration=sd_card_config.get('cache_duration_seconds', 300),
+        query_timeout=30.0
+    )
+    if sd_card_config.get('enabled', True):
+        logger.info("SD card fallback manager initialized")
+    else:
+        logger.info("SD card fallback is disabled in config")
+
     # Schedule periodic database maintenance (runs every 24 hours)
     from nvr.core.db_maintenance import schedule_maintenance
     schedule_maintenance(playback_db, interval_hours=24)
@@ -111,10 +136,11 @@ async def startup_event():
     storage_manager = StorageManager(
         storage_path=config.storage_path,
         playback_db=playback_db,
-        retention_days=config.get('recording.retention_days', 7),
-        cleanup_threshold_percent=config.get('recording.cleanup_threshold', 85.0),
-        target_percent=config.get('recording.cleanup_target', 75.0)
+        retention_days=config.get('storage.retention_days', config.get('recording.retention_days', 7)),
+        cleanup_threshold_percent=config.get('storage.cleanup_threshold_percent', 85.0),
+        target_percent=config.get('storage.target_percent', 75.0)
     )
+    logger.info(f"Storage manager initialized: {storage_manager.retention_days} day retention, cleanup at {storage_manager.cleanup_threshold}%")
 
     # Schedule periodic storage cleanup checks (every 6 hours)
     def schedule_storage_cleanup():
@@ -191,18 +217,63 @@ async def startup_event():
     schedule_health_monitoring()
     logger.info("Health monitoring scheduler started (checks every 2 minutes)")
 
-    # Initialize recorder manager with database
+    # Initialize recording mode manager
+    from nvr.core.recording_modes import RecordingModeManager, RecordingMode, create_business_hours, create_night_hours
+    recording_mode_manager = RecordingModeManager()
+
+    # Configure default recording mode from config
+    default_mode_str = config.get('recording.default_mode', 'continuous')
+    try:
+        default_mode = RecordingMode(default_mode_str)
+        recording_mode_manager.default_config.mode = default_mode
+        logger.info(f"Default recording mode: {default_mode.value}")
+    except ValueError:
+        logger.warning(f"Invalid default recording mode '{default_mode_str}', using continuous")
+
+    # Configure per-camera modes from config (legacy format)
+    camera_modes = config.get('recording.camera_modes', {})
+    if camera_modes:
+        for camera_name, mode_str in camera_modes.items():
+            try:
+                mode = RecordingMode(mode_str)
+                recording_mode_manager.set_camera_mode(camera_name, mode)
+                logger.info(f"Recording mode for {camera_name}: {mode.value}")
+            except ValueError:
+                logger.warning(f"Invalid recording mode '{mode_str}' for {camera_name}")
+
+    # Configure per-camera modes from camera settings (new format)
+    cameras = config.get('cameras', [])
+    for cam in cameras:
+        cam_name = cam.get('name')
+        mode_str = cam.get('recording_mode')
+        if cam_name and mode_str:
+            try:
+                mode = RecordingMode(mode_str)
+                recording_mode_manager.set_camera_mode(cam_name, mode)
+                logger.info(f"Recording mode for {cam_name}: {mode.value} (resolution: {cam.get('resolution', 'default')}p)")
+            except ValueError:
+                logger.warning(f"Invalid recording mode '{mode_str}' for {cam_name}")
+
+    # Initialize recorder manager with database and recording mode manager
     recorder_manager = RecorderManager(
         storage_path=config.storage_path,
         segment_duration=config.get('recording.segment_duration', 300),
-        playback_db=playback_db
+        playback_db=playback_db,
+        recording_mode_manager=recording_mode_manager
     )
 
-    # Initialize motion monitor
-    motion_monitor = MotionMonitor()
+    # Motion detection method: 'frame_diff', 'ai_only', or 'both'
+    motion_method = config.get('motion_detection.method', 'frame_diff')
+    use_frame_diff = motion_method in ('frame_diff', 'both')
+    use_ai = motion_method in ('ai_only', 'both') or config.get('ai_detection.enabled', False)
+
+    # Initialize motion monitor (frame-difference detection)
+    motion_monitor = MotionMonitor() if use_frame_diff else None
+    if use_frame_diff:
+        logger.info("Frame-difference motion detection enabled")
 
     # Initialize AI detection monitor
-    if config.get('ai_detection.enabled', False):
+    if use_ai:
         ai_monitor = AIDetectionMonitor(
             confidence_threshold=config.get('ai_detection.confidence_threshold', 0.5)
         )
@@ -235,42 +306,53 @@ async def startup_event():
         except Exception as e:
             logger.error(f"Auto-discovery failed: {e}")
 
-    # Load all cameras and start recording immediately
+    # Load all cameras - disabled cameras get live view but no recording
     cameras = config.cameras
     recording_enabled = config.get('recording.enabled', True)
+    recording_count = 0
 
     for camera in cameras:
-        if not camera.get('enabled', True):
-            continue
-
         camera_name = camera['name']
         camera_id = camera.get('id', camera_name)  # Fallback to name if no ID
         rtsp_url = camera['rtsp_url']
+        camera_enabled = camera.get('enabled', True)
 
-        # Add recorder and start only if recording is enabled
-        if recording_enabled:
-            await recorder_manager.add_camera(camera_name, rtsp_url, camera_id=camera_id, auto_start=True)
+        # Add camera to recorder manager
+        # All cameras connect for live view, but disabled cameras don't record
+        should_record = recording_enabled and camera_enabled
+        streaming_only = not should_record
 
-        # Add motion detector if enabled
-        if config.get('motion_detection.enabled', True):
-            recorder = recorder_manager.get_recorder(camera_name)
-            motion_monitor.add_camera(
-                camera_name,
-                sensitivity=config.get('motion_detection.sensitivity', 25),
-                min_area=config.get('motion_detection.min_area', 500),
-                recorder=recorder
-            )
+        await recorder_manager.add_camera(
+            camera_name, rtsp_url,
+            camera_id=camera_id,
+            auto_start=True,  # Always start for live view
+            streaming_only=streaming_only
+        )
 
-        # Add AI detector if enabled
-        if config.get('ai_detection.enabled', False) and ai_monitor:
-            recorder = recorder_manager.get_recorder(camera_name)
-            ai_monitor.add_camera(
-                camera_name,
-                recorder=recorder,
-                confidence_threshold=config.get('ai_detection.confidence_threshold', 0.5)
-            )
+        if should_record:
+            recording_count += 1
+            # Add motion detector if enabled (frame-difference method)
+            if config.get('motion_detection.enabled', True) and motion_monitor:
+                recorder = recorder_manager.get_recorder(camera_name)
+                motion_monitor.add_camera(
+                    camera_name,
+                    sensitivity=config.get('motion_detection.sensitivity', 25),
+                    min_area=config.get('motion_detection.min_area', 500),
+                    recorder=recorder
+                )
 
-    logger.info(f"Started recording on {len(cameras)} camera(s)")
+            # Add AI detector if enabled
+            if use_ai and ai_monitor:
+                recorder = recorder_manager.get_recorder(camera_name)
+                ai_monitor.add_camera(
+                    camera_name,
+                    recorder=recorder,
+                    confidence_threshold=config.get('ai_detection.confidence_threshold', 0.5)
+                )
+        else:
+            logger.info(f"Camera {camera_name} loaded (streaming only, recording disabled)")
+
+    logger.info(f"Started recording on {recording_count}/{len(cameras)} camera(s)")
 
     # Initialize WebRTC managers
     webrtc_manager = WebRTCManager(recorder_manager)
@@ -292,9 +374,14 @@ async def startup_event():
     asyncio.create_task(disk_monitor_task())
     logger.info("Disk space monitor started - will prevent drive from filling up")
 
-    # Start motion monitoring
-    if config.get('motion_detection.enabled', True) and motion_monitor.detectors:
+    # Start motion monitoring (frame-difference)
+    if config.get('motion_detection.enabled', True) and motion_monitor and motion_monitor.detectors:
         asyncio.create_task(motion_monitor.start_monitoring(recorder_manager))
+        logger.info(f"Motion monitoring started for {len(motion_monitor.detectors)} cameras (method: {motion_method})")
+    elif not motion_monitor:
+        logger.info("Frame-difference motion detection disabled (using AI-only mode)")
+    else:
+        logger.warning(f"Motion monitoring NOT started - enabled: {config.get('motion_detection.enabled', True)}")
 
     # Start AI monitoring
     if config.get('ai_detection.enabled', False) and ai_monitor and ai_monitor.detectors:
@@ -399,12 +486,18 @@ async def index(request: Request):
     )
 
 
-@app.get("/fullscreen/{camera_name}", response_class=HTMLResponse)
-async def fullscreen_view(request: Request, camera_name: str):
+@app.get("/fullscreen/{camera_id}", response_class=HTMLResponse)
+async def fullscreen_view(request: Request, camera_id: str):
     """Fullscreen view of a single camera"""
+    # Look up camera name for display
+    camera_name = camera_id
+    for camera in config.cameras:
+        if camera.get('id') == camera_id or camera['name'] == camera_id:
+            camera_name = camera['name']
+            break
     return templates.TemplateResponse(
         "fullscreen.html",
-        {"request": request, "camera_name": camera_name}
+        {"request": request, "camera_id": camera_id, "camera_name": camera_name}
     )
 
 
@@ -427,8 +520,12 @@ async def settings_view(request: Request):
 
 
 @app.get("/api/cameras")
-async def get_cameras() -> List[Dict[str, Any]]:
+async def get_cameras(response: Response) -> List[Dict[str, Any]]:
     """Get list of all cameras"""
+    # Prevent caching to ensure fresh data after renames
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+
     cameras = config.cameras
     result = []
 
@@ -436,11 +533,17 @@ async def get_cameras() -> List[Dict[str, Any]]:
         camera_name = camera['name']
         recorder = recorder_manager.get_recorder(camera_name) if recorder_manager else None
 
+        # Recording means connected AND writing to disk (not streaming_only)
+        is_recording = (recorder is not None and
+                       recorder.is_recording and
+                       not recorder.streaming_only) if recorder else False
+
         result.append({
             'name': camera_name,
             'id': camera.get('id', camera_name),
             'enabled': camera.get('enabled', True),
-            'recording': recorder is not None and recorder.is_recording if recorder else False,
+            'recording': is_recording,
+            'streaming': recorder is not None and recorder.is_recording if recorder else False,
             'rtsp_url': camera.get('rtsp_url', ''),
             'device_info': camera.get('device_info', {})
         })
@@ -448,29 +551,36 @@ async def get_cameras() -> List[Dict[str, Any]]:
     return result
 
 
-@app.get("/api/cameras/{camera_name}/debug")
-async def debug_camera(camera_name: str) -> Dict[str, Any]:
+@app.get("/api/cameras/{camera_id}/debug")
+async def debug_camera(camera_id: str) -> Dict[str, Any]:
     """Debug endpoint to check recorder state"""
-    recorder = recorder_manager.get_recorder(camera_name)
-    if not recorder:
-        raise HTTPException(status_code=404, detail="Camera not found")
+    try:
+        recorder = recorder_manager.get_recorder_by_id(camera_id)
+        if not recorder:
+            raise HTTPException(status_code=404, detail="Camera not found")
 
-    frame = recorder.get_latest_frame()
+        frame = recorder.get_latest_frame()
 
-    return {
-        'camera_name': camera_name,
-        'is_recording': recorder.is_recording,
-        'has_capture': recorder.capture is not None,
-        'queue_size': recorder.frame_queue.qsize(),
-        'last_frame': 'None' if recorder.last_frame is None else f"{recorder.last_frame.shape}",
-        'got_frame_from_method': 'None' if frame is None else f"{frame.shape}"
-    }
+        return {
+            'camera_id': camera_id,
+            'camera_name': recorder.camera_name,
+            'is_recording': recorder.is_recording,
+            'streaming_only': recorder.streaming_only,
+            'has_capture': recorder.capture is not None,
+            'capture_opened': recorder.capture.isOpened() if recorder.capture else False,
+            'queue_size': recorder.frame_queue.qsize() if recorder.frame_queue else 0,
+            'last_frame_bytes': 'None' if recorder.last_frame is None else f"{len(recorder.last_frame)} bytes",
+            'got_frame_bytes': 'None' if frame is None else f"{len(frame)} bytes"
+        }
+    except Exception as e:
+        logger.error(f"Debug endpoint error: {e}", exc_info=True)
+        return {'error': str(e)}
 
 
-@app.get("/api/cameras/{camera_name}/health")
-async def get_camera_health(camera_name: str) -> Dict[str, Any]:
+@app.get("/api/cameras/{camera_id}/health")
+async def get_camera_health(camera_id: str) -> Dict[str, Any]:
     """Get detailed health information for a camera"""
-    recorder = recorder_manager.get_recorder(camera_name)
+    recorder = recorder_manager.get_recorder_by_id(camera_id)
     if not recorder:
         raise HTTPException(status_code=404, detail="Camera not found")
 
@@ -573,18 +683,34 @@ async def discover_cameras(ip_range: str = None) -> Dict[str, Any]:
         timeout = config.get('onvif.discovery_timeout', 5)
         devices = await discovery.discover_cameras(timeout=timeout, scan_range=ip_range)
 
+        # Get already configured camera IPs to filter them out
+        existing_ips = set()
+        for cam in config.cameras:
+            if cam.get('onvif_host'):
+                existing_ips.add(cam['onvif_host'])
+            # Also extract IP from RTSP URL
+            rtsp = cam.get('rtsp_url', '')
+            if '@' in rtsp and ':' in rtsp:
+                try:
+                    ip_part = rtsp.split('@')[1].split(':')[0]
+                    existing_ips.add(ip_part)
+                except:
+                    pass
+
         discovered = []
         for device in devices:
             camera_dict = device.to_dict()
-            discovered.append(camera_dict)
-
-            # Optionally add to config
-            # config.add_camera(camera_dict)
+            # Only include cameras not already configured
+            if camera_dict.get('onvif_host') not in existing_ips:
+                discovered.append(camera_dict)
+            else:
+                logger.debug(f"Skipping already-configured camera at {camera_dict.get('onvif_host')}")
 
         return {
             'success': True,
             'count': len(discovered),
-            'cameras': discovered
+            'cameras': discovered,
+            'message': f"Found {len(discovered)} new camera(s)" if discovered else "No new cameras found"
         }
 
     except Exception as e:
@@ -595,30 +721,73 @@ async def discover_cameras(ip_range: str = None) -> Dict[str, Any]:
         }
 
 
-@app.post("/api/cameras/{camera_name}/start")
-async def start_camera(camera_name: str) -> Dict[str, Any]:
-    """Start recording for a camera"""
+@app.post("/api/cameras/{camera_id}/start")
+async def start_camera(camera_id: str, permanent: bool = False) -> Dict[str, Any]:
+    """Start recording for a camera
+
+    Args:
+        camera_id: ID of the camera to start (also accepts camera name for compatibility)
+        permanent: If True, also enable the camera in config (survives restart)
+    """
+    logger.info(f"start_camera called: camera_id={camera_id}, permanent={permanent}")
     try:
-        recorder = recorder_manager.get_recorder(camera_name)
+        recorder = recorder_manager.get_recorder_by_id(camera_id)
+        logger.info(f"Got recorder: {recorder is not None}")
         if not recorder:
-            raise HTTPException(status_code=404, detail="Camera not found")
+            logger.error(f"Camera not found: {camera_id}")
+            logger.info(f"Available cameras: {list(recorder_manager.recorders.keys())}")
+            return {'success': False, 'error': f'Camera not found: {camera_id}'}
 
-        await recorder.start()
+        camera_name = recorder.camera_name
+        logger.info(f"Recorder state: is_recording={recorder.is_recording}, streaming_only={recorder.streaming_only}")
 
-        return {'success': True, 'message': f'Started recording {camera_name}'}
+        # If already recording (not streaming_only), nothing to do
+        if recorder.is_recording and not recorder.streaming_only:
+            logger.info(f"{camera_name} is already recording normally")
+            return {'success': True, 'message': f'{camera_name} is already recording', 'permanent': permanent}
+
+        # If in streaming_only mode, we need to restart in recording mode
+        if recorder.is_recording and recorder.streaming_only:
+            logger.info(f"Stopping streaming_only mode for {camera_name}")
+            recorder.stop()
+            await asyncio.sleep(0.5)  # Brief pause for cleanup
+
+        # Start recording
+        logger.info(f"Starting recorder for {camera_name}")
+        await recorder.start(streaming_only=False)
+        logger.info(f"Recorder started for {camera_name}")
+
+        message = f'Started recording {camera_name}'
+
+        # If permanent, also enable in config
+        if permanent:
+            logger.info(f"Enabling {camera_name} in config permanently")
+            cameras = config.cameras
+            for camera in cameras:
+                if camera.get('id') == camera_id or camera['name'] == camera_id:
+                    camera['enabled'] = True
+                    break
+            config.save()
+            message += ' (enabled in config)'
+            logger.info(f"Camera {camera_name} permanently enabled")
+
+        logger.info(f"Returning success for {camera_name}")
+        return {'success': True, 'message': message, 'permanent': permanent}
 
     except Exception as e:
-        logger.error(f"Error starting camera {camera_name}: {e}")
+        logger.error(f"Error starting camera {camera_id}: {e}", exc_info=True)
         return {'success': False, 'error': str(e)}
 
 
-@app.post("/api/cameras/{camera_name}/reconnect")
-async def reconnect_camera(camera_name: str) -> Dict[str, Any]:
+@app.post("/api/cameras/{camera_id}/reconnect")
+async def reconnect_camera(camera_id: str) -> Dict[str, Any]:
     """Force reconnect a camera (stop and restart)"""
     try:
-        recorder = recorder_manager.get_recorder(camera_name)
+        recorder = recorder_manager.get_recorder_by_id(camera_id)
         if not recorder:
-            raise HTTPException(status_code=404, detail="Camera not found")
+            return {'success': False, 'error': f'Camera not found: {camera_id}'}
+
+        camera_name = recorder.camera_name
 
         # Stop and restart to force immediate reconnection
         recorder.stop()
@@ -628,38 +797,80 @@ async def reconnect_camera(camera_name: str) -> Dict[str, Any]:
         return {'success': True, 'message': f'Reconnecting {camera_name}...'}
 
     except Exception as e:
-        logger.error(f"Error reconnecting camera {camera_name}: {e}")
+        logger.error(f"Error reconnecting camera {camera_id}: {e}")
         return {'success': False, 'error': str(e)}
 
 
-@app.post("/api/cameras/{camera_name}/stop")
-async def stop_camera(camera_name: str) -> Dict[str, Any]:
-    """Stop recording for a camera"""
+@app.post("/api/cameras/{camera_id}/stop")
+async def stop_camera(camera_id: str, permanent: bool = False) -> Dict[str, Any]:
+    """Stop recording for a camera (live view continues)
+
+    Args:
+        camera_id: ID of the camera to stop (also accepts camera name for compatibility)
+        permanent: If True, also disable the camera in config (survives restart)
+    """
+    logger.info(f"stop_camera called: camera_id={camera_id}, permanent={permanent}")
     try:
-        recorder = recorder_manager.get_recorder(camera_name)
+        recorder = recorder_manager.get_recorder_by_id(camera_id)
         if not recorder:
-            raise HTTPException(status_code=404, detail="Camera not found")
+            logger.error(f"Camera not found: {camera_id}")
+            logger.info(f"Available cameras: {list(recorder_manager.recorders.keys())}")
+            return {'success': False, 'error': f'Camera not found: {camera_id}'}
 
+        camera_name = recorder.camera_name
+        logger.info(f"Recorder state before stop: is_recording={recorder.is_recording}, streaming_only={recorder.streaming_only}")
+
+        # If already in streaming_only mode, nothing to do
+        if recorder.streaming_only:
+            logger.info(f"{camera_name} already in streaming_only mode")
+            return {'success': True, 'message': f'{camera_name} recording already stopped', 'permanent': permanent}
+
+        # Stop recording and restart in streaming-only mode (keeps live view working)
+        logger.info(f"Stopping recorder for {camera_name}")
         recorder.stop()
+        await asyncio.sleep(0.5)  # Brief pause for cleanup
+        logger.info(f"Starting recorder in streaming_only mode for {camera_name}")
+        await recorder.start(streaming_only=True)
+        logger.info(f"Recorder state after start: is_recording={recorder.is_recording}, streaming_only={recorder.streaming_only}")
 
-        return {'success': True, 'message': f'Stopped recording {camera_name}'}
+        message = f'Stopped recording {camera_name} (live view continues)'
+
+        # If permanent, also disable in config
+        if permanent:
+            cameras = config.cameras
+            for camera in cameras:
+                if camera.get('id') == camera_id or camera['name'] == camera_id:
+                    camera['enabled'] = False
+                    break
+            config.save()
+            message += ' (disabled in config)'
+            logger.info(f"Camera {camera_name} permanently disabled")
+
+        logger.info(f"stop_camera returning success for {camera_name}")
+        return {
+            'success': True,
+            'message': message,
+            'permanent': permanent,
+            'is_recording': recorder.is_recording,
+            'streaming_only': recorder.streaming_only
+        }
 
     except Exception as e:
-        logger.error(f"Error stopping camera {camera_name}: {e}")
+        logger.error(f"Error stopping camera {camera_id}: {e}")
         return {'success': False, 'error': str(e)}
 
 
-@app.get("/api/cameras/{camera_name}/live")
-async def live_stream(camera_name: str, raw: bool = False, quality: int = 50, realtime: bool = False):
+@app.get("/api/cameras/{camera_id}/live")
+async def live_stream(camera_id: str, raw: bool = False, quality: int = 50, realtime: bool = False):
     """Stream live view from camera
 
     Args:
-        camera_name: Name of the camera
+        camera_id: ID of the camera (also accepts camera name for compatibility)
         raw: If True, skip motion detection overlay for faster streaming
         quality: JPEG quality (1-100, default 50). Lower = faster/smaller, Higher = better quality
         realtime: If True, stream as fast as possible with no frame rate limiting
     """
-    recorder = recorder_manager.get_recorder(camera_name)
+    recorder = recorder_manager.get_recorder_by_id(camera_id)
     if not recorder:
         raise HTTPException(status_code=404, detail="Camera not found")
 
@@ -745,10 +956,22 @@ async def live_stream(camera_name: str, raw: bool = False, quality: int = 50, re
     )
 
 
-@app.get("/api/cameras/{camera_name}/recordings")
-async def get_recordings(camera_name: str) -> List[Dict[str, Any]]:
+@app.get("/api/cameras/{camera_id}/recordings")
+async def get_recordings(camera_id: str) -> List[Dict[str, Any]]:
     """Get list of recordings for a camera"""
     try:
+        # Find camera name from recorder or config
+        recorder = recorder_manager.get_recorder_by_id(camera_id) if recorder_manager else None
+        if recorder:
+            camera_name = recorder.camera_name
+        else:
+            # Fallback: search config for camera
+            camera_name = camera_id
+            for cam in config.cameras:
+                if cam.get('id') == camera_id or cam['name'] == camera_id:
+                    camera_name = cam['name']
+                    break
+
         camera_storage = config.storage_path / camera_name.replace(' ', '_')
         if not camera_storage.exists():
             return []
@@ -774,15 +997,15 @@ async def get_recordings(camera_name: str) -> List[Dict[str, Any]]:
         return recordings
 
     except Exception as e:
-        logger.error(f"Error getting recordings for {camera_name}: {e}")
+        logger.error(f"Error getting recordings for {camera_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/recordings/{camera_name}/{filename}")
-async def get_recording(camera_name: str, filename: str):
+@app.get("/api/recordings/{camera_id}/{filename}")
+async def get_recording(camera_id: str, filename: str):
     """Download or stream a recording"""
     try:
-        camera_storage = config.storage_path / camera_name.replace(' ', '_')
+        camera_storage = config.storage_path / camera_id.replace(' ', '_')
         video_file = camera_storage / filename
 
         if not video_file.exists():
@@ -882,6 +1105,103 @@ async def websocket_events(websocket: WebSocket):
         logger.error(f"WebSocket error: {e}")
 
 
+@app.websocket("/ws/camera/{camera_id}/stream")
+async def websocket_camera_stream(websocket: WebSocket, camera_id: str):
+    """WebSocket for camera video stream - bypasses browser HTTP connection limits"""
+    await websocket.accept()
+
+    # Find camera
+    camera = None
+    for cam in config.cameras:
+        if cam.get('id') == camera_id or cam.get('name') == camera_id:
+            camera = cam
+            break
+
+    if not camera:
+        await websocket.close(code=4004, reason="Camera not found")
+        return
+
+    camera_name = camera.get('name', camera_id)
+    logger.info(f"WebSocket stream started for {camera_name}")
+
+    try:
+        import base64
+
+        # Get recorder for this camera (try by ID first, then by name)
+        recorder = recorder_manager.get_recorder_by_id(camera_id) if recorder_manager else None
+        if not recorder:
+            recorder = recorder_manager.get_recorder(camera_name) if recorder_manager else None
+
+        if not recorder:
+            logger.warning(f"WebSocket: No recorder found for {camera_id} / {camera_name}")
+            await websocket.close(code=4004, reason="Camera not recording")
+            return
+
+        frame_interval = 1.0 / 10  # 10 FPS target (reduced from 15 for better frame quality)
+        last_frame_time = 0
+        last_frame_size = 0  # Track frame size for corruption detection
+        frames_sent = 0
+        no_frame_count = 0
+
+        while True:
+            current_time = asyncio.get_event_loop().time()
+
+            # Rate limit
+            if current_time - last_frame_time < frame_interval:
+                await asyncio.sleep(0.01)
+                continue
+
+            # Get latest frame from recorder (already JPEG encoded)
+            jpeg_data = recorder.get_latest_frame()
+
+            if jpeg_data is not None:
+                # Validate JPEG data before sending
+                # Valid JPEG must:
+                # 1. Start with FFD8 (SOI marker)
+                # 2. End with FFD9 (EOI marker)
+                # 3. Be at least 20KB (washed out/corrupted frames are often smaller)
+                # 4. Not be drastically smaller than last good frame (sudden quality drop = corruption)
+                MIN_FRAME_SIZE = 20000  # 20KB minimum (increased from 5KB)
+                frame_size = len(jpeg_data)
+                is_valid_jpeg = (
+                    frame_size >= MIN_FRAME_SIZE and
+                    jpeg_data[0:2] == b'\xff\xd8' and  # Start of Image
+                    jpeg_data[-2:] == b'\xff\xd9'      # End of Image
+                )
+
+                # Also check for sudden size drops (likely corruption)
+                # If frame is less than 50% of last good frame size, reject it
+                if is_valid_jpeg and last_frame_size > 0:
+                    if frame_size < last_frame_size * 0.5:
+                        is_valid_jpeg = False
+
+                if is_valid_jpeg:
+                    # Send as base64 (frame is already JPEG bytes)
+                    frame_data = base64.b64encode(jpeg_data).decode('utf-8')
+                    await websocket.send_text(frame_data)
+                    last_frame_time = current_time
+                    last_frame_size = frame_size  # Update reference size
+                    frames_sent += 1
+                    if frames_sent == 1:
+                        logger.info(f"WebSocket first frame sent for {camera_name} ({frame_size} bytes)")
+                    no_frame_count = 0
+                else:
+                    # Skip corrupted frame
+                    if frames_sent > 0 and frames_sent % 100 == 0:
+                        logger.warning(f"WebSocket skipping corrupted frame for {camera_name} (size: {frame_size}, last_good: {last_frame_size})")
+            else:
+                no_frame_count += 1
+                if no_frame_count == 50:  # Log after ~5 seconds of no frames
+                    logger.warning(f"WebSocket no frames available for {camera_name}")
+                    no_frame_count = 0
+                await asyncio.sleep(0.1)
+
+    except WebSocketDisconnect:
+        logger.info(f"WebSocket stream disconnected for {camera_name}")
+    except Exception as e:
+        logger.error(f"WebSocket stream error for {camera_name}: {e}")
+
+
 @app.get("/api/storage/cleanup/status")
 async def get_cleanup_status():
     """Get current storage cleanup status and statistics"""
@@ -939,6 +1259,58 @@ async def run_manual_cleanup():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/storage/deletion-history")
+async def get_deletion_history(limit: int = 100, camera: str = None):
+    """Get history of deleted recordings"""
+    try:
+        # Use camera parameter as camera_id for lookups
+        history = playback_db.get_deletion_history(limit=limit, camera_id=camera)
+
+        # Format for display
+        formatted = []
+        for entry in history:
+            formatted.append({
+                'id': entry['id'],
+                'camera_name': entry['camera_name'],
+                'file_path': entry['file_path'],
+                'file_size_mb': round(entry['file_size_bytes'] / (1024 * 1024), 1) if entry['file_size_bytes'] else 0,
+                'recording_start': entry['recording_start'],
+                'recording_end': entry['recording_end'],
+                'deletion_reason': entry['deletion_reason'],
+                'deleted_at': entry['deleted_at']
+            })
+
+        return {'history': formatted}
+    except Exception as e:
+        logger.error(f"Error getting deletion history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/storage/deletion-stats")
+async def get_deletion_stats():
+    """Get deletion statistics"""
+    try:
+        stats = playback_db.get_deletion_stats()
+
+        return {
+            'total': {
+                'files': stats['total_files'],
+                'size_gb': round(stats['total_bytes'] / (1024**3), 2) if stats['total_bytes'] else 0
+            },
+            'last_24h': {
+                'files': stats['last_24h_files'],
+                'size_gb': round(stats['last_24h_bytes'] / (1024**3), 2) if stats['last_24h_bytes'] else 0
+            },
+            'last_7d': {
+                'files': stats['last_7d_files'],
+                'size_gb': round(stats['last_7d_bytes'] / (1024**3), 2) if stats['last_7d_bytes'] else 0
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting deletion stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/alerts")
 async def get_alerts(limit: int = 50):
     """Get recent system alerts"""
@@ -948,22 +1320,26 @@ async def get_alerts(limit: int = 50):
     return {'alerts': alert_system.get_recent_alerts(limit)}
 
 
-@app.get("/api/alerts/camera/{camera_name}")
-async def get_camera_alerts(camera_name: str, limit: int = 20):
+@app.get("/api/alerts/camera/{camera_id}")
+async def get_camera_alerts(camera_id: str, limit: int = 20):
     """Get recent alerts for a specific camera"""
     if not alert_system:
         return {'alerts': []}
 
+    # Look up camera name for backward compatibility with alert system
+    recorder = recorder_manager.get_recorder_by_id(camera_id) if recorder_manager else None
+    camera_name = recorder.camera_name if recorder else camera_id
+
     return {'alerts': alert_system.get_alerts_by_camera(camera_name, limit)}
 
 
-@app.get("/api/motion/heatmap/{camera_name}")
-async def get_motion_heatmap(camera_name: str, date: str = None):
+@app.get("/api/motion/heatmap/{camera_id}")
+async def get_motion_heatmap(camera_id: str, date: str = None):
     """
     Get motion heatmap for a camera
 
     Args:
-        camera_name: Name of camera
+        camera_id: ID of camera
         date: Date in YYYY-MM-DD format (defaults to today)
     """
     try:
@@ -974,6 +1350,10 @@ async def get_motion_heatmap(camera_name: str, date: str = None):
             target_date = datetime.strptime(date, "%Y-%m-%d")
         else:
             target_date = datetime.now()
+
+        # Look up camera name for backward compatibility with heatmap manager
+        recorder = recorder_manager.get_recorder_by_id(camera_id) if recorder_manager else None
+        camera_name = recorder.camera_name if recorder else camera_id
 
         # Create heatmap manager
         heatmap_mgr = MotionHeatmapManager(config.storage_path, playback_db)
@@ -1024,7 +1404,7 @@ async def get_system_stats():
 
     # Disk usage for recordings directory
     try:
-        disk = psutil.disk_usage('recordings')
+        disk = psutil.disk_usage(str(config.storage_path))
         disk_percent = disk.percent
         disk_used_gb = disk.used / (1024 ** 3)
         disk_total_gb = disk.total / (1024 ** 3)
@@ -1049,6 +1429,50 @@ async def get_system_stats():
             'total_gb': round(disk_total_gb, 1)
         }
     }
+
+
+@app.get("/api/system/encoder")
+async def get_encoder_status():
+    """Get hardware acceleration encoder status"""
+    from nvr.core.transcoder import get_transcoder
+
+    try:
+        transcoder = get_transcoder()
+
+        # Determine if GPU acceleration is enabled
+        is_gpu = transcoder.encoder not in ('libx264', 'libx265')
+
+        return {
+            'encoder': transcoder.encoder,
+            'encoder_type': 'GPU' if is_gpu else 'CPU',
+            'encoder_options': transcoder.encoder_options,
+            'max_workers': transcoder.max_workers,
+            'queue_size': transcoder.transcode_queue.qsize() if transcoder.transcode_queue else 0,
+            'description': _get_encoder_description(transcoder.encoder)
+        }
+    except Exception as e:
+        logger.error(f"Error getting encoder status: {e}")
+        return {
+            'encoder': 'unknown',
+            'encoder_type': 'CPU',
+            'encoder_options': [],
+            'max_workers': 0,
+            'queue_size': 0,
+            'description': 'Transcoder not initialized'
+        }
+
+
+def _get_encoder_description(encoder: str) -> str:
+    """Get human-readable description of encoder"""
+    descriptions = {
+        'h264_nvenc': 'NVIDIA GPU Hardware Acceleration (NVENC)',
+        'h264_qsv': 'Intel QuickSync Hardware Acceleration',
+        'h264_videotoolbox': 'Apple VideoToolbox Hardware Acceleration',
+        'h264_amf': 'AMD GPU Hardware Acceleration (AMF)',
+        'libx264': 'CPU Software Encoding (x264)',
+        'libx265': 'CPU Software Encoding (x265)'
+    }
+    return descriptions.get(encoder, f'Unknown encoder: {encoder}')
 
 
 @app.post("/api/webrtc/offer")
@@ -1110,8 +1534,8 @@ async def webrtc_offer(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/cameras/{camera_name}/stream/direct")
-async def direct_rtsp_stream(camera_name: str):
+@app.get("/api/cameras/{camera_id}/stream/direct")
+async def direct_rtsp_stream(camera_id: str):
     """
     ULTRA-FAST Direct RTSP proxy - ZERO Python processing
 
@@ -1124,14 +1548,15 @@ async def direct_rtsp_stream(camera_name: str):
     if not rtsp_proxy:
         raise HTTPException(status_code=500, detail="RTSP proxy not initialized")
 
-    # Find camera config
+    # Find camera config by id or name
     cameras = config.cameras
-    camera_config = next((c for c in cameras if c['name'] == camera_name), None)
+    camera_config = next((c for c in cameras if c.get('id') == camera_id or c['name'] == camera_id), None)
 
     if not camera_config:
-        raise HTTPException(status_code=404, detail=f"Camera {camera_name} not found")
+        raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
 
     rtsp_url = camera_config['rtsp_url']
+    camera_name = camera_config['name']
 
     logger.info(f"Starting direct RTSP proxy for {camera_name} (ZERO-LATENCY mode)")
 
@@ -1147,8 +1572,8 @@ async def direct_rtsp_stream(camera_name: str):
     )
 
 
-@app.get("/api/cameras/{camera_name}/stream/mse")
-async def mse_stream(camera_name: str):
+@app.get("/api/cameras/{camera_id}/stream/mse")
+async def mse_stream(camera_id: str):
     """
     Media Source Extensions streaming - native browser decoder
     Even lower latency than MPEG-TS
@@ -1157,12 +1582,13 @@ async def mse_stream(camera_name: str):
         raise HTTPException(status_code=500, detail="MSE proxy not initialized")
 
     cameras = config.cameras
-    camera_config = next((c for c in cameras if c['name'] == camera_name), None)
+    camera_config = next((c for c in cameras if c.get('id') == camera_id or c['name'] == camera_id), None)
 
     if not camera_config:
-        raise HTTPException(status_code=404, detail=f"Camera {camera_name} not found")
+        raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
 
     rtsp_url = camera_config['rtsp_url']
+    camera_name = camera_config['name']
 
     logger.info(f"Starting MSE stream for {camera_name}")
 

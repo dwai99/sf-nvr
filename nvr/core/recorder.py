@@ -32,7 +32,8 @@ class RTSPRecorder:
         codec: str = 'h264',
         container: str = 'mp4',
         playback_db=None,
-        camera_id: Optional[str] = None
+        camera_id: Optional[str] = None,
+        recording_mode_manager=None
     ):
         self.camera_name = camera_name
         self.camera_id = camera_id or self._sanitize_name(camera_name)  # Fallback to name if no ID
@@ -42,8 +43,10 @@ class RTSPRecorder:
         self.codec = codec
         self.container = container
         self.playback_db = playback_db
+        self.recording_mode_manager = recording_mode_manager
 
         self.is_recording = False
+        self.streaming_only = False  # If True, connect for live view but don't record to disk
         self.capture: Optional[cv2.VideoCapture] = None
         self.writer: Optional[cv2.VideoWriter] = None
         self.current_segment_start: Optional[datetime] = None
@@ -60,6 +63,13 @@ class RTSPRecorder:
         # Motion tracking
         self.motion_event_start: Optional[datetime] = None
         self.motion_frame_count: int = 0
+        self.has_motion = False  # Current motion state
+        self.last_motion_time: Optional[datetime] = None
+        self.motion_timeout_seconds: int = 5  # Stop recording after N seconds of no motion
+
+        # Recording mode tracking
+        self.actively_writing = False  # True when actually writing frames to disk
+        self.buffered_frames = []  # Pre-motion buffer for motion-only mode
 
         # Callbacks
         self.on_motion_detected: Optional[Callable] = None
@@ -82,13 +92,19 @@ class RTSPRecorder:
         """Sanitize camera name for filesystem"""
         return "".join(c if c.isalnum() or c in (' ', '-', '_') else '_' for c in name)
 
-    async def start(self) -> bool:
-        """Start recording stream"""
+    async def start(self, streaming_only: bool = False) -> bool:
+        """Start recording stream
+
+        Args:
+            streaming_only: If True, connect for live view but don't record to disk
+        """
         if self.is_recording:
             logger.warning(f"Recorder for {self.camera_name} already running")
             return False
 
-        logger.info(f"Starting recorder for {self.camera_name}")
+        self.streaming_only = streaming_only
+        mode = "streaming only" if streaming_only else "recording"
+        logger.info(f"Starting recorder for {self.camera_name} ({mode})")
         logger.info(f"RTSP URL: {self.rtsp_url}")
 
         self.is_recording = True
@@ -148,7 +164,7 @@ class RTSPRecorder:
                 width = int(self.capture.get(cv2.CAP_PROP_FRAME_WIDTH))
                 height = int(self.capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-                logger.info(f"Stream opened: {width}x{height} @ {fps}fps")
+                logger.info(f"Stream opened for {self.camera_name}: {width}x{height} @ {fps}fps")
 
                 # Track successful connection and stream properties
                 self.last_successful_connection = datetime.now()
@@ -185,15 +201,38 @@ class RTSPRecorder:
         max_consecutive_failures = 30  # Allow 30 consecutive failures before reconnecting
 
         # CRITICAL: Determine recording dimensions BEFORE starting any segments
-        # Downscale to 1080p max to save memory (still high quality for recording)
+        # Get per-camera resolution if configured, otherwise fall back to global setting
+        from nvr.core.config import config
+
+        # Look up this camera's resolution setting
+        cameras = config.get('cameras', [])
+        camera_resolution = None
+        for cam in cameras:
+            if cam.get('id') == self.camera_id or cam.get('name') == self.camera_name:
+                camera_resolution = cam.get('resolution')
+                break
+
+        # Fall back to global max_resolution if no per-camera setting
+        max_resolution = camera_resolution or config.get('recording.max_resolution', 720)
+
+        # Map resolution setting to width
+        resolution_map = {
+            1080: 1920,
+            720: 1280,
+            480: 854,
+            360: 640
+        }
+        max_width = resolution_map.get(max_resolution, 1280)
+
+        # Downscale if source exceeds configured max resolution
         recording_width = width
         recording_height = height
-        if width > 1920:
-            scale = 1920 / width
-            recording_width = 1920
+        if width > max_width:
+            scale = max_width / width
+            recording_width = max_width
             recording_height = int(height * scale)
 
-        logger.info(f"Recording dimensions: {recording_width}x{recording_height} (source: {width}x{height})")
+        logger.info(f"Recording dimensions: {recording_width}x{recording_height} (source: {width}x{height}, max: {max_resolution}p)")
 
         # Track when the next segment should start (aligned to clock intervals)
         next_segment_time = self._get_next_segment_boundary()
@@ -216,38 +255,63 @@ class RTSPRecorder:
             self.last_frame_time = datetime.now()
 
             # CRITICAL: Scale down frame to recording dimensions if needed
-            if width > 1920:
+            if width > max_width:
                 frame = cv2.resize(frame, (recording_width, recording_height), interpolation=cv2.INTER_AREA)
 
-            # Check if it's time for a new segment (aligned to clock intervals)
-            now = datetime.now()
-            if not current_segment_started or now >= next_segment_time:
-                self._start_new_segment(fps, recording_width, recording_height)
-                next_segment_time = self._get_next_segment_boundary()
-                current_segment_started = True
+            # Only handle recording if not in streaming-only mode
+            if not self.streaming_only:
+                # Check if we should be recording based on mode and motion state
+                now = datetime.now()
+                should_record = self._should_record_frame(now)
 
-            # Write frame to disk
-            if self.writer:
-                self.writer.write(frame)
+                # Start new segment if needed and we should be recording
+                if should_record:
+                    if not current_segment_started or now >= next_segment_time:
+                        self._start_new_segment(fps, recording_width, recording_height)
+                        next_segment_time = self._get_next_segment_boundary()
+                        current_segment_started = True
+                        self.actively_writing = True
+
+                    # Write frame to disk
+                    if self.writer:
+                        self.writer.write(frame)
+                else:
+                    # Not recording - close current segment if open
+                    if self.actively_writing and self.writer:
+                        self._close_current_segment()
+                        self.actively_writing = False
+                        current_segment_started = False
 
             # Compress frame to JPEG for live viewing (saves memory)
             # Quality 85 is good balance between size and quality
-            _, jpeg_bytes = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-            jpeg_data = jpeg_bytes.tobytes()
+            success, jpeg_bytes = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
 
-            # CRITICAL: Explicitly delete jpeg_bytes to free memory immediately
+            if success and jpeg_bytes is not None:
+                # Make an immutable copy of the bytes immediately
+                jpeg_data = bytes(jpeg_bytes.tobytes())
+
+                # Validate JPEG structure before queuing
+                # Must start with FFD8 (SOI) and end with FFD9 (EOI)
+                if (len(jpeg_data) > 1000 and
+                    jpeg_data[0:2] == b'\xff\xd8' and
+                    jpeg_data[-2:] == b'\xff\xd9'):
+
+                    # Put compressed frame in queue for live viewing
+                    with self.frame_lock:
+                        try:
+                            self.frame_queue.put_nowait(jpeg_data)
+                        except queue.Full:
+                            # Replace oldest frame with new one
+                            try:
+                                self.frame_queue.get_nowait()
+                                self.frame_queue.put_nowait(jpeg_data)
+                            except queue.Empty:
+                                pass
+                        # Always update last_frame for fallback
+                        self.last_frame = jpeg_data
+
+            # CRITICAL: Explicitly delete to free memory immediately
             del jpeg_bytes
-
-            # Put compressed frame in queue for live viewing
-            try:
-                self.frame_queue.put_nowait(jpeg_data)
-            except queue.Full:
-                # Skip frame if queue is full
-                try:
-                    self.frame_queue.get_nowait()
-                    self.frame_queue.put_nowait(jpeg_data)
-                except queue.Empty:
-                    pass
 
             # CRITICAL: Explicitly delete frame to free memory immediately
             # Without this, Python's garbage collector may not free memory fast enough
@@ -281,6 +345,78 @@ class RTSPRecorder:
 
         return datetime(now.year, now.month, now.day, next_hour, next_minute, 0)
 
+    def _should_record_frame(self, now: datetime) -> bool:
+        """
+        Determine if we should record the current frame based on recording mode
+
+        Args:
+            now: Current datetime
+
+        Returns:
+            True if frame should be recorded
+        """
+        # If no recording mode manager, default to continuous recording
+        if not self.recording_mode_manager:
+            return True
+
+        # Check if mode allows recording
+        should_record = self.recording_mode_manager.should_record(
+            self.camera_name,
+            has_motion=self.has_motion,
+            dt=now
+        )
+
+        # Handle post-motion timeout for motion-only mode
+        if should_record and self.has_motion:
+            self.last_motion_time = now
+        elif not self.has_motion and self.last_motion_time:
+            # Check if we're still in post-motion timeout period
+            time_since_motion = (now - self.last_motion_time).total_seconds()
+            config = self.recording_mode_manager.get_camera_config(self.camera_name)
+            if time_since_motion < config.post_motion_seconds:
+                should_record = True  # Keep recording for post-motion duration
+
+        return should_record
+
+    def update_motion_state(self, has_motion: bool):
+        """
+        Update the current motion state for this recorder
+
+        Args:
+            has_motion: Whether motion is currently detected
+        """
+        self.has_motion = has_motion
+
+    def _close_current_segment(self):
+        """Close the current recording segment"""
+        if self.writer and self.current_segment_path and self.playback_db:
+            self.writer.release()
+            self.writer = None
+
+            # Calculate actual segment duration and size
+            end_time = datetime.now()
+            duration = int((end_time - self.current_segment_start).total_seconds())
+            file_size = self.current_segment_path.stat().st_size if self.current_segment_path.exists() else 0
+
+            # Update database with segment info
+            self.playback_db.update_segment_end(
+                self.camera_id,
+                str(self.current_segment_path),
+                end_time,
+                duration,
+                file_size
+            )
+
+            # Queue segment for background transcoding for instant playback
+            try:
+                from nvr.core.transcoder import get_transcoder
+                transcoder = get_transcoder()
+                transcoder.queue_transcode(self.current_segment_path)
+            except Exception as e:
+                logger.warning(f"Failed to queue transcode for {self.current_segment_path}: {e}")
+
+            logger.info(f"Closed segment for {self.camera_name}: {self.current_segment_path.name} ({duration}s, {file_size / (1024*1024):.1f}MB)")
+
     def _start_new_segment(self, fps: float, width: int, height: int) -> None:
         """Start a new recording segment"""
         # Finalize previous segment in database
@@ -294,7 +430,7 @@ class RTSPRecorder:
 
             # Update database with segment info
             self.playback_db.update_segment_end(
-                self.camera_name,
+                self.camera_id,
                 str(self.current_segment_path),
                 end_time,
                 duration,
@@ -405,20 +541,57 @@ class RTSPRecorder:
                 break
             threading.Event().wait(0.1)  # 100ms intervals instead of 1s
 
+    def _is_frame_corrupted(self, frame: np.ndarray) -> bool:
+        """Check if frame appears corrupted (decode artifacts)
+
+        Corrupted frames from H.264/H.265 decode errors often have:
+        - Excessive green (common decode error color)
+        - Large uniform blocks (macroblocking)
+        - Very low entropy
+
+        Returns True if frame appears corrupted.
+        """
+        try:
+            # Sample a small region (center 100x100) for speed
+            h, w = frame.shape[:2]
+            cy, cx = h // 2, w // 2
+            sample = frame[cy-50:cy+50, cx-50:cx+50]
+
+            if sample.size == 0:
+                return False
+
+            # Check for excessive green (BGR format)
+            # Green decode errors have high G, low R/B
+            b, g, r = cv2.split(sample)
+            mean_g = np.mean(g)
+            mean_r = np.mean(r)
+            mean_b = np.mean(b)
+
+            # If green dominates significantly, likely corrupted
+            if mean_g > 150 and mean_g > (mean_r + 30) and mean_g > (mean_b + 30):
+                return True
+
+            # Check for uniform color (low variance = likely solid block)
+            variance = np.var(sample)
+            if variance < 50:  # Very uniform = likely corrupted
+                return True
+
+            return False
+        except Exception:
+            return False  # On error, assume frame is okay
+
     def get_latest_frame(self) -> Optional[bytes]:
         """Get the latest frame from the stream (for live view)
         Returns JPEG-compressed frame as bytes (not numpy array) to save memory
         """
-        try:
-            # Try to get fresh frame from queue (already JPEG compressed)
-            jpeg_data = self.frame_queue.get_nowait()
-            # Update cached frame
-            with self.frame_lock:
+        with self.frame_lock:
+            try:
+                # Try to get fresh frame from queue (already JPEG compressed and validated)
+                jpeg_data = self.frame_queue.get_nowait()
                 self.last_frame = jpeg_data
-            return jpeg_data
-        except queue.Empty:
-            # Return cached frame instead of None to avoid blank frames
-            with self.frame_lock:
+                return jpeg_data
+            except queue.Empty:
+                # Return cached frame instead of None to avoid blank frames
                 return self.last_frame
 
     def log_motion_event(self, intensity: float = 0.0) -> None:
@@ -444,18 +617,30 @@ class RTSPRecorder:
         # Calculate duration
         duration = (datetime.now() - self.motion_event_start).total_seconds()
 
-        # Save to database
-        self.playback_db.add_motion_event(
-            camera_name=self.camera_name,
-            event_time=self.motion_event_start,
-            duration_seconds=duration,
-            frame_count=self.motion_frame_count
-        )
+        # Only save events that lasted at least 1 second (filter out noise/artifacts)
+        # The 3-second cooldown in motion.py ensures events are aggregated properly
+        MIN_MOTION_DURATION = 1.0  # seconds
+        MIN_MOTION_FRAMES = 10  # at least 10 frames of motion
 
-        logger.debug(
-            f"Motion event logged for {self.camera_name}: "
-            f"{duration:.1f}s, {self.motion_frame_count} frames"
-        )
+        if duration >= MIN_MOTION_DURATION and self.motion_frame_count >= MIN_MOTION_FRAMES:
+            # Save to database
+            self.playback_db.add_motion_event(
+                camera_id=self.camera_id,
+                event_time=self.motion_event_start,
+                duration_seconds=duration,
+                frame_count=self.motion_frame_count,
+                camera_name=self.camera_name
+            )
+
+            logger.debug(
+                f"Motion event logged for {self.camera_name}: "
+                f"{duration:.1f}s, {self.motion_frame_count} frames"
+            )
+        else:
+            logger.debug(
+                f"Motion event discarded for {self.camera_name} (too short): "
+                f"{duration:.2f}s, {self.motion_frame_count} frames"
+            )
 
         # Reset
         self.motion_event_start = None
@@ -465,10 +650,11 @@ class RTSPRecorder:
 class RecorderManager:
     """Manages multiple camera recorders"""
 
-    def __init__(self, storage_path: Path, segment_duration: int = 300, playback_db=None):
+    def __init__(self, storage_path: Path, segment_duration: int = 300, playback_db=None, recording_mode_manager=None):
         self.storage_path = storage_path
         self.segment_duration = segment_duration
         self.playback_db = playback_db
+        self.recording_mode_manager = recording_mode_manager
         self.recorders: dict[str, RTSPRecorder] = {}
 
     async def add_camera(
@@ -476,9 +662,18 @@ class RecorderManager:
         camera_name: str,
         rtsp_url: str,
         camera_id: Optional[str] = None,
-        auto_start: bool = True
+        auto_start: bool = True,
+        streaming_only: bool = False
     ) -> RTSPRecorder:
-        """Add a camera recorder"""
+        """Add a camera recorder
+
+        Args:
+            camera_name: Name of the camera
+            rtsp_url: RTSP URL for the camera stream
+            camera_id: Unique ID for the camera (used for storage path)
+            auto_start: If True, start the recorder immediately
+            streaming_only: If True, connect for live view but don't record to disk
+        """
         if camera_name in self.recorders:
             logger.warning(f"Recorder for {camera_name} already exists")
             return self.recorders[camera_name]
@@ -489,13 +684,14 @@ class RecorderManager:
             storage_path=self.storage_path,
             segment_duration=self.segment_duration,
             playback_db=self.playback_db,
-            camera_id=camera_id
+            camera_id=camera_id,
+            recording_mode_manager=self.recording_mode_manager
         )
 
         self.recorders[camera_name] = recorder
 
         if auto_start:
-            await recorder.start()
+            await recorder.start(streaming_only=streaming_only)
 
         return recorder
 
@@ -513,6 +709,19 @@ class RecorderManager:
     def get_recorder(self, camera_name: str) -> Optional[RTSPRecorder]:
         """Get recorder by camera name"""
         return self.recorders.get(camera_name)
+
+    def get_recorder_by_id(self, camera_id: str) -> Optional[RTSPRecorder]:
+        """Get recorder by camera ID (checks both id and name for compatibility)"""
+        # First try direct lookup by name (in case camera_id is actually a name)
+        if camera_id in self.recorders:
+            return self.recorders[camera_id]
+
+        # Search by camera_id attribute
+        for recorder in self.recorders.values():
+            if recorder.camera_id == camera_id:
+                return recorder
+
+        return None
 
     async def start_all(self) -> None:
         """Start all recorders"""

@@ -27,13 +27,25 @@ class Config:
         with open(self.config_path, 'r') as f:
             self._config = yaml.safe_load(f)
 
+        # Ensure config is always a dictionary (yaml returns None for empty files)
+        if self._config is None:
+            self._config = {}
+
         # Ensure all cameras have unique IDs
         self._ensure_camera_ids()
 
     def save(self) -> None:
         """Save current configuration to YAML file"""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Saving config to {self.config_path}")
+        # Log camera names being saved
+        cameras = self._config.get('cameras', [])
+        camera_names = [c.get('name', 'unknown') for c in cameras]
+        logger.info(f"Camera names being saved: {camera_names}")
         with open(self.config_path, 'w') as f:
             yaml.dump(self._config, f, default_flow_style=False)
+        logger.info("Config saved successfully")
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get config value by dot-notation key (e.g., 'recording.storage_path')"""
@@ -107,13 +119,16 @@ class Config:
         return False
 
     def _ensure_camera_ids(self) -> None:
-        """Ensure all cameras have unique IDs, generate if missing"""
+        """Ensure all cameras have unique IDs, generate if missing or invalid"""
         cameras = self.cameras
         needs_save = False
 
         for camera in cameras:
-            if 'id' not in camera or not camera['id']:
-                # Generate ID from physical camera identifiers or name as fallback
+            current_id = camera.get('id', '')
+            # Regenerate if missing, empty, looks like a camera name, or uses IP-based ID
+            # Valid IDs: cam_<serial>, cam_<mac>, cam_<hwid>, cam_<uuid>
+            # Invalid IDs: camera names, cam_ip_* (IP-based)
+            if not current_id or not current_id.startswith('cam_') or current_id.startswith('cam_ip_'):
                 camera['id'] = self._generate_camera_id(camera)
                 needs_save = True
 
@@ -126,9 +141,10 @@ class Config:
         Generate a stable camera ID from physical identifiers
 
         Priority order:
-        1. Serial number (survives network changes, camera moves, IP changes)
-        2. Hardware ID (if available)
-        3. Sanitized name (backward compatibility for existing cameras)
+        1. Serial number (best - physically tied to camera, survives DHCP changes)
+        2. MAC address (excellent - hardware identifier, never changes)
+        3. Hardware ID (if available from ONVIF)
+        4. UUID as last resort (stable once generated)
         """
         device_info = camera.get('device_info', {})
 
@@ -139,16 +155,21 @@ class Config:
             safe_serial = "".join(c if c.isalnum() or c in ('-', '_') else '_' for c in serial)
             return f"cam_{safe_serial}"
 
+        # Try MAC address (permanent hardware identifier)
+        mac = device_info.get('mac_address') or device_info.get('MACAddress')
+        if mac and mac not in ('Unknown', '', None):
+            # Convert MAC to safe format (aa:bb:cc:dd:ee:ff -> aabbccddeeff)
+            safe_mac = mac.replace(':', '').replace('-', '').lower()
+            return f"cam_{safe_mac}"
+
         # Try hardware ID
         hw_id = device_info.get('hardware_id') or device_info.get('HardwareId')
         if hw_id and hw_id not in ('Unknown', '', None):
             safe_hw = "".join(c if c.isalnum() or c in ('-', '_') else '_' for c in hw_id)
             return f"cam_{safe_hw}"
 
-        # Fallback to sanitized name (for backward compatibility with existing recordings)
-        name = camera.get('name', 'unknown')
-        sanitized = "".join(c if c.isalnum() or c in (' ', '-', '_') else '_' for c in name)
-        return sanitized
+        # Last resort: generate UUID-based ID (stable once generated)
+        return f"cam_{uuid.uuid4().hex[:12]}"
 
     def get_camera_by_id(self, camera_id: str) -> Optional[Dict[str, Any]]:
         """Get camera configuration by ID"""

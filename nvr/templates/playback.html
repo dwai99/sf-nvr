@@ -9,7 +9,7 @@
     <!-- UI Utilities -->
     <script src="/static/notifications.js"></script>
     <script src="/static/ui-utils.js"></script>
-    <script src="/static/timeline-selector.js?v=3"></script>
+    <script src="/static/timeline-selector.js?v=4"></script>
 
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -170,6 +170,80 @@
             pointer-events: none;
         }
 
+        /* Motion event indicator overlay */
+        .motion-indicator-overlay {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(255, 87, 34, 0.9);
+            color: white;
+            padding: 8px 15px;
+            border-radius: 4px;
+            font-size: 0.9em;
+            font-weight: bold;
+            z-index: 15;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .motion-indicator-overlay.active {
+            opacity: 1;
+        }
+
+        .motion-indicator-overlay.ai-person {
+            background: rgba(156, 39, 176, 0.9);
+        }
+
+        .motion-indicator-overlay.ai-vehicle {
+            background: rgba(33, 150, 243, 0.9);
+        }
+
+        .motion-indicator-overlay .motion-icon {
+            width: 12px;
+            height: 12px;
+            background: white;
+            border-radius: 50%;
+            animation: motion-pulse 0.5s ease-in-out infinite;
+        }
+
+        @keyframes motion-pulse {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.3); opacity: 0.7; }
+        }
+
+        /* Fullscreen mode styling for video player */
+        .video-player:fullscreen {
+            background: #000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .video-player:fullscreen video {
+            max-width: 100%;
+            max-height: 100%;
+            width: auto;
+            height: auto;
+        }
+
+        .video-player:fullscreen .motion-indicator-overlay {
+            top: 20px;
+            right: 20px;
+            font-size: 1.1em;
+            padding: 10px 20px;
+        }
+
+        .video-player:fullscreen .video-timestamp-overlay {
+            top: 20px;
+            left: 20px;
+            font-size: 1.1em;
+            padding: 8px 15px;
+        }
+
         .video-player.zoomed {
             cursor: grab;
         }
@@ -245,6 +319,8 @@
             justify-content: center;
             transition: background 0.2s;
             flex-shrink: 0;
+            position: relative;
+            z-index: 10;  /* Ensure play button is above timeline elements */
         }
 
         .play-button:disabled {
@@ -279,22 +355,23 @@
 
         .speed-controls {
             display: flex;
-            gap: 5px;
+            gap: 3px;
             align-items: center;
             background: #333;
-            padding: 5px;
+            padding: 4px;
             border-radius: 4px;
             flex-shrink: 0;
+            flex-wrap: wrap;
         }
 
         .speed-btn {
             background: #444;
             border: none;
             color: #aaa;
-            padding: 6px 12px;
+            padding: 4px 8px;
             border-radius: 3px;
             cursor: pointer;
-            font-size: 0.85em;
+            font-size: 0.75em;
             transition: all 0.2s;
         }
 
@@ -317,23 +394,38 @@
         .timeline-slider-wrapper {
             position: relative;
             width: 100%;
-            height: 50px;
+            height: 70px;  /* Increased to accommodate markers above track */
             background: #333;
             border-radius: 4px;
             cursor: pointer;
             user-select: none;
+            overflow: hidden;  /* Contain all child elements */
         }
 
         .timeline-track {
             position: absolute;
-            top: 50%;
+            bottom: 15px;  /* Position track near bottom */
             left: 10px;
             right: 10px;
             height: 8px;
-            background: #333;
+            background: #444;
             border-radius: 4px;
-            transform: translateY(-50%);
-            overflow: hidden;
+            overflow: hidden;  /* Contain segments within track */
+        }
+
+        /* Markers layer - positioned above the track */
+        #timeline-markers {
+            position: absolute;
+            bottom: 28px;  /* Above the track */
+            left: 10px;
+            right: 10px;
+            height: 25px;
+            z-index: 5;
+            pointer-events: none;
+        }
+
+        #timeline-markers .timeline-marker {
+            pointer-events: auto;
         }
 
         .timeline-segment {
@@ -342,11 +434,24 @@
             height: 100%;
             background: #4a9eff;
             opacity: 0.7;
+            z-index: 1;
         }
 
         .timeline-segment:hover {
             opacity: 1;
             background: #5aafff;
+        }
+
+        /* SD Card recordings - orange gradient with dashed border */
+        .timeline-segment.sd-card {
+            background: linear-gradient(135deg, #ff9800, #ff5722);
+            border: 1px dashed rgba(255, 255, 255, 0.6);
+            opacity: 0.8;
+        }
+
+        .timeline-segment.sd-card:hover {
+            opacity: 1;
+            background: linear-gradient(135deg, #ffa726, #ff7043);
         }
 
         .timeline-gap {
@@ -389,25 +494,36 @@
 
         .timeline-marker {
             position: absolute;
-            top: 50%;
-            height: 12px;
-            width: 3px;
+            bottom: 0;
+            height: 20px;
+            min-width: 3px;
             background: #ff4a4a;
-            transform: translateY(-50%);
             cursor: pointer;
+            border-radius: 2px 2px 0 0;
+            z-index: 10;
+            opacity: 0.85;
         }
 
         .timeline-marker:hover {
             background: #ff6a6a;
-            width: 5px;
+            height: 25px;
+            opacity: 1;
+            z-index: 11;
         }
 
+        /* Motion event - red */
+        .timeline-marker.motion {
+            background: #ff4a4a;
+        }
+
+        /* Person detected - green */
         .timeline-marker.ai-person {
-            background: #ffa500;
+            background: #4caf50;
         }
 
+        /* Vehicle detected - blue */
         .timeline-marker.ai-vehicle {
-            background: #ffff00;
+            background: #2196f3;
         }
 
         /* Motion visualization layer above timeline */
@@ -478,20 +594,20 @@
 
         .timeline-handle {
             position: absolute;
-            top: 50%;
-            width: 18px;
-            height: 18px;
+            bottom: 11px;  /* Align with track */
+            width: 16px;
+            height: 16px;
             background: #4a9eff;
-            border: 3px solid white;
+            border: 2px solid white;
             border-radius: 50%;
-            transform: translate(-50%, -50%);
+            transform: translateX(-50%);
             cursor: grab;
-            z-index: 10;
+            z-index: 15;
             transition: transform 0.1s;
         }
 
         .timeline-handle:hover {
-            transform: translate(-50%, -50%) scale(1.2);
+            transform: translateX(-50%) scale(1.2);
         }
 
         .timeline-handle:active {
@@ -501,14 +617,54 @@
         .timeline-time-labels {
             display: flex;
             justify-content: space-between;
+            align-items: center;
             padding: 5px 10px;
             font-size: 0.8em;
             color: #888;
         }
 
+        .timeline-legend {
+            display: flex;
+            gap: 12px;
+            font-size: 0.85em;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .legend-color {
+            width: 10px;
+            height: 10px;
+            border-radius: 2px;
+        }
+
+        .legend-color.local {
+            background: #4a9eff;
+        }
+
+        .legend-color.sd-card {
+            background: linear-gradient(135deg, #ff9800, #ff5722);
+            border: 1px dashed rgba(255, 255, 255, 0.5);
+        }
+
+        .legend-color.motion {
+            background: #ff4a4a;
+        }
+
+        .legend-color.person {
+            background: #4caf50;
+        }
+
+        .legend-color.vehicle {
+            background: #2196f3;
+        }
+
         .timeline-tooltip {
             position: absolute;
-            bottom: 60px;
+            bottom: 75px;
             background: rgba(0, 0, 0, 0.9);
             color: white;
             padding: 8px 12px;
@@ -911,6 +1067,10 @@
             <label>&nbsp;</label>
             <button class="btn" onclick="loadRecordings()" title="Manually refresh recordings">🔄 Refresh</button>
         </div>
+        <div class="control-group">
+            <label>&nbsp;</label>
+            <button class="btn" onclick="checkSDCardRecordings()" title="Check camera SD cards for recordings" style="background: #ff9800;">💾 SD Card</button>
+        </div>
         <div style="flex-basis: 100%; display: flex; gap: 8px; align-items: center; padding: 0 0 10px 0;">
             <span style="color: #888; font-size: 0.9em;">Duration:</span>
             <button class="btn" style="padding: 4px 12px; font-size: 0.85em;" onclick="setDuration(5)" title="Set end time to 5 minutes after start">+5m</button>
@@ -938,22 +1098,32 @@
                      onmousedown="startDrag(event)"
                      onmousemove="handleDrag(event)"
                      onmouseleave="hideTooltip()">
+                    <!-- Markers layer above track -->
+                    <div id="timeline-markers"></div>
+                    <!-- Main timeline track with segments -->
                     <div class="timeline-track">
-                        <div class="motion-visualization" id="motion-visualization"></div>
                         <div class="timeline-progress" id="timeline-progress"></div>
-                        <div id="timeline-markers"></div>
                     </div>
                     <div class="timeline-handle" id="timeline-handle"></div>
                     <div class="timeline-tooltip" id="timeline-tooltip">00:00:00</div>
                 </div>
                 <div class="timeline-time-labels">
                     <span id="start-label">--:--:--</span>
+                    <span class="timeline-legend">
+                        <span class="legend-item"><span class="legend-color local"></span>Local</span>
+                        <span class="legend-item"><span class="legend-color sd-card"></span>SD Card</span>
+                        <span class="legend-item"><span class="legend-color motion"></span>Motion</span>
+                        <span class="legend-item"><span class="legend-color person"></span>Person</span>
+                        <span class="legend-item"><span class="legend-color vehicle"></span>Vehicle</span>
+                    </span>
                     <span id="end-label">--:--:--</span>
                 </div>
             </div>
 
             <div class="time-display" id="current-time">
-                <span id="current-time-display">--:--:--</span> / <span id="total-time-display">--:--:--</span>
+                <span id="timestamp-display" style="color: #4a9eff; font-weight: bold;">--:--:-- --</span>
+                <span style="color: #666; margin: 0 8px;">|</span>
+                <span id="current-time-display">--:--</span> / <span id="total-time-display">--:--</span>
             </div>
 
             <div class="speed-controls">
@@ -961,6 +1131,8 @@
                 <button class="speed-btn active" onclick="setPlaybackSpeed(1.0)">1×</button>
                 <button class="speed-btn" onclick="setPlaybackSpeed(1.5)">1.5×</button>
                 <button class="speed-btn" onclick="setPlaybackSpeed(2.0)">2×</button>
+                <button class="speed-btn" onclick="setPlaybackSpeed(4.0)">4×</button>
+                <button class="speed-btn" onclick="setPlaybackSpeed(8.0)">8×</button>
             </div>
         </div>
 
@@ -983,35 +1155,26 @@
                     <span>Motion Events</span>
                 </div>
 
-                <div class="filter-divider"></div>
+                <!-- AI Detection elements (hidden when AI is disabled) -->
+                <div id="ai-legend-container" style="display: none; contents;">
+                    <div class="detection-toggle">
+                        <label>
+                            <input type="checkbox" id="show-ai-detections" class="toggle-input" checked onchange="toggleAIDetections()">
+                            <div class="toggle-switch active" id="ai-toggle-switch" onclick="toggleAIToggle()">
+                                <div class="toggle-slider"></div>
+                            </div>
+                            <span>AI Detections</span>
+                        </label>
+                    </div>
 
-                <div class="detection-toggle">
-                    <label>
-                        <input type="checkbox" id="show-ai-detections" class="toggle-input" checked onchange="toggleAIDetections()">
-                        <div class="toggle-switch active" id="ai-toggle-switch" onclick="toggleAIToggle()">
-                            <div class="toggle-slider"></div>
-                        </div>
-                        <span>AI Detections</span>
-                    </label>
-                </div>
-
-                <div class="detection-toggle">
-                    <label>
-                        <input type="checkbox" id="show-motion-viz" class="toggle-input" checked onchange="toggleMotionVisualization()">
-                        <div class="toggle-switch active" id="motion-viz-switch" onclick="toggleMotionVizSwitch()">
-                            <div class="toggle-slider"></div>
-                        </div>
-                        <span data-tooltip="Show motion intensity bars above timeline">Motion Bars</span>
-                    </label>
-                </div>
-
-                <div class="legend-item" id="person-legend">
-                    <div class="legend-color" style="background: #ffa500;"></div>
-                    <span>Person</span>
-                </div>
-                <div class="legend-item" id="vehicle-legend">
-                    <div class="legend-color" style="background: #ffff00;"></div>
-                    <span>Vehicle</span>
+                    <div class="legend-item" id="person-legend">
+                        <div class="legend-color" style="background: #ffa500;"></div>
+                        <span>Person</span>
+                    </div>
+                    <div class="legend-item" id="vehicle-legend">
+                        <div class="legend-color" style="background: #ffff00;"></div>
+                        <span>Vehicle</span>
+                    </div>
                 </div>
             </div>
             <div class="keyboard-hint" onclick="showShortcuts()">
@@ -1083,6 +1246,7 @@
         let playbackState = {
             playing: false,
             speed: 1.0,
+            previousSpeed: 1.0,  // Track previous speed for position calculations during reload
             currentTime: 0,
             duration: 0,
             startTime: null,
@@ -1104,10 +1268,29 @@
             // Convert MM/DD/YYYY to YYYY-MM-DD
             const [month, day, year] = todayCst.split('/');
             const today = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
-            document.getElementById('playback-date').value = today;
+
+            // Set max date to today (prevent future date selection)
+            const dateInput = document.getElementById('playback-date');
+            dateInput.value = today;
+            dateInput.max = today;
 
             // Set default time to last 10 minutes for faster loading
             setQuickRange('last-hour');
+
+            // Check if AI detection is enabled and show/hide legend accordingly
+            try {
+                const configResponse = await fetch('/api/config');
+                const config = await configResponse.json();
+                const aiEnabled = config.ai_detection?.enabled === true;
+                const motionMethod = config.motion_detection?.method || 'frame_diff';
+                const showAILegend = aiEnabled || motionMethod === 'ai_only' || motionMethod === 'both';
+
+                if (showAILegend) {
+                    document.getElementById('ai-legend-container').style.display = 'contents';
+                }
+            } catch (e) {
+                // Intentionally ignored
+            }
 
             // Load cameras
             await loadCameras();
@@ -1155,10 +1338,30 @@
             }
         }
 
+        // Camera ID to name lookup and reverse lookup
+        let cameraNameLookup = {};
+        let cameraIdLookup = {};  // Reverse lookup: name -> id
+
+        function getCameraName(cameraId) {
+            return cameraNameLookup[cameraId] || cameraId;
+        }
+
+        function getCameraId(cameraName) {
+            return cameraIdLookup[cameraName] || cameraName;
+        }
+
         async function loadCameras() {
             try {
                 const response = await fetch('/api/cameras');
                 cameras = await response.json();
+
+                // Build camera name lookup and reverse lookup
+                cameraNameLookup = {};
+                cameraIdLookup = {};
+                cameras.forEach(camera => {
+                    cameraNameLookup[camera.id] = camera.name;
+                    cameraIdLookup[camera.name] = camera.id;
+                });
 
                 const container = document.getElementById('camera-checkboxes');
                 container.innerHTML = '';
@@ -1169,12 +1372,12 @@
 
                     const checkbox = document.createElement('input');
                     checkbox.type = 'checkbox';
-                    checkbox.value = camera.name;
+                    checkbox.value = camera.id;  // Use camera ID
                     checkbox.checked = false;  // No cameras selected by default
-                    checkbox.onchange = () => toggleCamera(camera.name, checkbox.checked);
+                    checkbox.onchange = () => toggleCamera(camera.id, checkbox.checked);
 
                     label.appendChild(checkbox);
-                    label.appendChild(document.createTextNode(camera.name));
+                    label.appendChild(document.createTextNode(camera.name));  // Display name
                     container.appendChild(label);
 
                     // Don't add to selectedCameras - user must select manually
@@ -1188,11 +1391,11 @@
             }
         }
 
-        function toggleCamera(cameraName, enabled) {
+        function toggleCamera(cameraId, enabled) {
             if (enabled) {
-                selectedCameras.add(cameraName);
+                selectedCameras.add(cameraId);
             } else {
-                selectedCameras.delete(cameraName);
+                selectedCameras.delete(cameraId);
             }
 
             // Auto-load recordings when camera selection changes
@@ -1241,13 +1444,63 @@
             document.getElementById('start-time').value = startTimeCst;
             document.getElementById('end-time').value = endTimeCst;
 
+            // Enforce future limits (safety check)
+            enforceFutureLimits();
+
             // Auto-load recordings when time range changes (if cameras selected)
             if (selectedCameras.size > 0) {
                 loadRecordings();
             }
         }
 
+        function enforceFutureLimits() {
+            // Prevent selecting future dates/times
+            const dateInput = document.getElementById('playback-date');
+            const startTimeInput = document.getElementById('start-time');
+            const endTimeInput = document.getElementById('end-time');
+
+            const now = new Date();
+            const todayStr = now.toLocaleDateString('en-CA'); // YYYY-MM-DD format
+
+            // Always ensure max date is today
+            dateInput.max = todayStr;
+
+            // If date is somehow in the future, reset to today
+            if (dateInput.value > todayStr) {
+                dateInput.value = todayStr;
+            }
+
+            // If today is selected, limit times to current time
+            if (dateInput.value === todayStr) {
+                const currentTime = now.toTimeString().substring(0, 5); // HH:MM
+
+                // If end time is in the future, cap it at current time
+                if (endTimeInput.value > currentTime) {
+                    endTimeInput.value = currentTime;
+                }
+
+                // If start time is in the future, cap it at current time
+                if (startTimeInput.value > currentTime) {
+                    startTimeInput.value = currentTime;
+                }
+
+                // Ensure start time is before end time
+                if (startTimeInput.value >= endTimeInput.value) {
+                    // Set start to 10 minutes before end, or beginning of day
+                    const endParts = endTimeInput.value.split(':');
+                    const endMinutes = parseInt(endParts[0]) * 60 + parseInt(endParts[1]);
+                    const startMinutes = Math.max(0, endMinutes - 10);
+                    const startHours = Math.floor(startMinutes / 60);
+                    const startMins = startMinutes % 60;
+                    startTimeInput.value = `${String(startHours).padStart(2, '0')}:${String(startMins).padStart(2, '0')}`;
+                }
+            }
+        }
+
         function updateTimeRange() {
+            // Enforce future limits first
+            enforceFutureLimits();
+
             // Auto-load recordings when time inputs change manually
             if (selectedCameras.size > 0) {
                 // Debounce to avoid loading on every keystroke
@@ -1259,7 +1512,6 @@
         }
 
         function loadTestRange() {
-            console.log('\n🧪 === LOADING TEST RANGE ===');
             const now = new Date();
 
             // Calculate 3 hours ago and 2 hours ago in local time
@@ -1278,10 +1530,6 @@
             const endTime = String(twoHoursAgo.getHours()).padStart(2, '0') + ':' +
                            String(twoHoursAgo.getMinutes()).padStart(2, '0');
 
-            console.log(`Test range: ${dateStr} ${startTime} to ${endTime}`);
-            console.log(`  Start: ${threeHoursAgo.toLocaleString()}`);
-            console.log(`  End: ${twoHoursAgo.toLocaleString()}`);
-
             // Set the form values
             document.getElementById('playback-date').value = dateStr;
             document.getElementById('start-time').value = startTime;
@@ -1290,7 +1538,6 @@
             // If no camera selected, select the first available
             if (selectedCameras.size === 0 && cameras.length > 0) {
                 const firstCamera = cameras[0];
-                console.log(`Auto-selecting camera: ${firstCamera.name}`);
 
                 // Simulate checkbox click to properly select camera
                 const checkboxes = document.querySelectorAll('#camera-checkboxes input[type="checkbox"]');
@@ -1301,7 +1548,6 @@
             }
 
             // Load recordings
-            console.log('Loading recordings for test range...\n');
             loadRecordings();
         }
 
@@ -1311,7 +1557,7 @@
             const dateInput = document.getElementById('playback-date');
 
             if (!startTimeInput.value || !dateInput.value) {
-                alert('Please select a date and start time first');
+                showNotification('Please select a date and start time first', 'warning');
                 return;
             }
 
@@ -1350,13 +1596,16 @@
             updateTimeRange();
         }
 
-        async function loadRecordings() {
+        async function loadRecordings(includeSDCard = false) {
+            // Enforce future limits before loading
+            enforceFutureLimits();
+
             const date = document.getElementById('playback-date').value;
             const startTime = document.getElementById('start-time').value;
             const endTime = document.getElementById('end-time').value;
 
             if (!date || !startTime || !endTime) {
-                alert('Please select date and time range');
+                showNotification('Please select date and time range', 'warning');
                 return;
             }
 
@@ -1369,12 +1618,32 @@
 
             try {
                 // Load recordings for all cameras
-                const response = await fetch(
-                    `/api/playback/recordings?start_time=${encodeURIComponent(startDateTime)}&end_time=${encodeURIComponent(endDateTime)}`
-                );
+                let url = `/api/playback/recordings?start_time=${encodeURIComponent(startDateTime)}&end_time=${encodeURIComponent(endDateTime)}`;
+                if (includeSDCard) {
+                    url += '&include_sd_card=true';
+                }
+
+                const response = await fetch(url);
                 const data = await response.json();
 
                 currentRecordings = data.cameras;
+
+                // Check for SD card recordings
+                if (data.sd_card_segments) {
+                    const sdCardCount = Object.values(data.sd_card_segments).reduce((sum, count) => sum + count, 0);
+                    if (sdCardCount > 0) {
+                        showNotification(`Loaded ${sdCardCount} SD card recording(s)`, 'info', 4000);
+                    }
+                }
+
+                // Check if any recordings exist for the selected date/time range
+                const totalSegments = Object.values(currentRecordings).reduce(
+                    (sum, segments) => sum + (segments ? segments.length : 0), 0
+                );
+                if (totalSegments === 0) {
+                    // Offer to check SD card if no local recordings
+                    showNotification(`No local recordings for ${date}. Click "Check SD Card" to look for camera storage.`, 'warning', 8000);
+                }
 
                 // Load motion events
                 const motionResponse = await fetch(
@@ -1393,7 +1662,113 @@
 
             } catch (error) {
                 console.error('Error loading recordings:', error);
-                alert('Error loading recordings: ' + error.message);
+                showNotification('Error loading recordings: ' + error.message, 'error');
+            }
+        }
+
+        async function checkSDCardRecordings() {
+            if (selectedCameras.size === 0) {
+                showNotification('Please select at least one camera first', 'warning');
+                return;
+            }
+
+            const date = document.getElementById('playback-date').value;
+            const startTime = document.getElementById('start-time').value;
+            const endTime = document.getElementById('end-time').value;
+
+            if (!date || !startTime || !endTime) {
+                showNotification('Please set date and time range first', 'warning');
+                return;
+            }
+
+            showNotification('Checking camera SD cards for missing recordings...', 'info');
+
+            try {
+                const startDateTime = `${date}T${startTime}:00`;
+                const endDateTime = `${date}T${endTime}:00`;
+                const cameras = Array.from(selectedCameras).join(',');
+
+                const response = await fetch(
+                    `/api/playback/sd-card-gaps?start_time=${encodeURIComponent(startDateTime)}&end_time=${encodeURIComponent(endDateTime)}&cameras=${encodeURIComponent(cameras)}`
+                );
+
+                if (!response.ok) {
+                    throw new Error('Failed to check SD cards');
+                }
+
+                const data = await response.json();
+
+                if (!data.success) {
+                    showNotification('Error checking SD cards: ' + (data.error || 'Unknown error'), 'error');
+                    return;
+                }
+
+                // Process results
+                let totalGaps = 0;
+                let sdRecordingsFound = 0;
+                let camerasWithSDSupport = 0;
+
+                Object.entries(data.cameras).forEach(([cameraId, result]) => {
+                    if (result.has_gaps) {
+                        totalGaps += result.gap_count;
+                    }
+                    if (result.sd_recordings && result.sd_recordings.length > 0) {
+                        sdRecordingsFound += result.sd_recordings.length;
+
+                        // Merge SD recordings into currentRecordings
+                        if (!currentRecordings[cameraId]) {
+                            currentRecordings[cameraId] = [];
+                        }
+
+                        result.sd_recordings.forEach(sdRec => {
+                            // Add SD card recording with source marker
+                            currentRecordings[cameraId].push({
+                                start_time: sdRec.start_time,
+                                end_time: sdRec.end_time,
+                                source: 'sd_card',
+                                recording_token: sdRec.recording_token
+                            });
+                        });
+
+                        // Sort recordings by start time
+                        currentRecordings[cameraId].sort((a, b) =>
+                            new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
+                        );
+                    }
+                    if (result.supports_sd_card) {
+                        camerasWithSDSupport++;
+                    }
+                });
+
+                // Update timeline with new recordings
+                updateTimeline();
+
+                // Show results
+                if (sdRecordingsFound > 0) {
+                    showNotification(
+                        `Found ${sdRecordingsFound} SD card recording(s) to fill ${totalGaps} gap(s). ` +
+                        `Orange segments on timeline are from SD card.`,
+                        'success'
+                    );
+                } else if (totalGaps > 0) {
+                    if (camerasWithSDSupport === 0) {
+                        showNotification(
+                            `Found ${totalGaps} gap(s) but no cameras support SD card access (Profile G).`,
+                            'warning'
+                        );
+                    } else {
+                        showNotification(
+                            `Found ${totalGaps} gap(s) but no SD card recordings available to fill them.`,
+                            'info'
+                        );
+                    }
+                } else {
+                    showNotification('No gaps found in local recordings!', 'success');
+                }
+
+            } catch (error) {
+                console.error('Error checking SD cards:', error);
+                showNotification('Error checking SD cards: ' + error.message, 'error');
             }
         }
 
@@ -1408,7 +1783,9 @@
                 return;
             }
 
-            selectedCameras.forEach(cameraName => {
+            selectedCameras.forEach(cameraId => {
+                const cameraName = getCameraName(cameraId);
+                const safeId = cameraId.replace(/[^a-zA-Z0-9-_]/g, '_');
                 const container = document.createElement('div');
                 container.className = 'video-container';
 
@@ -1417,8 +1794,8 @@
                 header.innerHTML = `
                     <span class="video-name">${cameraName}</span>
                     <span style="font-size: 0.9em; color: #888;">
-                        ${currentRecordings[cameraName] ?
-                            `${currentRecordings[cameraName].length} segments` :
+                        ${currentRecordings[cameraId] ?
+                            `${currentRecordings[cameraId].length} segments` :
                             'No recordings'}
                     </span>
                 `;
@@ -1426,12 +1803,15 @@
                 const player = document.createElement('div');
                 player.className = 'video-player';
 
-                if (currentRecordings[cameraName] && currentRecordings[cameraName].length > 0) {
+                if (currentRecordings[cameraId] && currentRecordings[cameraId].length > 0) {
                     const video = document.createElement('video');
                     video.controls = false;  // Hide native controls - we have our own timeline
                     video.preload = 'metadata';  // Preload metadata for instant playback
                     video.autoplay = true;  // Auto-start video when loaded
-                    video.id = `video-${cameraName}`;
+                    video.muted = true;  // Muted by default (required for autoplay in modern browsers)
+                    video.playsInline = true;  // Required for iOS
+                    video.id = `video-${safeId}`;
+                    video.dataset.cameraId = cameraId;
 
                     // Use playback API to serve video
                     const startTime = document.getElementById('start-time').value;
@@ -1448,16 +1828,9 @@
                     // Use API endpoint to serve video properly
                     // Add cache-buster to force reload when time range changes
                     const cacheBuster = Date.now();
-                    const videoUrl = `/api/playback/video/${encodeURIComponent(cameraName)}?start_time=${encodeURIComponent(startDateTime)}&end_time=${encodeURIComponent(endDateTime)}&_=${cacheBuster}`;
-
-                    console.log(`Loading video for ${cameraName}:`);
-                    console.log(`  Date: ${date}, Start Time: ${startTime}, End Time: ${endTime}`);
-                    console.log(`  Combined: ${startDateTime} to ${endDateTime}`);
-                    console.log(`  URL: ${videoUrl}`);
+                    const videoUrl = `/api/playback/video/${encodeURIComponent(cameraId)}?start_time=${encodeURIComponent(startDateTime)}&end_time=${encodeURIComponent(endDateTime)}&_=${cacheBuster}`;
 
                     video.onloadeddata = () => {
-                        console.log(`Video data loaded for ${cameraName}`);
-
                         // Clear player and add video
                         player.innerHTML = '';
                         player.appendChild(video);
@@ -1465,33 +1838,40 @@
                         // Add zoom controls after video loads
                         const zoomIndicator = document.createElement('div');
                         zoomIndicator.className = 'zoom-indicator';
-                        zoomIndicator.id = `zoom-indicator-${cameraName}`;
+                        zoomIndicator.id = `zoom-indicator-${safeId}`;
                         zoomIndicator.textContent = '100%';
 
                         const zoomControls = document.createElement('div');
                         zoomControls.className = 'zoom-controls';
                         zoomControls.innerHTML = `
-                            <button class="zoom-btn select-area-btn" data-camera="${cameraName}" title="Select Area to Zoom">⊡</button>
-                            <button class="zoom-btn" onclick="zoomVideo('${cameraName}', 'in')" title="Zoom In (+)">+</button>
-                            <button class="zoom-btn" onclick="zoomVideo('${cameraName}', 'out')" title="Zoom Out (-)">−</button>
-                            <button class="zoom-btn" onclick="zoomVideo('${cameraName}', 'reset')" title="Reset Zoom (0)">⌂</button>
-                            <button class="zoom-btn" onclick="enterFullscreenPlayback('${cameraName}')" title="Fullscreen (F)">⛶</button>
+                            <button class="zoom-btn select-area-btn" data-camera="${cameraId}" title="Select Area to Zoom">⊡</button>
+                            <button class="zoom-btn" onclick="zoomVideo('${cameraId}', 'in')" title="Zoom In (+)">+</button>
+                            <button class="zoom-btn" onclick="zoomVideo('${cameraId}', 'out')" title="Zoom Out (-)">−</button>
+                            <button class="zoom-btn" onclick="zoomVideo('${cameraId}', 'reset')" title="Reset Zoom (0)">⌂</button>
+                            <button class="zoom-btn" onclick="enterFullscreenPlayback('${cameraId}')" title="Fullscreen (F)">⛶</button>
                         `;
 
                         const selectionBox = document.createElement('div');
                         selectionBox.className = 'zoom-selection-box';
-                        selectionBox.id = `zoom-selection-${cameraName}`;
+                        selectionBox.id = `zoom-selection-${safeId}`;
 
                         // Add timestamp overlay
                         const timestampOverlay = document.createElement('div');
                         timestampOverlay.className = 'video-timestamp-overlay';
-                        timestampOverlay.id = `timestamp-${cameraName}`;
+                        timestampOverlay.id = `timestamp-${safeId}`;
                         timestampOverlay.textContent = '--:--:--';
+
+                        // Add motion indicator overlay
+                        const motionOverlay = document.createElement('div');
+                        motionOverlay.className = 'motion-indicator-overlay';
+                        motionOverlay.id = `motion-indicator-${safeId}`;
+                        motionOverlay.innerHTML = '<span class="motion-icon"></span><span class="motion-text">MOTION</span>';
 
                         player.appendChild(zoomIndicator);
                         player.appendChild(zoomControls);
                         player.appendChild(selectionBox);
                         player.appendChild(timestampOverlay);
+                        player.appendChild(motionOverlay);
 
                         // Add zoom data to player
                         player.dataset.zoomScale = '1';
@@ -1501,30 +1881,30 @@
 
                     // Set video source - this triggers loading
                     video.src = videoUrl;
+                    video.playbackRate = playbackState.speed;
 
                     // Update timestamp overlay as video plays
                     video.ontimeupdate = () => {
-                        updateVideoTimestamp(cameraName, video);
+                        updateVideoTimestamp(cameraId, video);
                     };
 
                     // Auto-skip to next segment when current segment ends
                     video.onended = () => {
-                        console.log(`Video segment ended for ${cameraName}, checking for next segment...`);
-                        skipToNextSegment(cameraName);
+                        skipToNextSegment(cameraId);
                     };
 
                     // Double-click to enter fullscreen
                     video.ondblclick = () => {
-                        enterFullscreenPlayback(cameraName);
+                        enterFullscreenPlayback(cameraId);
                     };
 
                     // Handle errors
                     video.onerror = () => {
                         player.innerHTML = '<div class="no-recording">Error loading video. Check console for details.</div>';
-                        console.error(`Failed to load video for ${cameraName}:`, video.error);
+                        console.error(`Failed to load video for ${cameraName} (id: ${cameraId}):`, video.error);
                     };
 
-                    videoElements[cameraName] = video;
+                    videoElements[cameraId] = video;
                 } else {
                     player.innerHTML = '<div class="no-recording">No recording available for this time period</div>';
                 }
@@ -1560,10 +1940,11 @@
             const rangeMs = endMs - startMs;
 
             // Render segments and gaps for each selected camera
-            selectedCameras.forEach(cameraName => {
-                if (!currentRecordings[cameraName]) return;
+            selectedCameras.forEach(cameraId => {
+                const cameraName = getCameraName(cameraId);
+                if (!currentRecordings[cameraId]) return;
 
-                const segments = currentRecordings[cameraName];
+                const segments = currentRecordings[cameraId];
 
                 // Sort segments by start time
                 const sortedSegments = [...segments].sort((a, b) =>
@@ -1583,9 +1964,17 @@
                     if (widthPercent > 0) {
                         const segmentEl = document.createElement('div');
                         segmentEl.className = 'timeline-segment';
+
+                        // Check if this is an SD card recording
+                        if (segment.source === 'sd_card') {
+                            segmentEl.classList.add('sd-card');
+                            segmentEl.title = `SD Card - ${cameraName}: ${formatTime(segment.start_time)} - ${formatTime(segment.end_time)}`;
+                        } else {
+                            segmentEl.title = `${cameraName}: ${formatTime(segment.start_time)} - ${formatTime(segment.end_time)}`;
+                        }
+
                         segmentEl.style.left = startPercent + '%';
                         segmentEl.style.width = widthPercent + '%';
-                        segmentEl.title = `${cameraName}: ${formatTime(segment.start_time)} - ${formatTime(segment.end_time)}`;
                         // Remove segment onclick - let the timeline slider handle all seeks
                         // segmentEl.onclick = () => seekToTime(segmentStartMs);
                         timelineTrack.appendChild(segmentEl);
@@ -1614,9 +2003,22 @@
                 });
             });
 
+            // Helper function to check if an event time falls within any recording segment
+            function isTimeWithinSegments(eventTimeMs, segments) {
+                if (!segments || segments.length === 0) return false;
+                return segments.some(seg => {
+                    const segStart = new Date(seg.start_time).getTime();
+                    const segEnd = new Date(seg.end_time).getTime();
+                    return eventTimeMs >= segStart && eventTimeMs <= segEnd;
+                });
+            }
+
             // Add motion event markers
             Object.keys(motionEvents).forEach(cameraName => {
-                if (!selectedCameras.has(cameraName)) return;
+                const cameraId = getCameraId(cameraName);
+                if (!selectedCameras.has(cameraId)) return;
+
+                const cameraSegments = currentRecordings[cameraId] || [];
 
                 motionEvents[cameraName].forEach(event => {
                     // Filter based on AI detection toggle
@@ -1626,24 +2028,44 @@
                     }
 
                     const eventTime = new Date(event.event_time).getTime();
+
+                    // Only show events that fall within available recording segments
+                    if (!isTimeWithinSegments(eventTime, cameraSegments)) {
+                        return; // Skip events where no recording exists
+                    }
+
                     const position = ((eventTime - startMs) / rangeMs) * 100;
 
                     if (position >= 0 && position <= 100) {
                         const marker = document.createElement('div');
                         marker.className = 'timeline-marker';
 
+                        // Calculate width based on duration (if available)
+                        const durationSecs = event.duration_seconds || 1;
+                        const durationMs = durationSecs * 1000;
+                        let widthPercent = (durationMs / rangeMs) * 100;
+                        // Minimum width for visibility, cap at reasonable max
+                        widthPercent = Math.max(0.1, Math.min(widthPercent, 5));
+
+                        // Format duration for tooltip
+                        const durationStr = durationSecs >= 60
+                            ? `${Math.floor(durationSecs / 60)}m ${Math.round(durationSecs % 60)}s`
+                            : `${Math.round(durationSecs)}s`;
+
                         // Different colors for different event types
                         if (event.event_type === 'ai_person') {
                             marker.classList.add('ai-person');
-                            marker.title = `Person: ${cameraName} at ${event.event_time}`;
+                            marker.title = `Person detected: ${cameraName} at ${formatTime(event.event_time)} (${durationStr})`;
                         } else if (event.event_type === 'ai_vehicle') {
                             marker.classList.add('ai-vehicle');
-                            marker.title = `Vehicle: ${cameraName} at ${event.event_time}`;
+                            marker.title = `Vehicle detected: ${cameraName} at ${formatTime(event.event_time)} (${durationStr})`;
                         } else {
-                            marker.title = `Motion: ${cameraName} at ${event.event_time}`;
+                            marker.classList.add('motion');
+                            marker.title = `Motion: ${cameraName} at ${formatTime(event.event_time)} (${durationStr})`;
                         }
 
                         marker.style.left = position + '%';
+                        marker.style.width = widthPercent + '%';
                         // Remove marker onclick - let the timeline slider handle all seeks
                         // marker.onclick = () => seekToTime(eventTime);
                         markersContainer.appendChild(marker);
@@ -1684,12 +2106,28 @@
             const bucketSize = Math.max(5000, rangeMs / 100); // At least 5 seconds, max 100 buckets
             const buckets = new Map();
 
+            // Helper to check if time is within recording segments
+            function isTimeWithinRecordings(timeMs, cameraId) {
+                const segments = currentRecordings[cameraId] || [];
+                return segments.some(seg => {
+                    const segStart = new Date(seg.start_time).getTime();
+                    const segEnd = new Date(seg.end_time).getTime();
+                    return timeMs >= segStart && timeMs <= segEnd;
+                });
+            }
+
             // Collect all motion events across selected cameras
             Object.keys(motionEvents).forEach(cameraName => {
-                if (!selectedCameras.has(cameraName)) return;
+                const cameraId = getCameraId(cameraName);
+                if (!selectedCameras.has(cameraId)) return;
 
                 motionEvents[cameraName].forEach(event => {
                     const eventTime = new Date(event.event_time).getTime();
+
+                    // Only include events within available recordings
+                    if (!isTimeWithinRecordings(eventTime, cameraId)) {
+                        return;
+                    }
 
                     // Calculate which bucket this event belongs to
                     const bucketIndex = Math.floor((eventTime - startMs) / bucketSize);
@@ -1813,6 +2251,46 @@
                 });
 
                 overlay.textContent = formatted;
+
+                // Also check for motion events at current time
+                updateMotionIndicator(cameraName, currentTimeMs);
+            }
+        }
+
+        function updateMotionIndicator(cameraId, currentTimeMs) {
+            const safeId = cameraId.replace(/[^a-zA-Z0-9-_]/g, '_');
+            const indicator = document.getElementById(`motion-indicator-${safeId}`);
+            if (!indicator) return;
+
+            // Check if there's a motion event within 2 seconds of current time
+            const events = motionEvents[cameraId] || [];
+            const threshold = 2000; // 2 second window
+
+            let matchingEvent = null;
+            for (const event of events) {
+                const eventTime = new Date(event.event_time).getTime();
+                if (Math.abs(eventTime - currentTimeMs) <= threshold) {
+                    matchingEvent = event;
+                    break;
+                }
+            }
+
+            if (matchingEvent) {
+                indicator.classList.add('active');
+
+                // Update indicator type based on event type
+                indicator.classList.remove('ai-person', 'ai-vehicle');
+                if (matchingEvent.event_type === 'ai_person') {
+                    indicator.classList.add('ai-person');
+                    indicator.querySelector('.motion-text').textContent = 'PERSON';
+                } else if (matchingEvent.event_type === 'ai_vehicle') {
+                    indicator.classList.add('ai-vehicle');
+                    indicator.querySelector('.motion-text').textContent = 'VEHICLE';
+                } else {
+                    indicator.querySelector('.motion-text').textContent = 'MOTION';
+                }
+            } else {
+                indicator.classList.remove('active', 'ai-person', 'ai-vehicle');
             }
         }
 
@@ -1820,7 +2298,6 @@
             // Get segments for this camera
             const segments = currentRecordings[cameraName];
             if (!segments || segments.length === 0) {
-                console.log(`No segments available for ${cameraName}`);
                 return;
             }
 
@@ -1832,7 +2309,6 @@
             const videoSrc = video.src;
             const startTimeMatch = videoSrc.match(/start_time=([^&]+)/);
             if (!startTimeMatch) {
-                console.log('Could not parse current segment time');
                 return;
             }
 
@@ -1854,8 +2330,6 @@
             }
 
             if (nextSegment) {
-                console.log(`Skipping to next segment: ${nextSegment.start_time}`);
-
                 // Calculate gap duration
                 const gapStart = new Date(videoSrc.match(/end_time=([^&]+)/)?.[1] || currentSegmentStart);
                 const gapEnd = new Date(nextSegment.start_time);
@@ -1866,15 +2340,13 @@
                 const endDateTime = playbackState.endTime;
                 const newSrc = `/api/playback/video/${encodeURIComponent(cameraName)}?start_time=${encodeURIComponent(nextSegment.start_time)}&end_time=${encodeURIComponent(endDateTime)}&_=${cacheBuster}`;
 
-                console.log(`Gap skipped: ${gapSeconds}s. Loading: ${newSrc}`);
-
                 // Update video source and play
                 video.src = newSrc;
+                video.playbackRate = playbackState.speed;
                 if (playbackState.playing) {
                     video.play();
                 }
             } else {
-                console.log(`No more segments available for ${cameraName}`);
                 // Pause playback when we reach the end
                 playbackState.playing = false;
                 const playButton = document.getElementById('play-button');
@@ -1885,8 +2357,24 @@
 
         function togglePlayPause() {
             playbackState.playing = !playbackState.playing;
-            const playButton = document.getElementById('play-button');
+            updatePlayPauseButton();
 
+            Object.values(videoElements).forEach(video => {
+                if (playbackState.playing) {
+                    video.play().catch(err => {
+                        console.error('Failed to play video:', err);
+                        // Revert play state on error
+                        playbackState.playing = false;
+                        updatePlayPauseButton();
+                    });
+                } else {
+                    video.pause();
+                }
+            });
+        }
+
+        function updatePlayPauseButton() {
+            const playButton = document.getElementById('play-button');
             if (playbackState.playing) {
                 playButton.classList.remove('paused');
                 playButton.classList.add('playing');
@@ -1894,26 +2382,94 @@
                 playButton.classList.remove('playing');
                 playButton.classList.add('paused');
             }
-
-            Object.values(videoElements).forEach(video => {
-                if (playbackState.playing) {
-                    video.play();
-                } else {
-                    video.pause();
-                }
-            });
         }
 
         function setPlaybackSpeed(speed) {
+            const previousSpeed = playbackState.speed;
             playbackState.speed = speed;
 
-            // Update all videos
-            Object.values(videoElements).forEach(video => {
-                video.playbackRate = speed;
-            });
+            // For speeds > 2x, we need server-side processing
+            // The server will create a sped-up version of the video
+            const needsServerSpeed = speed > 2.0;
+            const hadServerSpeed = previousSpeed > 2.0;
+
+            // Check if we need to reload videos due to crossing the 2x threshold
+            // or changing between different high-speed values (4x vs 8x)
+            if (needsServerSpeed !== hadServerSpeed || (needsServerSpeed && speed !== previousSpeed)) {
+                // Reload all videos with new speed parameter
+                reloadVideosWithSpeed(speed);
+            } else {
+                // For speeds <= 2x, use browser playbackRate
+                Object.values(videoElements).forEach(video => {
+                    video.playbackRate = speed;
+                });
+            }
 
             // Update UI buttons
             updateSpeedButtons(speed);
+        }
+
+        function reloadVideosWithSpeed(speed) {
+            // Show loading notification for server-side speed processing
+            if (speed > 2.0) {
+                showNotification(`Loading ${speed}x speed video...`);
+            }
+
+            // Get current playback position
+            const wasPlaying = playbackState.playing;
+
+            // For each video, update the source URL with the speed parameter
+            Object.entries(videoElements).forEach(([cameraId, video]) => {
+                const currentSrc = video.src;
+                if (!currentSrc) return;
+
+                // Parse current URL and update/add speed parameter
+                const url = new URL(currentSrc, window.location.origin);
+
+                // Update or add speed parameter
+                if (speed > 2.0) {
+                    url.searchParams.set('speed', speed.toString());
+                } else {
+                    url.searchParams.delete('speed');
+                }
+
+                // Update cache buster
+                url.searchParams.set('_', Date.now().toString());
+
+                // Store current time to restore position
+                const currentTime = video.currentTime;
+
+                // Set new source
+                video.src = url.toString();
+
+                // For server-processed speed videos, browser rate should be 1.0
+                // For normal videos, use the requested speed
+                video.playbackRate = speed > 2.0 ? 1.0 : speed;
+
+                // Restore position and play state when metadata loads
+                video.onloadedmetadata = () => {
+                    // For sped-up videos, the duration is shorter
+                    // Adjust seek position proportionally
+                    if (speed > 2.0 && playbackState.previousSpeed <= 2.0) {
+                        // Going from normal to fast: position stays same (server video is shorter)
+                        video.currentTime = Math.min(currentTime, video.duration);
+                    } else if (speed <= 2.0 && playbackState.previousSpeed > 2.0) {
+                        // Going from fast to normal: scale position back
+                        video.currentTime = Math.min(currentTime * playbackState.previousSpeed, video.duration);
+                    } else {
+                        // Changing between fast speeds (4x <-> 8x)
+                        const ratio = playbackState.previousSpeed / speed;
+                        video.currentTime = Math.min(currentTime * ratio, video.duration);
+                    }
+
+                    if (wasPlaying) {
+                        video.play().catch(err => console.warn('Failed to resume playback:', err));
+                    }
+                };
+            });
+
+            // Store previous speed for position calculations
+            playbackState.previousSpeed = speed;
         }
 
         // Timeline slider interaction
@@ -1947,7 +2503,6 @@
 
                 // Always seek on mouseup (whether click or drag end)
                 // This ensures we seek exactly once for clicks
-                console.log(`Mouse released: moved=${moved}px, duration=${duration}ms, isDragging=${isDragging}`);
                 seekToPosition(event);
 
                 playbackState.isDragging = false;
@@ -1971,23 +2526,57 @@
             // Clamp between 0 and 100
             percent = Math.max(0, Math.min(100, percent));
 
-            console.log(`\n🎯 Click Position Calculation:`);
-            console.log(`  clientX: ${event.clientX}`);
-            console.log(`  rect.left: ${rect.left}, rect.width: ${rect.width}`);
-            console.log(`  padding: ${padding}px on each side`);
-            console.log(`  x (relative to track): ${x.toFixed(2)}`);
-            console.log(`  trackWidth (minus padding): ${trackWidth.toFixed(2)}`);
-            console.log(`  percent: ${percent.toFixed(2)}%`);
-
-            updateTimelinePosition(percent);
-
             if (!playbackState.startTime || !playbackState.endTime) return;
 
             const startMs = new Date(playbackState.startTime).getTime();
             const endMs = new Date(playbackState.endTime).getTime();
             const rangeMs = endMs - startMs;
-            const targetTimeMs = startMs + (rangeMs * percent / 100);
+            let targetTimeMs = startMs + (rangeMs * percent / 100);
 
+            // Check if clicked time falls within any segment across selected cameras
+            let hasValidSegment = false;
+            let nearestSegmentTime = null;
+            let nearestDistance = Infinity;
+
+            selectedCameras.forEach(cameraName => {
+                const segments = currentRecordings[cameraName] || [];
+                segments.forEach(seg => {
+                    const segStart = new Date(seg.start_time).getTime();
+                    const segEnd = new Date(seg.end_time).getTime();
+
+                    // Check if target is within this segment
+                    if (targetTimeMs >= segStart && targetTimeMs < segEnd) {
+                        hasValidSegment = true;
+                    }
+
+                    // Track nearest segment boundary for snapping
+                    const distToStart = Math.abs(targetTimeMs - segStart);
+                    const distToEnd = Math.abs(targetTimeMs - segEnd);
+
+                    if (distToStart < nearestDistance) {
+                        nearestDistance = distToStart;
+                        nearestSegmentTime = segStart;
+                    }
+                    if (distToEnd < nearestDistance) {
+                        nearestDistance = distToEnd;
+                        nearestSegmentTime = segEnd;
+                    }
+                });
+            });
+
+            // If no valid segment at clicked position, snap to nearest segment
+            if (!hasValidSegment && nearestSegmentTime !== null) {
+                targetTimeMs = nearestSegmentTime;
+                // Recalculate percent for the snapped position
+                percent = ((targetTimeMs - startMs) / rangeMs) * 100;
+            }
+
+            // If still no valid segment (no recordings at all), don't seek
+            if (!hasValidSegment && nearestSegmentTime === null) {
+                return;
+            }
+
+            updateTimelinePosition(percent);
             playbackState.currentTime = (targetTimeMs - startMs) / 1000;
 
             // Seek to the target time
@@ -2002,14 +2591,7 @@
             const rangeMs = endMs - startMs;
             const percent = ((timestampMs - startMs) / rangeMs) * 100;
 
-            // Debug logging
             const clickedDate = new Date(timestampMs);
-            console.log(`\n=== TIMELINE SEEK ===`);
-            console.log(`Clicked time: ${clickedDate.toLocaleString()} (${clickedDate.toISOString()})`);
-            console.log(`Target timestamp: ${timestampMs}`);
-            console.log(`Timeline range: ${playbackState.startTime} to ${playbackState.endTime}`);
-            console.log(`Timeline range (ms): ${startMs} to ${endMs}`);
-            console.log(`Percent: ${percent.toFixed(2)}%`);
 
             updateTimelinePosition(percent);
             playbackState.currentTime = (timestampMs - startMs) / 1000;
@@ -2020,14 +2602,6 @@
                 if (!video || !currentRecordings[cameraName]) return;
 
                 const segments = currentRecordings[cameraName];
-
-                console.log(`\nCamera: ${cameraName} (${segments.length} segments available)`);
-                segments.forEach((seg, idx) => {
-                    const segStart = new Date(seg.start_time).getTime();
-                    const segEnd = new Date(seg.end_time).getTime();
-                    const contains = timestampMs >= segStart && timestampMs <= segEnd;
-                    console.log(`  [${idx}] ${seg.start_time} to ${seg.end_time} (${segStart} - ${segEnd}) ${contains ? '← TARGET' : ''}`);
-                });
 
                 // Find segment that contains this timestamp
                 // Prefer segment that starts exactly at the timestamp (avoids boundary issues)
@@ -2054,11 +2628,6 @@
                     // Calculate offset within this segment (in seconds)
                     const offsetSeconds = (timestampMs - segmentStartMs) / 1000;
 
-                    // Debug logging
-                    console.log(`Camera: ${cameraName}`);
-                    console.log(`  Segment: ${segmentStart} to ${segmentEnd}`);
-                    console.log(`  Offset in segment: ${offsetSeconds.toFixed(1)}s`);
-
                     // Build URL for this specific segment
                     const cacheBuster = Date.now();
                     const newSrc = `/api/playback/video/${encodeURIComponent(cameraName)}?start_time=${encodeURIComponent(segmentStart)}&end_time=${encodeURIComponent(segmentEnd)}&_=${cacheBuster}`;
@@ -2081,22 +2650,37 @@
 
                     if (!needsReload) {
                         // Same segment, just seek within current video
-                        console.log(`Seeking within current segment for ${cameraName}: ${offsetSeconds}s (duration: ${video.duration}s, readyState: ${video.readyState})`);
-
                         // Wait for video to be ready before seeking
                         if (video.readyState >= 1 && isFinite(video.duration) && video.duration > 0) {
-                            // Video metadata is loaded and duration is valid, we can seek
-                            const seekTime = Math.max(0, Math.min(offsetSeconds, video.duration));
-                            console.log(`  Setting currentTime to ${seekTime}s`);
-                            video.currentTime = seekTime;
+                            // Check if offset exceeds actual video duration (segment mismatch)
+                            if (offsetSeconds > video.duration + 1) {
+                                // Offset is beyond this video, find the next segment
+                                const nextSegment = findNextSegmentForTime(cameraName, timestampMs, segments);
+                                if (nextSegment) {
+                                    loadSegmentAndSeek(cameraName, video, nextSegment, timestampMs);
+                                } else {
+                                    console.warn(`  No next segment found, seeking to end of current video`);
+                                    video.currentTime = video.duration - 0.1;
+                                }
+                            } else {
+                                // Video metadata is loaded and duration is valid, we can seek
+                                const seekTime = Math.max(0, Math.min(offsetSeconds, video.duration));
+                                video.currentTime = seekTime;
+                            }
                         } else {
                             // Video not ready or duration not available, wait for metadata
-                            console.log(`  Video not ready (readyState: ${video.readyState}, duration: ${video.duration}), waiting for metadata...`);
                             const metadataHandler = () => {
                                 if (isFinite(video.duration) && video.duration > 0) {
-                                    const seekTime = Math.max(0, Math.min(offsetSeconds, video.duration));
-                                    console.log(`  Metadata loaded, duration: ${video.duration}s, setting currentTime to ${seekTime}s`);
-                                    video.currentTime = seekTime;
+                                    // Check if offset exceeds actual video duration
+                                    if (offsetSeconds > video.duration + 1) {
+                                        const nextSegment = findNextSegmentForTime(cameraName, timestampMs, segments);
+                                        if (nextSegment) {
+                                            loadSegmentAndSeek(cameraName, video, nextSegment, timestampMs);
+                                        }
+                                    } else {
+                                        const seekTime = Math.max(0, Math.min(offsetSeconds, video.duration));
+                                        video.currentTime = seekTime;
+                                    }
                                 } else {
                                     console.warn(`  Metadata loaded but duration still invalid: ${video.duration}`);
                                 }
@@ -2105,32 +2689,41 @@
                             video.addEventListener('loadedmetadata', metadataHandler, { once: true });
                         }
 
-                        // Resume playback if we were playing
-                        if (playbackState.playing && video.paused) {
-                            video.play().catch(err => console.warn(`Failed to resume playback for ${cameraName}:`, err));
-                        }
+                        // Auto-start playback after seeking
+                        playbackState.playing = true;
+                        video.play().catch(err => console.warn(`Failed to start playback for ${cameraName}:`, err));
+                        updatePlayPauseButton();
                     } else {
                         // Different segment, need to load it
-                        console.log(`Loading new segment for ${cameraName}: ${segmentStart} to ${segmentEnd}, will seek to ${offsetSeconds}s`);
-
                         video.src = newSrc;
+                        video.playbackRate = playbackState.speed;
 
                         // Seek to the correct position once metadata is loaded
                         video.onloadedmetadata = () => {
-                            console.log(`Metadata loaded for ${cameraName}, duration: ${video.duration}s, seeking to: ${offsetSeconds}s`);
-
                             if (isFinite(video.duration) && video.duration > 0) {
-                                const seekTime = Math.max(0, Math.min(offsetSeconds, video.duration));
-                                video.currentTime = seekTime;
+                                // Check if offset exceeds actual video duration (segment mismatch)
+                                if (offsetSeconds > video.duration + 1) {
+                                    const nextSegment = findNextSegmentForTime(cameraName, timestampMs, segments);
+                                    if (nextSegment && nextSegment !== matchingSegment) {
+                                        loadSegmentAndSeek(cameraName, video, nextSegment, timestampMs);
+                                        return;
+                                    } else {
+                                        console.warn(`  No next segment found, playing from start of next segment or end of current`);
+                                        video.currentTime = 0; // Start from beginning if we can't find exact position
+                                    }
+                                } else {
+                                    const seekTime = Math.max(0, Math.min(offsetSeconds, video.duration));
+                                    video.currentTime = seekTime;
+                                }
                             } else {
                                 console.warn(`Duration invalid for ${cameraName}: ${video.duration}, seeking to ${offsetSeconds}s anyway`);
                                 video.currentTime = offsetSeconds;
                             }
 
-                            // Resume playback if we were playing
-                            if (playbackState.playing) {
-                                video.play().catch(err => console.warn(`Failed to start playback for ${cameraName}:`, err));
-                            }
+                            // Auto-start playback after loading new segment
+                            playbackState.playing = true;
+                            video.play().catch(err => console.warn(`Failed to start playback for ${cameraName}:`, err));
+                            updatePlayPauseButton();
                         };
                     }
                 } else {
@@ -2141,6 +2734,71 @@
             });
         }
 
+        // Helper function to find the next segment that contains or follows the timestamp
+        function findNextSegmentForTime(cameraName, timestampMs, segments) {
+            // Sort segments by start time
+            const sortedSegments = [...segments].sort((a, b) => {
+                return new Date(a.start_time).getTime() - new Date(b.start_time).getTime();
+            });
+
+            // Find the first segment that starts after the target time
+            // This handles the case where the target falls in a gap between segments
+            let closestAfter = null;
+            let closestAfterDist = Infinity;
+
+            for (const seg of sortedSegments) {
+                const segStart = new Date(seg.start_time).getTime();
+                const segEnd = seg.end_time ? new Date(seg.end_time).getTime() : segStart + 300000;
+
+                // If this segment contains our target time, return it
+                if (segStart <= timestampMs && timestampMs < segEnd) {
+                    return seg;
+                }
+
+                // Track the closest segment that starts after our target
+                if (segStart > timestampMs) {
+                    const dist = segStart - timestampMs;
+                    if (dist < closestAfterDist) {
+                        closestAfterDist = dist;
+                        closestAfter = seg;
+                    }
+                }
+            }
+
+            // If we found a segment that starts after our target (within 5 minutes), use it
+            if (closestAfter && closestAfterDist < 300000) {
+                return closestAfter;
+            }
+
+            return null;
+        }
+
+        // Helper function to load a segment and seek to the correct position
+        function loadSegmentAndSeek(cameraName, video, segment, timestampMs) {
+            const segmentStart = segment.start_time.replace(' ', 'T');
+            const segmentEnd = segment.end_time ? segment.end_time.replace(' ', 'T') : null;
+            const segmentStartMs = new Date(segment.start_time).getTime();
+
+            // Calculate offset within this segment
+            const offsetSeconds = Math.max(0, (timestampMs - segmentStartMs) / 1000);
+
+            const cacheBuster = Date.now();
+            const endParam = segmentEnd ? `&end_time=${encodeURIComponent(segmentEnd)}` : '';
+            video.src = `/api/playback/video/${encodeURIComponent(cameraName)}?start_time=${encodeURIComponent(segmentStart)}${endParam}&_=${cacheBuster}`;
+            video.playbackRate = playbackState.speed;
+
+            video.onloadedmetadata = () => {
+                if (isFinite(video.duration) && video.duration > 0) {
+                    const seekTime = Math.max(0, Math.min(offsetSeconds, video.duration));
+                    video.currentTime = seekTime;
+                }
+                // Apply current playback speed
+                video.playbackRate = playbackState.speed;
+                playbackState.playing = true;
+                video.play().catch(err => console.warn(`Failed to start playback:`, err));
+                updatePlayPauseButton();
+            };
+        }
 
         function updateTimelinePosition(percent) {
             const progress = document.getElementById('timeline-progress');
@@ -2168,17 +2826,40 @@
             const targetTimeMs = startMs + (rangeMs * percent / 100);
             const targetDate = new Date(targetTimeMs);
 
+            // Check if this time has a recording
+            let hasRecording = false;
+            selectedCameras.forEach(cameraName => {
+                const segments = currentRecordings[cameraName] || [];
+                segments.forEach(seg => {
+                    const segStart = new Date(seg.start_time).getTime();
+                    const segEnd = new Date(seg.end_time).getTime();
+                    if (targetTimeMs >= segStart && targetTimeMs < segEnd) {
+                        hasRecording = true;
+                    }
+                });
+            });
+
             // Format as "6:32:51 PM" with date if different from start
             const startDate = new Date(playbackState.startTime);
             const timeStr = targetDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
-            // Add date if it's different from the start date
+            // Build tooltip text
+            let tooltipText;
             if (targetDate.toDateString() !== startDate.toDateString()) {
-                tooltip.textContent = targetDate.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + timeStr;
+                tooltipText = targetDate.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + timeStr;
             } else {
-                tooltip.textContent = timeStr;
+                tooltipText = timeStr;
             }
 
+            // Add indicator if no recording at this time
+            if (!hasRecording) {
+                tooltipText += ' (no recording)';
+                tooltip.style.color = '#ff6b6b';
+            } else {
+                tooltip.style.color = '#fff';
+            }
+
+            tooltip.textContent = tooltipText;
             tooltip.style.left = percent + '%';
             tooltip.style.display = 'block';
         }
@@ -2299,7 +2980,7 @@
         }
 
         function changeSpeed(delta) {
-            const newSpeed = Math.max(0.25, Math.min(4, playbackState.speed + delta));
+            const newSpeed = Math.max(0.25, Math.min(8, playbackState.speed + delta));
             const speedButtons = [0.5, 1.0, 1.5, 2.0];
             const closest = speedButtons.reduce((prev, curr) =>
                 Math.abs(curr - newSpeed) < Math.abs(prev - newSpeed) ? curr : prev
@@ -2320,17 +3001,21 @@
                 return;
             }
 
-            // Use the video element's built-in fullscreen API
-            if (video.requestFullscreen) {
-                video.requestFullscreen();
-            } else if (video.webkitRequestFullscreen) {
-                video.webkitRequestFullscreen();
-            } else if (video.mozRequestFullScreen) {
-                video.mozRequestFullScreen();
-            } else if (video.msRequestFullscreen) {
-                video.msRequestFullscreen();
+            // Use the video-player container for fullscreen so overlays are visible
+            const player = video.closest('.video-player');
+            const elementToFullscreen = player || video;
+
+            // Use the fullscreen API
+            if (elementToFullscreen.requestFullscreen) {
+                elementToFullscreen.requestFullscreen();
+            } else if (elementToFullscreen.webkitRequestFullscreen) {
+                elementToFullscreen.webkitRequestFullscreen();
+            } else if (elementToFullscreen.mozRequestFullScreen) {
+                elementToFullscreen.mozRequestFullScreen();
+            } else if (elementToFullscreen.msRequestFullscreen) {
+                elementToFullscreen.msRequestFullscreen();
             } else {
-                alert('Fullscreen not supported by your browser');
+                showNotification('Fullscreen not supported by your browser', 'warning');
             }
         }
 
@@ -2340,7 +3025,7 @@
             const endTime = document.getElementById('end-time').value;
 
             if (!date || !startTime || !endTime) {
-                alert('Please select date and time range first');
+                showNotification('Please select date and time range first', 'warning');
                 return;
             }
 
@@ -2416,7 +3101,7 @@
             }
 
             hideExportPanel();
-            alert('Download started. Files will be saved to your Downloads folder.');
+            showNotification('Download started. Files will be saved to your Downloads folder.', 'success', 5000);
         }
 
         // Zoom functionality for playback videos
@@ -2736,12 +3421,21 @@
 
                             // Update playbackState.currentTime as offset from timeline start
                             playbackState.currentTime = (currentTimestampMs - startMs) / 1000;
+
+                            // Update timestamp display (actual recording time)
+                            const currentDate = new Date(currentTimestampMs);
+                            document.getElementById('timestamp-display').textContent =
+                                currentDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+
+                            // Update elapsed time display (time since start of selected range)
+                            const elapsedSeconds = (currentTimestampMs - startMs) / 1000;
+                            document.getElementById('current-time-display').textContent = formatDuration(elapsedSeconds);
                         }
                     }
+                } else {
+                    // Fallback: show segment position if timeline range not available
+                    document.getElementById('current-time-display').textContent = formatDuration(videoCurrentTime);
                 }
-
-                // Update time display (shows position within current segment)
-                document.getElementById('current-time-display').textContent = formatDuration(videoCurrentTime);
 
                 // Auto-pause at end of segment
                 if (videoCurrentTime >= duration && playbackState.playing) {
@@ -2892,7 +3586,7 @@
 
         function updateSpeedButtons(currentSpeed) {
             const speedButtons = document.querySelectorAll('.speed-btn');
-            const speeds = [0.5, 1.0, 1.5, 2.0];
+            const speeds = [0.5, 1.0, 1.5, 2.0, 4.0, 8.0];
 
             // Find closest predefined speed
             let closestSpeed = speeds[0];
@@ -3041,6 +3735,9 @@
             document.getElementById('start-time').value = startTimeStr;
             document.getElementById('end-time').value = endTimeStr;
 
+            // Enforce future limits (in case timeline allowed selecting future times)
+            enforceFutureLimits();
+
             // Close timeline selector and show playback
             toggleTimelineSelector();
 
@@ -3089,8 +3786,6 @@
             `;
 
             showNotification('Press ? for keyboard shortcuts');
-            // Also could show a modal with full shortcuts
-            console.log(shortcuts);
         }
     </script>
 </body>

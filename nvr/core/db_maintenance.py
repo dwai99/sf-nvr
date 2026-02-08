@@ -19,14 +19,24 @@ def run_maintenance(playback_db):
     results = {
         'orphaned_files_cleaned': 0,
         'incomplete_segments_cleaned': 0,
+        'segments_repaired': 0,
         'database_optimized': False
     }
 
     logger.info("Starting database maintenance...")
 
-    # 1. Clean up entries for deleted files
+    # 1. Repair segments with missing end_times (from crashes/restarts)
     try:
-        storage_path = Path("recordings")
+        repair_results = playback_db.repair_missing_end_times()
+        results['segments_repaired'] = repair_results.get('repaired', 0)
+        logger.info(f"Repaired {results['segments_repaired']} segments with missing end_times")
+    except Exception as e:
+        logger.error(f"Error repairing segment end_times: {e}")
+
+    # 2. Clean up entries for deleted files
+    try:
+        from nvr.core.config import config
+        storage_path = config.storage_path
         deleted = playback_db.cleanup_deleted_files(storage_path)
         results['orphaned_files_cleaned'] = deleted
         logger.info(f"Cleaned up {deleted} orphaned database entries")
@@ -53,18 +63,29 @@ def run_maintenance(playback_db):
     return results
 
 
-def schedule_maintenance(playback_db, interval_hours: int = 24):
+def schedule_maintenance(playback_db, interval_hours: int = 24, run_on_startup: bool = True):
     """
     Schedule periodic database maintenance
 
     Args:
         playback_db: PlaybackDatabase instance
-        interval_hours: How often to run maintenance (default: 24 hours)
+        interval_hours: How often to run full maintenance (default: 24 hours)
+        run_on_startup: Whether to run maintenance immediately on startup
     """
     import threading
     import time
 
     def maintenance_loop():
+        # Run repair immediately on startup (after short delay for system to stabilize)
+        if run_on_startup:
+            time.sleep(30)  # Wait 30 seconds for system to stabilize
+            try:
+                logger.info("Running startup segment repair...")
+                repair_results = playback_db.repair_missing_end_times()
+                logger.info(f"Startup repair: {repair_results.get('repaired', 0)} segments fixed")
+            except Exception as e:
+                logger.error(f"Error in startup repair: {e}")
+
         while True:
             try:
                 time.sleep(interval_hours * 3600)  # Convert hours to seconds
@@ -75,5 +96,25 @@ def schedule_maintenance(playback_db, interval_hours: int = 24):
     # Start maintenance thread
     thread = threading.Thread(target=maintenance_loop, daemon=True, name="DBMaintenance")
     thread.start()
-    logger.info(f"Database maintenance scheduled every {interval_hours} hours")
+    logger.info(f"Database maintenance scheduled every {interval_hours} hours (startup repair enabled: {run_on_startup})")
     return thread
+
+
+def run_segment_repair(playback_db):
+    """
+    Run just the segment repair task (for manual trigger or more frequent runs).
+
+    Args:
+        playback_db: PlaybackDatabase instance
+
+    Returns:
+        Dict with repair results
+    """
+    logger.info("Running segment repair...")
+    try:
+        results = playback_db.repair_missing_end_times()
+        logger.info(f"Segment repair completed: {results}")
+        return results
+    except Exception as e:
+        logger.error(f"Error in segment repair: {e}")
+        return {'repaired': 0, 'failed': 0, 'missing': 0, 'error': str(e)}

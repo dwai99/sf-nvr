@@ -260,12 +260,13 @@ class AIObjectDetector:
             intensity = 1.0 if self.current_event_type == "person" else 0.5
 
             self.recorder.playback_db.add_motion_event(
-                camera_name=self.camera_name,
+                camera_id=self.recorder.camera_id,
                 event_time=self.event_start_time,
                 duration_seconds=duration,
                 frame_count=self.event_frame_count,
                 intensity=intensity,
-                event_type=f"ai_{self.current_event_type}"  # "ai_person" or "ai_vehicle"
+                event_type=f"ai_{self.current_event_type}",  # "ai_person" or "ai_vehicle"
+                camera_name=self.camera_name
             )
 
             logger.info(

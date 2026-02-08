@@ -83,8 +83,7 @@ async def update_config(updates: ConfigUpdate):
 async def get_storage_info():
     """Get storage information for the recordings directory"""
     try:
-        recording_config = config.get('recording', {})
-        storage_path = Path(recording_config.get('storage_path', './recordings'))
+        storage_path = config.storage_path
         if not storage_path.exists():
             storage_path = Path(".")
 
@@ -130,16 +129,134 @@ class MotionSettings(BaseModel):
     min_area: int
 
 
-@router.post("/api/cameras/{camera_name}/motion-settings")
-async def update_camera_motion_settings(camera_name: str, settings: MotionSettings):
+class CameraRecordingSettings(BaseModel):
+    """Model for per-camera recording settings"""
+    resolution: int = None  # 360, 480, 720, or 1080
+    recording_mode: str = None  # continuous, motion_only, scheduled, motion_scheduled
+
+
+@router.get("/api/cameras/{camera_id}/recording-settings")
+async def get_camera_recording_settings(camera_id: str):
+    """Get recording settings for a specific camera"""
+    try:
+        for camera in config.cameras:
+            if camera.get('id') == camera_id or camera['name'] == camera_id:
+                return {
+                    'camera_id': camera.get('id'),
+                    'camera_name': camera['name'],
+                    'resolution': camera.get('resolution', config.get('recording.max_resolution', 720)),
+                    'recording_mode': camera.get('recording_mode', 'continuous')
+                }
+
+        raise HTTPException(status_code=404, detail="Camera not found")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting recording settings for {camera_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/cameras/{camera_id}/recording-settings")
+async def update_camera_recording_settings(camera_id: str, settings: CameraRecordingSettings):
+    """Update recording settings for a specific camera
+
+    Note: Changes take effect after server restart.
+    """
+    try:
+        # Validate resolution
+        if settings.resolution is not None and settings.resolution not in [360, 480, 720, 1080]:
+            raise HTTPException(status_code=400, detail="Invalid resolution. Must be 360, 480, 720, or 1080")
+
+        # Validate recording mode
+        valid_modes = ['continuous', 'motion_only', 'scheduled', 'motion_scheduled']
+        if settings.recording_mode is not None and settings.recording_mode not in valid_modes:
+            raise HTTPException(status_code=400, detail=f"Invalid recording mode. Must be one of: {valid_modes}")
+
+        # Find and update the camera
+        camera_found = False
+        camera_name = camera_id
+        for camera in config.cameras:
+            if camera.get('id') == camera_id or camera['name'] == camera_id:
+                if settings.resolution is not None:
+                    camera['resolution'] = settings.resolution
+                if settings.recording_mode is not None:
+                    camera['recording_mode'] = settings.recording_mode
+                camera_name = camera['name']
+                camera_found = True
+                break
+
+        if not camera_found:
+            raise HTTPException(status_code=404, detail="Camera not found")
+
+        # Save updated config
+        config.save_config()
+
+        # Update recording mode manager if running
+        if settings.recording_mode:
+            try:
+                from nvr.web.api import recording_mode_manager
+                from nvr.core.recording_modes import RecordingMode
+                if recording_mode_manager:
+                    mode = RecordingMode(settings.recording_mode)
+                    recording_mode_manager.set_camera_mode(camera_name, mode)
+                    logger.info(f"Updated recording mode manager for {camera_name}: {mode.value}")
+            except Exception as e:
+                logger.warning(f"Could not update recording mode manager: {e}")
+
+        logger.info(f"Updated recording settings for {camera_name}: resolution={settings.resolution}, mode={settings.recording_mode}")
+
+        return {
+            'success': True,
+            'message': f'Recording settings updated for {camera_name}',
+            'requires_restart': settings.resolution is not None  # Resolution changes need restart
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating recording settings for {camera_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/cameras/recording-settings")
+async def get_all_camera_recording_settings():
+    """Get recording settings for all cameras"""
+    try:
+        default_resolution = config.get('recording.max_resolution', 720)
+        results = []
+
+        for camera in config.cameras:
+            results.append({
+                'camera_id': camera.get('id'),
+                'camera_name': camera['name'],
+                'resolution': camera.get('resolution', default_resolution),
+                'recording_mode': camera.get('recording_mode', 'continuous'),
+                'enabled': camera.get('enabled', True)
+            })
+
+        return {
+            'cameras': results,
+            'default_resolution': default_resolution
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting all recording settings: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/cameras/{camera_id}/motion-settings")
+async def update_camera_motion_settings(camera_id: str, settings: MotionSettings):
     """Update motion detection settings for a specific camera"""
     try:
-        # Find the camera in config
+        # Find the camera in config by id (or name for backward compatibility)
         camera_found = False
+        camera_name = camera_id
         for camera in config.cameras:
-            if camera['name'] == camera_name:
+            if camera.get('id') == camera_id or camera['name'] == camera_id:
                 camera['motion_sensitivity'] = settings.sensitivity
                 camera['motion_min_area'] = settings.min_area
+                camera_name = camera['name']
                 camera_found = True
                 break
 

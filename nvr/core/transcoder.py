@@ -13,21 +13,23 @@ logger = logging.getLogger(__name__)
 class BackgroundTranscoder:
     """Transcodes recorded segments to H.264 in background for instant playback"""
 
-    def __init__(self, max_workers: int = 2, replace_original: bool = True):
+    def __init__(self, max_workers: int = 2, replace_original: bool = True, preferred_encoder: str = 'auto'):
         """
         Initialize background transcoder
 
         Args:
             max_workers: Maximum number of concurrent transcode operations
             replace_original: If True, delete original file after successful transcode (saves disk space)
+            preferred_encoder: Preferred encoder ('auto', 'nvenc', 'qsv', 'videotoolbox', 'amf', or 'x264')
         """
         self.transcode_queue = queue.Queue()
         self.max_workers = max_workers
         self.replace_original = replace_original
         self.workers = []
         self.running = False
+        self.preferred_encoder = preferred_encoder
 
-        # Detect best available encoder on startup
+        # Detect best available encoder on startup (respecting preference)
         self.encoder, self.encoder_options = self._detect_best_encoder()
         logger.info(f"Using encoder: {self.encoder} with options: {self.encoder_options}")
 
@@ -93,10 +95,20 @@ class BackgroundTranscoder:
     def _detect_best_encoder(self) -> Tuple[str, List[str]]:
         """
         Detect the best available H.264 encoder (GPU or CPU)
+        Respects preferred_encoder configuration
 
         Returns:
             Tuple of (encoder_name, encoder_options)
         """
+        # Encoder preference mapping
+        encoder_map = {
+            'nvenc': 'h264_nvenc',
+            'qsv': 'h264_qsv',
+            'videotoolbox': 'h264_videotoolbox',
+            'amf': 'h264_amf',
+            'x264': 'libx264'
+        }
+
         encoders = [
             # NVIDIA NVENC (fastest, excellent quality)
             ('h264_nvenc', ['-preset', 'fast', '-rc', 'vbr', '-cq', '23', '-b:v', '2M', '-maxrate', '4M']),
@@ -110,6 +122,20 @@ class BackgroundTranscoder:
             ('libx264', ['-preset', 'veryfast', '-crf', '23'])
         ]
 
+        # If user specified a preference, try it first
+        if self.preferred_encoder != 'auto' and self.preferred_encoder in encoder_map:
+            preferred = encoder_map[self.preferred_encoder]
+            logger.info(f"User prefers {preferred} encoder, testing availability...")
+
+            # Find the encoder configuration
+            for encoder, options in encoders:
+                if encoder == preferred and self._test_encoder(encoder):
+                    logger.info(f"Using preferred encoder: {encoder}")
+                    return encoder, options
+
+            logger.warning(f"Preferred encoder {preferred} not available, falling back to auto-detection")
+
+        # Auto-detection: try encoders in order of preference
         for encoder, options in encoders:
             if self._test_encoder(encoder):
                 return encoder, options
@@ -278,11 +304,24 @@ _transcoder: Optional[BackgroundTranscoder] = None
 
 
 def get_transcoder() -> BackgroundTranscoder:
-    """Get or create global transcoder instance"""
+    """Get or create global transcoder instance with config-based settings"""
     global _transcoder
     if _transcoder is None:
-        _transcoder = BackgroundTranscoder(max_workers=2)
+        # Import config here to avoid circular imports
+        from nvr.core.config import config
+
+        # Read transcoder configuration
+        max_workers = config.get('transcoder.max_workers', 2)
+        replace_original = config.get('transcoder.replace_original', True)
+        preferred_encoder = config.get('transcoder.preferred_encoder', 'auto')
+
+        _transcoder = BackgroundTranscoder(
+            max_workers=max_workers,
+            replace_original=replace_original,
+            preferred_encoder=preferred_encoder
+        )
         _transcoder.start()
+        logger.info(f"Transcoder started with {max_workers} workers, preferred encoder: {preferred_encoder}")
     return _transcoder
 
 

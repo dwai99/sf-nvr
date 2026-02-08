@@ -36,13 +36,14 @@
             justify-content: center;
             background: #000;
             position: relative;
+            overflow: hidden;
         }
 
+        .video-wrapper img,
         .video-wrapper video {
-            max-width: 100%;
-            max-height: 100%;
+            width: 100%;
+            height: 100%;
             object-fit: contain;
-            display: none;
         }
 
         .video-wrapper video.loaded {
@@ -164,8 +165,8 @@
                 <div>Loading...</div>
             </div>
             <img id="live-feed"
-                 src="/api/cameras/{{ camera_name | urlencode }}/live?quality=90&raw=true"
-                 style="display: block; max-width: 100%; max-height: 100%; object-fit: contain;" />
+                 src="/api/cameras/{{ camera_id | urlencode }}/live?quality=85&raw=true&realtime=true"
+                 alt="Live camera feed" />
         </div>
 
         <div class="status">
@@ -179,20 +180,40 @@
         const imageElement = document.getElementById('live-feed');
         const loading = document.getElementById('loading');
 
-        // Show loading indicator initially
-        loading.style.display = 'block';
+        // For MJPEG streams, check periodically if image has loaded (has dimensions)
+        // Regular 'load' event doesn't fire reliably for MJPEG streams
+        function checkStreamLoaded() {
+            if (imageElement.naturalWidth > 0 && imageElement.naturalHeight > 0) {
+                loading.style.display = 'none';
+                return true;
+            }
+            return false;
+        }
 
-        // Hide loading when image loads
-        imageElement.addEventListener('load', () => {
-            console.log('High-quality MJPEG stream loaded');
-            loading.style.display = 'none';
-        });
+        // Check immediately and then periodically
+        if (!checkStreamLoaded()) {
+            const checkInterval = setInterval(() => {
+                if (checkStreamLoaded()) {
+                    clearInterval(checkInterval);
+                }
+            }, 100);
+
+            // Timeout after 10 seconds
+            setTimeout(() => {
+                clearInterval(checkInterval);
+                if (imageElement.naturalWidth === 0) {
+                    loading.innerHTML = '<div class="spinner"></div><div>Stream timeout<br><small>Click to retry</small></div>';
+                    loading.onclick = () => location.reload();
+                }
+            }, 10000);
+        }
 
         // Handle errors
         imageElement.addEventListener('error', (e) => {
             console.error('Stream error:', e);
-            loading.innerHTML = '<div class="spinner"></div><div>Connection error<br><small>Refresh to retry</small></div>';
+            loading.innerHTML = '<div class="spinner"></div><div>Connection error<br><small>Click to retry</small></div>';
             loading.style.display = 'block';
+            loading.onclick = () => location.reload();
         });
 
         // Keyboard shortcuts
@@ -200,6 +221,12 @@
             if (e.key === 'Escape' || e.key === 'Backspace') {
                 window.location.href = '/';
             }
+        });
+
+        // Right-click to exit fullscreen
+        document.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            window.location.href = '/';
         });
     </script>
 </body>
