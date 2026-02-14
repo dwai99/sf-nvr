@@ -10,6 +10,14 @@
     <script src="/static/ui-utils.js"></script>
 
     <style>
+        :root {
+            --green: #2ecc71;
+            --green-dark: #27ae60;
+            --red: #e74c3c;
+            --blue: #4a9eff;
+            --yellow: #f39c12;
+        }
+
         * {
             margin: 0;
             padding: 0;
@@ -35,7 +43,7 @@
         h1 {
             font-size: 1.8em;
             font-weight: 600;
-            color: #4a9eff;
+            color: var(--blue);
         }
 
         .header-actions {
@@ -77,7 +85,7 @@
         }
 
         .btn-primary {
-            background: #4a9eff;
+            background: var(--blue);
             color: white;
         }
 
@@ -1506,6 +1514,7 @@
             const resultSpan = document.getElementById('cleanup-result');
             resultSpan.textContent = 'Running cleanup...';
             resultSpan.style.color = '#888';
+            const loader = showLoading('Running storage cleanup...');
 
             try {
                 const response = await fetch('/api/storage/cleanup/run', {
@@ -1515,7 +1524,7 @@
 
                 if (result.success) {
                     resultSpan.textContent = result.message;
-                    resultSpan.style.color = '#4a9eff';
+                    resultSpan.style.color = 'var(--blue)';
 
                     // Reload storage status after cleanup
                     setTimeout(() => {
@@ -1524,12 +1533,14 @@
                     }, 3000);
                 } else {
                     resultSpan.textContent = 'Cleanup failed';
-                    resultSpan.style.color = '#e74c3c';
+                    resultSpan.style.color = 'var(--red)';
                 }
             } catch (error) {
                 console.error('Error running cleanup:', error);
                 resultSpan.textContent = 'Error: ' + error.message;
-                resultSpan.style.color = '#e74c3c';
+                resultSpan.style.color = 'var(--red)';
+            } finally {
+                loader.dismiss();
             }
         }
 
@@ -1757,6 +1768,9 @@
 
         // Save settings
         async function saveSettings() {
+            const loader = showLoading('Saving settings...');
+            const saveBtn = document.querySelector('.save-bar .btn-primary');
+            if (saveBtn) saveBtn.disabled = true;
             try {
                 // Gather all settings with safe defaults
                 const updatedConfig = {
@@ -1816,6 +1830,9 @@
             } catch (error) {
                 console.error('Error saving settings:', error);
                 showNotification(`Error saving settings: ${error.message}`, 'error', 5000);
+            } finally {
+                loader.dismiss();
+                if (saveBtn) saveBtn.disabled = false;
             }
         }
 

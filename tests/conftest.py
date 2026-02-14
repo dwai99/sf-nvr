@@ -164,8 +164,8 @@ def sample_recording_segments(temp_dir, playback_db):
             file_path=str(file_path),
             start_time=start_time,
             end_time=end_time,
-            duration=300,
-            file_size=file_path.stat().st_size
+            duration_seconds=300,
+            file_size_bytes=file_path.stat().st_size
         )
 
         segments.append({
@@ -187,14 +187,14 @@ def sample_motion_events(playback_db):
     events = []
     for i in range(20):
         event_time = base_time + timedelta(minutes=i * 3)
-        playback_db.log_motion_event(
+        playback_db.add_motion_event(
             camera_id=camera_id,
-            timestamp=event_time,
+            event_time=event_time,
             intensity=50 + (i % 50)
         )
         events.append({
             'camera_id': camera_id,
-            'timestamp': event_time,
+            'event_time': event_time,
             'intensity': 50 + (i % 50)
         })
 

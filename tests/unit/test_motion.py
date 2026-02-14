@@ -226,10 +226,16 @@ class TestMotionStateTracking:
         detector.process_frame(frame2)
         assert detector.motion_detected is True
 
-        # Go back to no motion - process multiple frames to clear residual motion
+        # Process a blank frame to update prev_frame
         frame3 = self.create_test_frame()
-        for _ in range(3):  # Process 3 static frames to ensure motion stops
-            detector.process_frame(frame3)
+        detector.process_frame(frame3)
+
+        # Simulate cooldown expiry (3-second cooldown is time-based, not frame-based)
+        from datetime import timedelta
+        detector.last_motion_time = datetime.now() - timedelta(seconds=5)
+
+        # Process another blank frame - cooldown has expired, motion should end
+        detector.process_frame(frame3)
 
         # Motion state should be False
         assert detector.motion_detected is False
@@ -264,10 +270,16 @@ class TestMotionStateTracking:
         frame2 = self.create_frame_with_motion()
         detector.process_frame(frame2)
 
-        # End motion - process multiple frames
+        # Process a blank frame to update prev_frame
         frame3 = self.create_test_frame()
-        for _ in range(3):
-            detector.process_frame(frame3)
+        detector.process_frame(frame3)
+
+        # Simulate cooldown expiry (3-second cooldown is time-based)
+        from datetime import timedelta
+        detector.last_motion_time = datetime.now() - timedelta(seconds=5)
+
+        # Process another blank frame - cooldown expired, motion ends
+        detector.process_frame(frame3)
 
         # Callback should have been called
         callback.assert_called_once()
@@ -298,10 +310,16 @@ class TestMotionStateTracking:
         frame2 = self.create_frame_with_motion()
         detector.process_frame(frame2)
 
-        # End motion - process multiple frames
+        # Process a blank frame to update prev_frame
         frame3 = self.create_test_frame()
-        for _ in range(3):
-            detector.process_frame(frame3)
+        detector.process_frame(frame3)
+
+        # Simulate cooldown expiry (3-second cooldown is time-based)
+        from datetime import timedelta
+        detector.last_motion_time = datetime.now() - timedelta(seconds=5)
+
+        # Process another blank frame - cooldown expired, motion ends
+        detector.process_frame(frame3)
 
         # Should have called end_motion_event
         mock_recorder.end_motion_event.assert_called()

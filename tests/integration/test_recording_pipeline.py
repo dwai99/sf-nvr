@@ -1,6 +1,7 @@
 """Integration tests for end-to-end recording pipeline"""
 
 import pytest
+import os
 import time
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -63,11 +64,14 @@ class TestRecordingPipeline:
         # Create old file (15 days old)
         old_file = camera_dir / "old_segment.mp4"
         old_file.write_bytes(b"x" * (10 * 1024 * 1024))  # 10 MB
+        # Set file mtime to 15 days ago so cleanup considers it old
+        old_timestamp = time.time() - (15 * 24 * 3600)
+        os.utime(old_file, (old_timestamp, old_timestamp))
 
         # Add to database
         old_time = datetime.now() - timedelta(days=15)
         playback_db.add_segment(
-            camera_name="test_camera",
+            camera_id="test_camera",
             file_path=str(old_file),
             start_time=old_time,
             end_time=old_time + timedelta(minutes=5),
@@ -147,11 +151,12 @@ class TestCameraLifecycle:
         test_file = recorder1.camera_storage / "test.mp4"
         test_file.write_bytes(b"test data")
 
-        # Add segment to database with original name
+        # Add segment to database with camera_id
         playback_db.add_segment(
-            camera_name="Front Door",
+            camera_id="cam_001",
             file_path=str(test_file),
             start_time=datetime.now(),
+            camera_name="Front Door",
             end_time=datetime.now() + timedelta(minutes=5),
             duration_seconds=300
         )
@@ -229,7 +234,7 @@ class TestDatabaseStorageSync:
 
         for i in range(5):
             playback_db.add_segment(
-                camera_name="test_camera",
+                camera_id="test_camera",
                 file_path=str(camera_dir / f"missing_{i}.mp4"),
                 start_time=datetime.now() - timedelta(hours=i),
                 end_time=datetime.now() - timedelta(hours=i) + timedelta(minutes=5),
@@ -273,12 +278,15 @@ class TestDatabaseStorageSync:
         for i in range(3):
             file_path = camera_dir / f"old_{i}.mp4"
             file_path.write_bytes(b"x" * (5 * 1024 * 1024))  # 5 MB
+            # Set file mtime to 10 days ago so cleanup considers it old
+            old_timestamp = time.time() - (10 * 24 * 3600)
+            os.utime(file_path, (old_timestamp, old_timestamp))
             files.append(file_path)
 
             # Add to database
             old_time = datetime.now() - timedelta(days=10)
             playback_db.add_segment(
-                camera_name="test_camera",
+                camera_id="test_camera",
                 file_path=str(file_path),
                 start_time=old_time + timedelta(hours=i),
                 end_time=old_time + timedelta(hours=i, minutes=5),
@@ -358,7 +366,7 @@ class TestMultiCameraWorkflow:
             for segment_num in range(5):
                 start_time = base_time + timedelta(minutes=segment_num * 10)
                 playback_db.add_segment(
-                    camera_name=f"Camera {camera_num}",
+                    camera_id=f"Camera {camera_num}",
                     file_path=f"/recordings/cam_{camera_num:03d}/segment_{segment_num}.mp4",
                     start_time=start_time,
                     end_time=start_time + timedelta(minutes=5),
@@ -411,11 +419,14 @@ class TestStorageQuotaManagement:
         for i in range(3):
             file_path = camera_dir / f"old_{i}.mp4"
             file_path.write_bytes(b"x" * (5 * 1024 * 1024))  # 5 MB
+            # Set file mtime to 10 days ago so cleanup considers it old
+            old_timestamp = time.time() - (10 * 24 * 3600)
+            os.utime(file_path, (old_timestamp, old_timestamp))
             old_files.append(file_path)
 
             old_time = datetime.now() - timedelta(days=10)
             playback_db.add_segment(
-                camera_name="test_camera",
+                camera_id="test_camera",
                 file_path=str(file_path),
                 start_time=old_time + timedelta(hours=i),
                 end_time=old_time + timedelta(hours=i, minutes=5),
@@ -432,7 +443,7 @@ class TestStorageQuotaManagement:
 
             recent_time = datetime.now() - timedelta(days=3)
             playback_db.add_segment(
-                camera_name="test_camera",
+                camera_id="test_camera",
                 file_path=str(file_path),
                 start_time=recent_time + timedelta(hours=i),
                 end_time=recent_time + timedelta(hours=i, minutes=5),

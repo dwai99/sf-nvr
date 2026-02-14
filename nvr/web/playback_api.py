@@ -18,6 +18,9 @@ logger = logging.getLogger(__name__)
 # Cache directory for speed-processed videos
 SPEED_CACHE_DIR = nvr_config.storage_path / ".speed_cache"
 
+# Cache directory for timelapse videos
+TIMELAPSE_CACHE_DIR = nvr_config.storage_path / ".timelapse"
+
 
 def get_speed_processed_video(source_file: Path, speed: float) -> Optional[Path]:
     """
@@ -110,7 +113,8 @@ def get_speed_processed_video(source_file: Path, speed: float) -> Optional[Path]
 def range_requests_response(
     file_path: Path,
     request: Request,
-    content_type: str = "video/mp4"
+    content_type: str = "video/mp4",
+    extra_headers: Optional[Dict[str, str]] = None
 ):
     """
     Returns a StreamingResponse that supports HTTP Range requests for video seeking.
@@ -123,6 +127,8 @@ def range_requests_response(
         "accept-ranges": "bytes",
         "content-type": content_type,
     }
+    if extra_headers:
+        headers.update(extra_headers)
 
     start = 0
     end = file_size - 1
@@ -894,102 +900,6 @@ async def get_sd_card_status():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def _concatenate_segments(camera_id: str, segments: List[dict], start_dt: datetime, background_tasks: BackgroundTasks):
-    """Concatenate multiple video segments using ffmpeg with streaming output"""
-    list_file = None
-    try:
-        # Create temporary file list for ffmpeg concat
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
-            list_file = f.name
-            for segment in segments:
-                file_path = Path(segment['file_path'])
-                if file_path.exists():
-                    f.write(f"file '{file_path.absolute()}'\n")
-
-        # Stream concatenation: output to pipe instead of file
-        cmd = [
-            'ffmpeg',
-            '-f', 'concat',
-            '-safe', '0',
-            '-i', list_file,
-            '-c', 'copy',
-            '-movflags', 'frag_keyframe+empty_moov',  # Enable streaming-friendly format
-            '-f', 'mp4',
-            'pipe:1'  # Output to stdout
-        ]
-
-        logger.info(f"Starting streaming concatenation for {camera_id} ({len(segments)} segments)")
-
-        # Start ffmpeg process
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            bufsize=10485760  # 10MB buffer
-        )
-
-        # Register cleanup
-        def cleanup_process():
-            try:
-                if process.poll() is None:
-                    process.terminate()
-                    try:
-                        process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                        process.wait(timeout=2)
-                os.unlink(list_file)
-                logger.info(f"Cleaned up streaming process for {camera_id}")
-            except Exception as e:
-                logger.error(f"Error cleaning up process: {e}")
-
-        background_tasks.add_task(cleanup_process)
-
-        # Generator to stream ffmpeg output
-        def stream_video():
-            try:
-                while True:
-                    chunk = process.stdout.read(65536)  # 64KB chunks
-                    if not chunk:
-                        break
-                    yield chunk
-
-                process.wait()
-                if process.returncode != 0:
-                    logger.error(f"ffmpeg streaming exited with code {process.returncode}")
-            except GeneratorExit:
-                logger.info(f"Stream client disconnected for {camera_id}")
-            except Exception as e:
-                logger.error(f"Error in stream_video generator: {e}")
-            finally:
-                if process.poll() is None:
-                    process.terminate()
-                    try:
-                        process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                        process.wait(timeout=2)
-
-        # Return streaming response
-        return StreamingResponse(
-            stream_video(),
-            media_type="video/mp4",
-            headers={
-                "Content-Disposition": f'inline; filename="{camera_id}_{start_dt.strftime("%Y%m%d_%H%M%S")}.mp4"'
-            }
-        )
-
-    except Exception as e:
-        # Clean up temp file if process failed to start
-        if list_file:
-            try:
-                os.unlink(list_file)
-            except OSError:
-                pass
-        logger.error(f"Error setting up streaming concatenation: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @router.get("/api/playback/available-dates/{camera_id}")
 async def get_available_dates(camera_id: str):
     """Get list of dates that have recordings for a camera"""
@@ -1018,6 +928,136 @@ async def get_storage_stats():
 
     except Exception as e:
         logger.error(f"Error getting storage stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/playback/timelapse/{camera_id}")
+async def generate_timelapse(
+    camera_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    date: str = Query(..., description="Date in YYYY-MM-DD format"),
+    start_time: str = Query("00:00", description="Start time HH:MM"),
+    end_time: str = Query("23:59", description="End time HH:MM"),
+    speed: int = Query(30, description="Speed multiplier (10, 30, 60, 120)"),
+):
+    """Generate a timelapse video from recordings over a time range.
+
+    Concatenates all segments in range, applies speed filter, scales to 720p,
+    and caches the result for subsequent requests.
+    """
+    from nvr.web.api import playback_db
+
+    try:
+        # Validate speed
+        if speed not in (4, 8, 10, 30, 60, 120):
+            raise HTTPException(status_code=400, detail="Speed must be 4, 8, 10, 30, 60, or 120")
+
+        # Parse time range
+        start_dt = datetime.fromisoformat(f"{date}T{start_time}:00")
+        end_dt = datetime.fromisoformat(f"{date}T{end_time}:00")
+        if end_time == "23:59":
+            end_dt = end_dt + timedelta(seconds=59)
+
+        if end_dt <= start_dt:
+            raise HTTPException(status_code=400, detail="End time must be after start time")
+
+        # Get segments in range
+        segments = playback_db.get_segments_in_range(camera_id, start_dt, end_dt)
+        if not segments:
+            raise HTTPException(status_code=404, detail=f"No recordings found for {camera_id} on {date} between {start_time} and {end_time}")
+
+        # Filter to existing files
+        existing_segments = [s for s in segments if Path(s['file_path']).exists()]
+        if not existing_segments:
+            raise HTTPException(status_code=404, detail="Recording files not found on disk")
+
+        logger.info(f"Timelapse request: {camera_id} {date} {start_time}-{end_time} at {speed}x ({len(existing_segments)} segments)")
+
+        # Get first segment start time for timestamp overlay in frontend
+        first_seg_start = existing_segments[0]['start_time']
+        if isinstance(first_seg_start, datetime):
+            first_seg_start = first_seg_start.isoformat()
+        timelapse_headers = {
+            "X-Timelapse-Start": first_seg_start,
+            "X-Timelapse-Speed": str(speed),
+        }
+
+        # Check cache
+        TIMELAPSE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        cache_key = f"{camera_id}_{date}_{start_time.replace(':', '')}_{end_time.replace(':', '')}_{speed}x"
+        cached_file = TIMELAPSE_CACHE_DIR / f"{cache_key}.mp4"
+
+        if cached_file.exists():
+            # Verify cache is newer than the newest source segment
+            cache_mtime = cached_file.stat().st_mtime
+            newest_segment_mtime = max(
+                Path(s['file_path']).stat().st_mtime for s in existing_segments
+            )
+            if cache_mtime >= newest_segment_mtime:
+                logger.info(f"Serving cached timelapse: {cached_file.name}")
+                return range_requests_response(cached_file, request, content_type="video/mp4", extra_headers=timelapse_headers)
+
+        # Build concat list file
+        list_file = None
+        try:
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+                list_file = f.name
+                for seg in existing_segments:
+                    f.write(f"file '{Path(seg['file_path']).absolute()}'\n")
+
+            # FFmpeg: concat -> speed up -> scale to 720p -> encode
+            ffmpeg_cmd = [
+                'ffmpeg',
+                '-f', 'concat',
+                '-safe', '0',
+                '-i', list_file,
+                '-vf', f"setpts=PTS/{speed},scale='min(1280,iw)':'min(720,ih)':force_original_aspect_ratio=decrease",
+                '-c:v', 'libx264',
+                '-preset', 'fast',
+                '-crf', '26',
+                '-an',
+                '-movflags', '+faststart',
+                '-y',
+                str(cached_file)
+            ]
+
+            logger.info(f"Starting timelapse generation: {' '.join(ffmpeg_cmd)}")
+
+            result = subprocess.run(
+                ffmpeg_cmd,
+                stderr=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                timeout=600  # 10 minute timeout for full-day processing
+            )
+
+            if result.returncode != 0:
+                logger.error(f"Timelapse FFmpeg failed: {result.stderr.decode()[-500:]}")
+                if cached_file.exists():
+                    cached_file.unlink(missing_ok=True)
+                raise HTTPException(status_code=500, detail="Timelapse generation failed")
+
+            file_size_mb = cached_file.stat().st_size / 1024 / 1024
+            logger.info(f"Timelapse complete: {cached_file.name} ({file_size_mb:.1f}MB)")
+
+        except subprocess.TimeoutExpired:
+            logger.error(f"Timelapse generation timed out for {camera_id}")
+            if cached_file.exists():
+                cached_file.unlink(missing_ok=True)
+            raise HTTPException(status_code=504, detail="Timelapse generation timed out")
+        finally:
+            if list_file:
+                background_tasks.add_task(lambda f=list_file: os.unlink(f) if os.path.exists(f) else None)
+
+        return range_requests_response(cached_file, request, content_type="video/mp4", extra_headers=timelapse_headers)
+
+    except ValueError as e:
+        logger.error(f"Invalid timelapse parameters: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid parameters: {e}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating timelapse for {camera_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

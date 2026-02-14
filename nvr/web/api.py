@@ -29,6 +29,15 @@ logger = logging.getLogger(__name__)
 # Initialize FastAPI app
 app = FastAPI(title="SF-NVR", description="Network Video Recorder")
 
+# CORS middleware for mobile app / cross-origin access
+from starlette.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Templates and static files
 templates = Jinja2Templates(directory="nvr/templates")
 app.mount("/static", StaticFiles(directory="nvr/static"), name="static")
@@ -1389,11 +1398,57 @@ async def get_motion_heatmap(camera_id: str, date: str = None):
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
+    """Health check endpoint with actual system checks"""
+    import psutil
+    import time
+
+    status = 'healthy'
+    checks = {}
+
+    # Database check
+    try:
+        if playback_db:
+            with playback_db._get_connection() as conn:
+                conn.execute("SELECT 1")
+            checks['database'] = 'ok'
+        else:
+            checks['database'] = 'not_initialized'
+            status = 'degraded'
+    except Exception as e:
+        checks['database'] = f'error: {e}'
+        status = 'degraded'
+
+    # Disk usage check
+    try:
+        disk = psutil.disk_usage(str(config.storage_path))
+        checks['disk_percent'] = round(disk.percent, 1)
+        checks['disk_free_gb'] = round(disk.free / (1024**3), 1)
+        if disk.percent > 95:
+            status = 'degraded'
+    except Exception:
+        checks['disk_percent'] = None
+        status = 'degraded'
+
+    # Recorder stats
+    active_recorders = 0
+    if recorder_manager:
+        active_recorders = len([r for r in recorder_manager.recorders.values() if r.is_recording])
+
+    # Uptime (process start time)
+    try:
+        process = psutil.Process()
+        uptime_seconds = int(time.time() - process.create_time())
+        hours, remainder = divmod(uptime_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        checks['uptime'] = f'{hours}h {minutes}m {seconds}s'
+    except Exception:
+        checks['uptime'] = 'unknown'
+
     return {
-        'status': 'healthy',
+        'status': status,
         'cameras': len(config.cameras),
-        'recording': len([r for r in recorder_manager.recorders.values() if r.is_recording]) if recorder_manager else 0
+        'recording': active_recorders,
+        'checks': checks
     }
 
 

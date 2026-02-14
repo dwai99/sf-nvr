@@ -55,6 +55,9 @@ class StorageManager:
         }
 
         try:
+            # Clean up stale cache files first
+            self._cleanup_cache_dirs()
+
             # Check current disk usage
             disk = psutil.disk_usage(str(self.storage_path))
             usage_percent = disk.percent
@@ -220,6 +223,31 @@ class StorageManager:
             logger.error(f"Error during file cleanup: {e}")
 
         return deleted_count, bytes_freed
+
+    def _cleanup_cache_dirs(self, max_age_days: int = 7):
+        """Delete files older than max_age_days from .speed_cache/ and .timelapse/ directories"""
+        cache_dirs = [
+            self.storage_path / ".speed_cache",
+            self.storage_path / ".timelapse",
+        ]
+        cutoff = datetime.now() - timedelta(days=max_age_days)
+        total_deleted = 0
+
+        for cache_dir in cache_dirs:
+            if not cache_dir.exists():
+                continue
+            try:
+                for f in cache_dir.iterdir():
+                    if f.is_file() and datetime.fromtimestamp(f.stat().st_mtime) < cutoff:
+                        size_mb = f.stat().st_size / (1024 * 1024)
+                        f.unlink()
+                        total_deleted += 1
+                        logger.debug(f"Deleted stale cache file: {f.name} ({size_mb:.1f} MB)")
+            except Exception as e:
+                logger.warning(f"Error cleaning cache dir {cache_dir.name}: {e}")
+
+        if total_deleted > 0:
+            logger.info(f"Cleaned up {total_deleted} stale cache file(s) from speed_cache/timelapse")
 
     def get_retention_stats(self) -> Dict[str, Any]:
         """

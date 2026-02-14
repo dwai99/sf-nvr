@@ -12,6 +12,14 @@
     <script src="/static/timeline-selector.js?v=4"></script>
 
     <style>
+        :root {
+            --green: #2ecc71;
+            --green-dark: #27ae60;
+            --red: #e74c3c;
+            --blue: #4a9eff;
+            --yellow: #f39c12;
+        }
+
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
@@ -380,7 +388,7 @@
         }
 
         .speed-btn.active {
-            background: #4a9eff;
+            background: var(--blue);
             color: white;
         }
 
@@ -923,6 +931,99 @@
             background: #777;
         }
 
+        .timelapse-panel {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #2a2a2a;
+            padding: 30px;
+            border-radius: 8px;
+            border: 2px solid #4a9eff;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            z-index: 1000;
+            min-width: 400px;
+            display: none;
+        }
+
+        .timelapse-panel.active {
+            display: block;
+        }
+
+        .timelapse-speed-options {
+            display: flex;
+            gap: 10px;
+            margin: 15px 0;
+        }
+
+        .timelapse-speed-options label {
+            flex: 1;
+            text-align: center;
+            padding: 10px;
+            background: #333;
+            border-radius: 4px;
+            cursor: pointer;
+            border: 2px solid transparent;
+            transition: border-color 0.2s;
+        }
+
+        .timelapse-speed-options input[type="radio"] {
+            display: none;
+        }
+
+        .timelapse-speed-options input[type="radio"]:checked + span {
+            color: #4a9eff;
+        }
+
+        .timelapse-speed-options label:has(input:checked) {
+            border-color: #4a9eff;
+        }
+
+        .timelapse-progress {
+            margin: 15px 0;
+            display: none;
+        }
+
+        .timelapse-progress-bar {
+            width: 100%;
+            height: 6px;
+            background: #333;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .timelapse-progress-bar-fill {
+            height: 100%;
+            background: #4a9eff;
+            border-radius: 3px;
+            animation: timelapse-pulse 1.5s ease-in-out infinite;
+            width: 30%;
+        }
+
+        @keyframes timelapse-pulse {
+            0%, 100% { transform: translateX(-100%); }
+            50% { transform: translateX(300%); }
+        }
+
+        .timelapse-video-wrapper {
+            position: relative;
+        }
+
+        .timelapse-timestamp-overlay {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            color: #4a9eff;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 1.1em;
+            font-weight: bold;
+            pointer-events: none;
+            z-index: 10;
+        }
+
         .zoom-controls {
             position: absolute;
             bottom: 10px;
@@ -1071,6 +1172,10 @@
             <label>&nbsp;</label>
             <button class="btn" onclick="checkSDCardRecordings()" title="Check camera SD cards for recordings" style="background: #ff9800;">💾 SD Card</button>
         </div>
+        <div class="control-group">
+            <label>&nbsp;</label>
+            <button class="btn" onclick="showTimelapsePanel()" title="Generate a timelapse video from recordings" style="background: #9c27b0;">🎬 Time-Lapse</button>
+        </div>
         <div style="flex-basis: 100%; display: flex; gap: 8px; align-items: center; padding: 0 0 10px 0;">
             <span style="color: #888; font-size: 0.9em;">Duration:</span>
             <button class="btn" style="padding: 4px 12px; font-size: 0.85em;" onclick="setDuration(5)" title="Set end time to 5 minutes after start">+5m</button>
@@ -1091,7 +1196,9 @@
 
     <div class="timeline-panel">
         <div class="playback-controls">
+            <button class="speed-btn" onclick="stepFrame(-1)" title="Previous frame (,)" style="font-size: 1em; padding: 4px 6px;">⏮</button>
             <button class="play-button paused" id="play-button" onclick="togglePlayPause()" disabled></button>
+            <button class="speed-btn" onclick="stepFrame(1)" title="Next frame (.)" style="font-size: 1em; padding: 4px 6px;">⏭</button>
 
             <div class="timeline-container">
                 <div class="timeline-slider-wrapper" id="timeline-slider"
@@ -1134,6 +1241,8 @@
                 <button class="speed-btn" onclick="setPlaybackSpeed(4.0)">4×</button>
                 <button class="speed-btn" onclick="setPlaybackSpeed(8.0)">8×</button>
             </div>
+
+            <button class="speed-btn" onclick="togglePiP()" title="Picture-in-Picture" style="font-size: 1em; padding: 4px 8px; margin-left: 4px;">PiP</button>
         </div>
 
         <div class="legend">
@@ -1184,7 +1293,7 @@
     </div>
 
     <!-- Export Modal -->
-    <div class="overlay" id="export-overlay" onclick="hideExportPanel(); hideShortcuts()"></div>
+    <div class="overlay" id="export-overlay" onclick="hideExportPanel(); hideShortcuts(); hideTimelapsePanel()"></div>
     <div class="export-panel" id="export-panel">
         <div class="export-header">📥 Export Recording</div>
         <div class="export-info">
@@ -1201,6 +1310,46 @@
         <div class="export-actions">
             <button class="btn btn-cancel" onclick="hideExportPanel()">Cancel</button>
             <button class="btn btn-success" onclick="performExport()">Download Recording</button>
+        </div>
+    </div>
+
+    <!-- Timelapse Modal -->
+    <div class="timelapse-panel" id="timelapse-panel">
+        <div class="export-header">🎬 Generate Time-Lapse</div>
+        <div class="export-info">
+            <div><strong>Camera:</strong> <span id="timelapse-camera">--</span></div>
+            <div><strong>Date:</strong> <span id="timelapse-date">--</span></div>
+            <div><strong>Time Range:</strong> <span id="timelapse-time-range">--</span></div>
+        </div>
+        <div>
+            <strong style="color: #4a9eff;">Speed:</strong>
+            <div class="timelapse-speed-options">
+                <label><input type="radio" name="timelapse-speed" value="4"><span>4x</span></label>
+                <label><input type="radio" name="timelapse-speed" value="8"><span>8x</span></label>
+                <label><input type="radio" name="timelapse-speed" value="10"><span>10x</span></label>
+                <label><input type="radio" name="timelapse-speed" value="30" checked><span>30x</span></label>
+                <label><input type="radio" name="timelapse-speed" value="60"><span>60x</span></label>
+                <label><input type="radio" name="timelapse-speed" value="120"><span>120x</span></label>
+            </div>
+        </div>
+        <div class="timelapse-progress" id="timelapse-progress">
+            <div style="color: #aaa; margin-bottom: 8px;" id="timelapse-status">Generating timelapse...</div>
+            <div class="timelapse-progress-bar">
+                <div class="timelapse-progress-bar-fill"></div>
+            </div>
+        </div>
+        <div id="timelapse-result" style="display: none; margin: 15px 0;">
+            <div class="timelapse-video-wrapper">
+                <video id="timelapse-video" controls style="width: 100%; border-radius: 4px; max-height: 300px;"></video>
+                <div class="timelapse-timestamp-overlay" id="timelapse-timestamp">--:--:--</div>
+            </div>
+            <div style="text-align: center; margin-top: 10px;">
+                <a id="timelapse-download" class="btn btn-success" style="text-decoration: none; display: inline-block;" download>Download MP4</a>
+            </div>
+        </div>
+        <div class="export-actions" id="timelapse-actions">
+            <button class="btn btn-cancel" onclick="hideTimelapsePanel()">Close</button>
+            <button class="btn btn-success" id="timelapse-generate-btn" onclick="generateTimelapse()">Generate</button>
         </div>
     </div>
 
@@ -1221,6 +1370,9 @@
             <div class="shortcut-desc">Jump to 0%, 10%, 20%... of video</div>
 
             <div class="shortcut-key">, / .</div>
+            <div class="shortcut-desc">Previous / Next frame</div>
+
+            <div class="shortcut-key">&lt; / &gt;</div>
             <div class="shortcut-desc">Decrease / Increase playback speed</div>
 
             <div class="shortcut-key">A</div>
@@ -1616,6 +1768,7 @@
             const startDateTime = `${date}T${startTimeWithSeconds}`;
             const endDateTime = `${date}T${endTimeWithSeconds}`;
 
+            const loader = showLoading('Loading recordings...');
             try {
                 // Load recordings for all cameras
                 let url = `/api/playback/recordings?start_time=${encodeURIComponent(startDateTime)}&end_time=${encodeURIComponent(endDateTime)}`;
@@ -1663,6 +1816,8 @@
             } catch (error) {
                 console.error('Error loading recordings:', error);
                 showNotification('Error loading recordings: ' + error.message, 'error');
+            } finally {
+                loader.dismiss();
             }
         }
 
@@ -1900,8 +2055,12 @@
 
                     // Handle errors
                     video.onerror = () => {
-                        player.innerHTML = '<div class="no-recording">Error loading video. Check console for details.</div>';
+                        const errDiv = document.createElement('div');
+                        errDiv.className = 'no-recording';
+                        errDiv.textContent = 'Error loading video';
+                        player.replaceChildren(errDiv);
                         console.error(`Failed to load video for ${cameraName} (id: ${cameraId}):`, video.error);
+                        showNotification(`Failed to load video for ${cameraName}`, 'error');
                     };
 
                     videoElements[cameraId] = video;
@@ -2882,6 +3041,7 @@
             if (e.key === 'Escape') {
                 hideExportPanel();
                 hideShortcuts();
+                hideTimelapsePanel();
                 return;
             }
 
@@ -2942,14 +3102,22 @@
                     jumpToPercent(parseInt(e.key) * 10);
                     break;
 
+                case ',':  // , - previous frame
+                    e.preventDefault();
+                    stepFrame(-1);
+                    break;
+
+                case '.':  // . - next frame
+                    e.preventDefault();
+                    stepFrame(1);
+                    break;
+
                 case '<':  // < - slow down
-                case ',':
                     e.preventDefault();
                     changeSpeed(-0.25);
                     break;
 
                 case '>':  // > - speed up
-                case '.':
                     e.preventDefault();
                     changeSpeed(0.25);
                     break;
@@ -3050,6 +3218,130 @@
         function hideShortcuts() {
             document.getElementById('export-overlay').classList.remove('active');
             document.getElementById('shortcuts-modal').classList.remove('active');
+        }
+
+        function showTimelapsePanel() {
+            if (selectedCameras.size === 0) {
+                showNotification('Please select a camera first');
+                return;
+            }
+
+            const date = document.getElementById('playback-date').value;
+            const startTime = document.getElementById('start-time').value;
+            const endTime = document.getElementById('end-time').value;
+
+            if (!date) {
+                showNotification('Please select a date first');
+                return;
+            }
+
+            const firstCamera = selectedCameras.values().next().value;
+            document.getElementById('timelapse-camera').textContent = firstCamera;
+            document.getElementById('timelapse-date').textContent = date;
+            document.getElementById('timelapse-time-range').textContent = `${startTime || '00:00'} - ${endTime || '23:59'}`;
+
+            // Reset state
+            document.getElementById('timelapse-progress').style.display = 'none';
+            document.getElementById('timelapse-result').style.display = 'none';
+            document.getElementById('timelapse-generate-btn').disabled = false;
+            document.getElementById('timelapse-generate-btn').textContent = 'Generate';
+            // Clean up previous blob URL
+            const prevVideo = document.getElementById('timelapse-video');
+            if (prevVideo.src && prevVideo.src.startsWith('blob:')) {
+                URL.revokeObjectURL(prevVideo.src);
+                prevVideo.src = '';
+            }
+
+            document.getElementById('export-overlay').classList.add('active');
+            document.getElementById('timelapse-panel').classList.add('active');
+        }
+
+        function hideTimelapsePanel() {
+            document.getElementById('export-overlay').classList.remove('active');
+            document.getElementById('timelapse-panel').classList.remove('active');
+            // Pause timelapse video when closing panel
+            const vid = document.getElementById('timelapse-video');
+            if (vid && !vid.paused) vid.pause();
+        }
+
+        async function generateTimelapse() {
+            const firstCamera = selectedCameras.values().next().value;
+            const date = document.getElementById('playback-date').value;
+            const startTime = document.getElementById('start-time').value || '00:00';
+            const endTime = document.getElementById('end-time').value || '23:59';
+            const speed = document.querySelector('input[name="timelapse-speed"]:checked').value;
+
+            // Show progress, hide result from previous run
+            document.getElementById('timelapse-progress').style.display = 'block';
+            document.getElementById('timelapse-result').style.display = 'none';
+            document.getElementById('timelapse-status').textContent = `Generating ${speed}x timelapse...`;
+            document.getElementById('timelapse-generate-btn').disabled = true;
+            document.getElementById('timelapse-generate-btn').textContent = 'Generating...';
+
+            try {
+                const url = `/api/playback/timelapse/${encodeURIComponent(firstCamera)}?date=${date}&start_time=${startTime}&end_time=${endTime}&speed=${speed}`;
+
+                const response = await fetch(url);
+
+                if (!response.ok) {
+                    const error = await response.json().catch(() => ({ detail: 'Timelapse generation failed' }));
+                    throw new Error(error.detail || `Server error: ${response.status}`);
+                }
+
+                // Read metadata headers before consuming body
+                const tlStartTime = response.headers.get('X-Timelapse-Start');
+                const tlSpeed = parseInt(response.headers.get('X-Timelapse-Speed') || speed);
+
+                const blob = await response.blob();
+                const videoUrl = URL.createObjectURL(blob);
+
+                // Hide progress, show result inline
+                document.getElementById('timelapse-progress').style.display = 'none';
+
+                const videoEl = document.getElementById('timelapse-video');
+                videoEl.src = videoUrl;
+
+                // Set up timestamp overlay that shows real wall-clock time
+                if (tlStartTime) {
+                    const startEpoch = new Date(tlStartTime).getTime();
+                    const tsOverlay = document.getElementById('timelapse-timestamp');
+
+                    // Remove old listener if any
+                    if (videoEl._timelapseHandler) {
+                        videoEl.removeEventListener('timeupdate', videoEl._timelapseHandler);
+                    }
+
+                    videoEl._timelapseHandler = function() {
+                        // currentTime is in sped-up seconds, multiply by speed to get real elapsed seconds
+                        const realElapsedMs = videoEl.currentTime * tlSpeed * 1000;
+                        const realTime = new Date(startEpoch + realElapsedMs);
+                        const h = realTime.getHours();
+                        const m = String(realTime.getMinutes()).padStart(2, '0');
+                        const s = String(realTime.getSeconds()).padStart(2, '0');
+                        const ampm = h >= 12 ? 'PM' : 'AM';
+                        const h12 = h % 12 || 12;
+                        tsOverlay.textContent = `${h12}:${m}:${s} ${ampm}`;
+                    };
+                    videoEl.addEventListener('timeupdate', videoEl._timelapseHandler);
+                }
+
+                const downloadEl = document.getElementById('timelapse-download');
+                downloadEl.href = videoUrl;
+                downloadEl.download = `${firstCamera}_${date}_${startTime.replace(/:/g, '')}-${endTime.replace(/:/g, '')}_${speed}x.mp4`;
+
+                document.getElementById('timelapse-result').style.display = 'block';
+                document.getElementById('timelapse-generate-btn').textContent = 'Regenerate';
+                document.getElementById('timelapse-generate-btn').disabled = false;
+
+                showNotification('Timelapse generated successfully!');
+
+            } catch (err) {
+                console.error('Timelapse error:', err);
+                document.getElementById('timelapse-status').textContent = `Error: ${err.message}`;
+                document.getElementById('timelapse-generate-btn').disabled = false;
+                document.getElementById('timelapse-generate-btn').textContent = 'Retry';
+                showNotification(`Timelapse failed: ${err.message}`);
+            }
         }
 
         function toggleAIToggle() {
@@ -3581,7 +3873,7 @@
             updateSpeedButtons(newSpeed);
 
             // Show speed indicator
-            showNotification(`Playback Speed: ${newSpeed.toFixed(2)}x`);
+            showKeyboardHint(`Playback Speed: ${newSpeed.toFixed(2)}x`);
         }
 
         function updateSpeedButtons(currentSpeed) {
@@ -3610,6 +3902,36 @@
             });
         }
 
+        function stepFrame(direction) {
+            // Step forward or backward one frame (1/30s at 30fps)
+            const frameTime = 1 / 30;
+            Object.values(videoElements).forEach(video => {
+                video.pause();
+                video.currentTime = Math.max(0, Math.min(video.duration || 0, video.currentTime + (frameTime * direction)));
+            });
+            // Ensure play button shows paused state
+            playbackState.playing = false;
+            updatePlayPauseButton();
+            showKeyboardHint(direction > 0 ? 'Next Frame' : 'Previous Frame');
+        }
+
+        function togglePiP() {
+            const video = Object.values(videoElements)[0];
+            if (!video) {
+                showNotification('No video loaded', 'warning');
+                return;
+            }
+            if (document.pictureInPictureElement) {
+                document.exitPictureInPicture().catch(() => {});
+            } else if (document.pictureInPictureEnabled) {
+                video.requestPictureInPicture().catch(err => {
+                    showNotification('Picture-in-Picture not available', 'warning');
+                });
+            } else {
+                showNotification('Picture-in-Picture not supported by your browser', 'warning');
+            }
+        }
+
         function toggleFullscreen() {
             const videoGrid = document.getElementById('video-grid');
             if (!document.fullscreenElement) {
@@ -3628,18 +3950,18 @@
 
             const firstVideo = Object.values(videoElements)[0];
             if (firstVideo) {
-                showNotification(firstVideo.muted ? 'Muted' : 'Unmuted');
+                showKeyboardHint(firstVideo.muted ? 'Muted' : 'Unmuted');
             }
         }
 
-        function showNotification(message) {
-            // Remove existing notification
+        function showKeyboardHint(message) {
+            // Remove existing hint
             const existing = document.getElementById('keyboard-notification');
             if (existing) {
                 existing.remove();
             }
 
-            // Create notification
+            // Create centered hint overlay (for keyboard shortcut feedback like speed/mute)
             const notification = document.createElement('div');
             notification.id = 'keyboard-notification';
             notification.textContent = message;
@@ -3777,7 +4099,8 @@
                         <strong>J / L</strong><span>Rewind/Forward 10s</span>
                         <strong>↑ / ↓</strong><span>Increase/Decrease speed</span>
                         <strong>0-9</strong><span>Jump to 0%-90%</span>
-                        <strong>, / .</strong><span>Previous/Next frame (paused)</span>
+                        <strong>, / .</strong><span>Previous/Next frame</span>
+                        <strong>&lt; / &gt;</strong><span>Decrease/Increase speed</span>
                         <strong>F</strong><span>Fullscreen</span>
                         <strong>M</strong><span>Mute/Unmute</span>
                         <strong>?</strong><span>Show this help</span>

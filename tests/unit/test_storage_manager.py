@@ -63,7 +63,7 @@ class TestStorageManager:
         # Add to database
         base_time = datetime.now()
         playback_db.add_segment(
-            camera_name='test_camera_1',
+            camera_id='test_camera_1',
             file_path=str(old_file_1),
             start_time=base_time - timedelta(days=10),
             end_time=base_time - timedelta(days=10) + timedelta(minutes=5),
@@ -71,7 +71,7 @@ class TestStorageManager:
             file_size_bytes=old_file_1.stat().st_size
         )
         playback_db.add_segment(
-            camera_name='test_camera_1',
+            camera_id='test_camera_1',
             file_path=str(old_file_2),
             start_time=base_time - timedelta(days=15),
             end_time=base_time - timedelta(days=15) + timedelta(minutes=5),
@@ -79,7 +79,7 @@ class TestStorageManager:
             file_size_bytes=old_file_2.stat().st_size
         )
         playback_db.add_segment(
-            camera_name='test_camera_1',
+            camera_id='test_camera_1',
             file_path=str(recent_file),
             start_time=base_time - timedelta(hours=2),
             end_time=base_time - timedelta(hours=2) + timedelta(minutes=5),
@@ -132,7 +132,7 @@ class TestStorageManager:
 
         base_time = datetime.now() - timedelta(days=10)
         playback_db.add_segment(
-            camera_name='test_camera_1',
+            camera_id='test_camera_1',
             file_path=str(old_file),
             start_time=base_time,
             end_time=base_time + timedelta(minutes=5),
@@ -142,7 +142,7 @@ class TestStorageManager:
 
         # Verify file is in database
         segments_before = playback_db.get_segments_in_range(
-            camera_name='test_camera_1',
+            camera_id='test_camera_1',
             start_time=base_time - timedelta(hours=1),
             end_time=base_time + timedelta(hours=1)
         )
@@ -156,7 +156,7 @@ class TestStorageManager:
 
         # Verify file is no longer in database
         segments_after = playback_db.get_segments_in_range(
-            camera_name='test_camera_1',
+            camera_id='test_camera_1',
             start_time=base_time - timedelta(hours=1),
             end_time=base_time + timedelta(hours=1)
         )
@@ -205,7 +205,7 @@ class TestStorageCleanupLogic:
 
             base_time = datetime.now() - timedelta(days=10 + i)
             playback_db.add_segment(
-                camera_name='test_camera_1',
+                camera_id='test_camera_1',
                 file_path=str(old_file),
                 start_time=base_time,
                 end_time=base_time + timedelta(minutes=5),
@@ -237,7 +237,7 @@ class TestStorageCleanupLogic:
 
             base_time = datetime.now() - timedelta(days=age)
             playback_db.add_segment(
-                camera_name='test_camera_1',
+                camera_id='test_camera_1',
                 file_path=str(file_path),
                 start_time=base_time,
                 end_time=base_time + timedelta(minutes=5),
@@ -339,7 +339,7 @@ class TestStorageCleanupExecution:
             # Add to database
             base_time = datetime.now() - timedelta(days=10 + i)
             playback_db.add_segment(
-                camera_name='test_camera',
+                camera_id='test_camera',
                 file_path=str(file_path),
                 start_time=base_time,
                 end_time=base_time + timedelta(minutes=5),
@@ -545,7 +545,7 @@ class TestStorageCleanupExecution:
 
         base_time = datetime.now() - timedelta(days=15)
         playback_db.add_segment(
-            camera_name='test_camera',
+            camera_id='test_camera',
             file_path=str(old_file),
             start_time=base_time,
             end_time=base_time + timedelta(minutes=5),

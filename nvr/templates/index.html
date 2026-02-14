@@ -14,6 +14,14 @@
     <script src="/static/ui-utils.js"></script>
 
     <style>
+        :root {
+            --green: #2ecc71;
+            --green-dark: #27ae60;
+            --red: #e74c3c;
+            --blue: #4a9eff;
+            --yellow: #f39c12;
+        }
+
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
@@ -33,7 +41,7 @@
             align-items: center;
         }
 
-        h1 { color: #4a9eff; }
+        h1 { color: var(--blue); }
 
         .stats {
             display: flex;
@@ -48,7 +56,7 @@
         }
 
         .stat-label { color: #888; font-size: 0.9em; }
-        .stat-value { color: #4a9eff; font-size: 1.5em; font-weight: bold; }
+        .stat-value { color: var(--blue); font-size: 1.5em; font-weight: bold; }
 
         /* Navigation links in header */
         a.nav-link {
@@ -230,7 +238,7 @@
         }
 
         .grid-config-content h3 {
-            color: #4a9eff;
+            color: var(--blue);
             margin-bottom: 20px;
             font-size: 1.3em;
         }
@@ -379,7 +387,7 @@
 
         .layout-preset-btn.active {
             background: #4a9eff;
-            border-color: #4a9eff;
+            border-color: var(--blue);
         }
 
         /* Grid Pagination Controls */
@@ -446,7 +454,7 @@
         .camera-header {
             background: #333;
             padding: 15px;
-            border-bottom: 2px solid #4aff4a;
+            border-bottom: 2px solid var(--green);
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -460,7 +468,7 @@
         }
 
         .camera-name-display:hover {
-            color: #4a9eff;
+            color: var(--blue);
         }
 
         .camera-name-input {
@@ -523,7 +531,7 @@
 
         .reconnect-btn:hover {
             background: #4a9eff;
-            border-color: #4a9eff;
+            border-color: var(--blue);
             color: white;
             transform: rotate(180deg);
         }
@@ -533,7 +541,7 @@
         }
 
         .status-recording {
-            background: #4aff4a;
+            background: var(--green);
             color: #000;
             padding: 4px 12px;
             border-radius: 4px;
@@ -590,16 +598,23 @@
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            background: linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%);
+            background: linear-gradient(90deg, #1a1a1a 25%, #2a2a2a 50%, #1a1a1a 75%);
+            background-size: 200% 100%;
+            animation: shimmer 1.5s infinite;
             color: #888;
             z-index: 5;
+        }
+
+        @keyframes shimmer {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
         }
 
         .stream-loading .spinner {
             width: 40px;
             height: 40px;
             border: 3px solid #333;
-            border-top-color: #4a9eff;
+            border-top-color: var(--blue);
             border-radius: 50%;
             animation: spin 1s linear infinite;
             margin-bottom: 10px;
@@ -690,7 +705,7 @@
         }
 
         .health-dot.healthy {
-            background: #4aff4a;
+            background: var(--green);
         }
 
         .health-dot.degraded {
@@ -698,7 +713,7 @@
         }
 
         .health-dot.stale {
-            background: #ff4a4a;
+            background: var(--red);
         }
 
         .health-dot.stopped {
@@ -733,12 +748,12 @@
 
         .motion-toggle:hover {
             background: #444;
-            border-color: #4a9eff;
+            border-color: var(--blue);
         }
 
         .motion-toggle.active {
             background: #4a9eff;
-            border-color: #4a9eff;
+            border-color: var(--blue);
             color: white;
         }
 
@@ -864,12 +879,12 @@
         }
 
         .fullscreen-header h2 {
-            color: #4a9eff;
+            color: var(--blue);
             margin: 0;
         }
 
         .close-btn {
-            background: #ff4a4a;
+            background: var(--red);
             border: none;
             color: white;
             width: 40px;
@@ -990,7 +1005,7 @@
             background: rgba(0, 0, 0, 0.7);
             padding: 8px 16px;
             border-radius: 4px;
-            color: #4a9eff;
+            color: var(--blue);
             font-size: 0.9em;
             z-index: 10;
             backdrop-filter: blur(10px);
@@ -1070,7 +1085,7 @@
         }
 
         .stop-modal h3 {
-            color: #ff4a4a;
+            color: var(--red);
             margin-bottom: 1rem;
             font-size: 1.3em;
         }
@@ -1082,7 +1097,7 @@
         }
 
         .stop-modal-camera {
-            color: #4a9eff;
+            color: var(--blue);
             font-weight: bold;
         }
 
@@ -1103,7 +1118,7 @@
         }
 
         .stop-modal-btn.until-restart {
-            background: #f39c12;
+            background: var(--yellow);
             color: #000;
         }
 
@@ -1112,7 +1127,7 @@
         }
 
         .stop-modal-btn.permanent {
-            background: #e74c3c;
+            background: var(--red);
             color: white;
         }
 
@@ -1249,9 +1264,9 @@
             <div class="grid-config-section">
                 <label>Cameras to Show:
                     <span style="margin-left: 10px;">
-                        <a href="#" onclick="selectAllCameras(true); return false;" style="color: #4a9eff; font-size: 0.9em;">All</a>
+                        <a href="#" onclick="selectAllCameras(true); return false;" style="color: var(--blue); font-size: 0.9em;">All</a>
                         <span style="color: #666; margin: 0 5px;">|</span>
-                        <a href="#" onclick="selectAllCameras(false); return false;" style="color: #4a9eff; font-size: 0.9em;">None</a>
+                        <a href="#" onclick="selectAllCameras(false); return false;" style="color: var(--blue); font-size: 0.9em;">None</a>
                     </span>
                 </label>
                 <div class="camera-select-list" id="camera-select-list">
@@ -3002,7 +3017,7 @@
                 tempBtn.className = 'stop-modal-btn until-restart';
                 permBtn.innerHTML = '✅ Permanently Enable<div style="font-size: 0.8em; font-weight: normal; margin-top: 4px;">Camera enabled in config</div>';
                 permBtn.className = 'stop-modal-btn permanent';
-                permBtn.style.background = '#27ae60';
+                permBtn.style.background = 'var(--green-dark)';
             } else {
                 modalTitle.textContent = '⏹️ Stop Recording?';
                 modalText.innerHTML = `Stop recording for <strong>${cameraName}</strong>?<br><br>Choose how long to stop:`;
@@ -3010,7 +3025,7 @@
                 tempBtn.className = 'stop-modal-btn until-restart';
                 permBtn.innerHTML = '🛑 Permanently Disable<div style="font-size: 0.8em; font-weight: normal; margin-top: 4px;">Camera disabled in config until re-enabled</div>';
                 permBtn.className = 'stop-modal-btn permanent';
-                permBtn.style.background = '#e74c3c';
+                permBtn.style.background = 'var(--red)';
             }
 
             document.getElementById('recording-modal-overlay').classList.add('active');

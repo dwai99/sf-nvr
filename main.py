@@ -147,7 +147,7 @@ def main():
         port=port,
         log_level="info",
         access_log=False,
-        timeout_graceful_shutdown=0,  # Force immediate shutdown
+        timeout_graceful_shutdown=30,  # Allow recorders to finalize MP4 headers
         reload=dev_mode,  # Enable auto-reload in dev mode
         reload_dirs=["nvr"] if dev_mode else None,  # Watch nvr directory
         workers=workers,  # Multiple workers for better performance

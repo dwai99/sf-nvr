@@ -416,17 +416,27 @@ class PlaybackDatabase:
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            # Find segments that overlap with the requested range:
-            # - Segment starts before requested end time
-            # - Segment ends after requested start time OR is currently recording (NULL end_time)
-            # Support lookup by camera_id OR camera_name (for backward compatibility)
+            # Query by camera_id first (uses index), fallback to camera_name only if needed
             cursor.execute("""
                 SELECT * FROM recording_segments
-                WHERE (camera_id = ? OR camera_name = ?)
+                WHERE camera_id = ?
                 AND start_time < ?
                 AND (end_time > ? OR end_time IS NULL)
                 ORDER BY start_time ASC
-            """, (camera_id, camera_id, end_time, start_time))
+            """, (camera_id, end_time, start_time))
+
+            rows = cursor.fetchall()
+            if rows:
+                return [dict(row) for row in rows]
+
+            # Fallback: try matching by camera_name (backward compatibility)
+            cursor.execute("""
+                SELECT * FROM recording_segments
+                WHERE camera_name = ?
+                AND start_time < ?
+                AND (end_time > ? OR end_time IS NULL)
+                ORDER BY start_time ASC
+            """, (camera_id, end_time, start_time))
 
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
@@ -489,13 +499,25 @@ class PlaybackDatabase:
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            # Support lookup by camera_id OR camera_name (for backward compatibility)
+            # Query by camera_id first (uses index), fallback to camera_name
             cursor.execute("""
                 SELECT * FROM motion_events
-                WHERE (camera_id = ? OR camera_name = ?)
+                WHERE camera_id = ?
                 AND event_time BETWEEN ? AND ?
                 ORDER BY event_time ASC
-            """, (camera_id, camera_id, start_time, end_time))
+            """, (camera_id, start_time, end_time))
+
+            rows = cursor.fetchall()
+            if rows:
+                return [dict(row) for row in rows]
+
+            # Fallback: try matching by camera_name
+            cursor.execute("""
+                SELECT * FROM motion_events
+                WHERE camera_name = ?
+                AND event_time BETWEEN ? AND ?
+                ORDER BY event_time ASC
+            """, (camera_id, start_time, end_time))
 
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
