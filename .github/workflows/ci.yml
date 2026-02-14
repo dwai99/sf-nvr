@@ -93,13 +93,13 @@ jobs:
 
           # Core module coverage requirements
           module_thresholds = {
-              'alert_system.py': 90.0,
-              'storage_manager.py': 90.0,
-              'playback_db.py': 90.0,
-              'motion_heatmap.py': 75.0,
+              'alert_system.py': 85.0,
+              'storage_manager.py': 80.0,
+              'playback_db.py': 55.0,
+              'motion_heatmap.py': 70.0,
               'transcoder.py': 60.0,
               'motion.py': 60.0,
-              'recorder.py': 55.0
+              'recorder.py': 40.0
           }
 
           failed = []

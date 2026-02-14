@@ -700,11 +700,11 @@ class TestDatabaseMaintenanceExtended:
         original_stat = Path.stat
         call_count = [0]
 
-        def mock_stat_func(self):
+        def mock_stat_func(self, **kwargs):
             call_count[0] += 1
             if call_count[0] <= 1:
                 # First call from exists() - let it succeed
-                return original_stat(self)
+                return original_stat(self, **kwargs)
             else:
                 # Second call from file_path.stat().st_size - make it fail
                 raise OSError("Simulated stat error during finalization")
