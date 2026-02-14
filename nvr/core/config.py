@@ -22,7 +22,10 @@ class Config:
     def load(self) -> None:
         """Load configuration from YAML file"""
         if not self.config_path.exists():
-            raise FileNotFoundError(f"Config file not found: {self.config_path}")
+            import logging
+            logging.getLogger(__name__).warning(f"Config file not found: {self.config_path}, using defaults")
+            self._config = {}
+            return
 
         with open(self.config_path, 'r') as f:
             self._config = yaml.safe_load(f)
