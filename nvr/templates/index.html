@@ -2613,11 +2613,16 @@
         };
 
         function updateZoom() {
+            const transform = `scale(${zoomState.scale}) translate(${zoomState.translateX}px, ${zoomState.translateY}px)`;
+            // Apply to whichever element shows the stream: <img> in MJPEG mode,
+            // <canvas> in WebSocket mode. Transforming only the img left
+            // canvas-mode fullscreen un-zoomable (the visible canvas never moved).
             const streamImg = document.getElementById('fullscreen-stream');
+            const streamCanvas = document.getElementById('fullscreen-canvas');
+            if (streamImg) streamImg.style.transform = transform;
+            if (streamCanvas) streamCanvas.style.transform = transform;
             const indicator = document.getElementById('zoom-indicator');
-
-            streamImg.style.transform = `scale(${zoomState.scale}) translate(${zoomState.translateX}px, ${zoomState.translateY}px)`;
-            indicator.textContent = `${Math.round(zoomState.scale * 100)}%`;
+            if (indicator) indicator.textContent = `${Math.round(zoomState.scale * 100)}%`;
         }
 
         function zoomIn() {
@@ -2675,13 +2680,22 @@
         // Zoom to a selected rectangular area
         function zoomToSelection(box) {
 
-            const streamImg = document.getElementById('fullscreen-stream');
             const wrapper = document.getElementById('fullscreen-video-wrapper');
             const wrapperRect = wrapper.getBoundingClientRect();
 
-            // Get the natural (original) image dimensions
-            const naturalWidth = streamImg.naturalWidth || streamImg.width;
-            const naturalHeight = streamImg.naturalHeight || streamImg.height;
+            // Get the natural dimensions of whichever element is showing the
+            // stream (img in MJPEG mode, canvas in WebSocket mode). Fall back to
+            // the wrapper size if the media hasn't reported dimensions yet, so
+            // the geometry never produces NaN (which silently dropped the zoom).
+            const streamImg = document.getElementById('fullscreen-stream');
+            const streamCanvas = document.getElementById('fullscreen-canvas');
+            const activeMedia = (streamCanvas && streamCanvas.style.display !== 'none') ? streamCanvas : streamImg;
+            let naturalWidth = activeMedia.naturalWidth || activeMedia.width || 0;
+            let naturalHeight = activeMedia.naturalHeight || activeMedia.height || 0;
+            if (!naturalWidth || !naturalHeight) {
+                naturalWidth = wrapperRect.width;
+                naturalHeight = wrapperRect.height;
+            }
 
             // Calculate how the image is displayed when unzoomed (object-fit: contain)
             const wrapperAspect = wrapperRect.width / wrapperRect.height;
@@ -2842,7 +2856,9 @@
         });
 
         // Double-click to reset zoom
-        document.getElementById('fullscreen-stream').addEventListener('dblclick', () => {
+        // Double-click anywhere in the wrapper resets zoom (the stream <img> is
+        // hidden in WebSocket mode, so binding to it alone never fired).
+        document.getElementById('fullscreen-video-wrapper').addEventListener('dblclick', () => {
             resetZoom();
         });
 

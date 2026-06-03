@@ -258,6 +258,24 @@ Fixes applied this session (Tier 3 detection + quick-win runtime bugs):
 | `nvr/core/storage_manager.py` | `check_and_cleanup`/`_cleanup_old_files` accept `protected_paths`; abort on EROFS/EACCES/EPERM |
 | `nvr/core/db_maintenance.py` | skip orphan-entry cleanup when storage not writable/mounted |
 
+### Changelog (2026-06-02, part 5 — live fullscreen box-zoom)
+
+Pre-existing bug (not from this session's changes): the live view streams via
+WebSocket→`<canvas>` (`streamingMode === 'websocket'`), but the fullscreen
+zoom functions only transformed the `<img>` (`#fullscreen-stream`), which is
+hidden in that mode — so drawing a zoom box (and +/−/wheel/reset) changed
+`zoomState` but nothing moved on screen. `zoomToSelection` also read the hidden
+img's `naturalWidth/Height` (0) → `NaN` translate → transform dropped.
+
+| File | Change |
+|------|--------|
+| `nvr/templates/index.html` | `updateZoom` transforms **both** the img and the canvas (whichever is visible); `zoomToSelection` reads intrinsic size from the active element with a wrapper-size fallback (no more NaN); double-click-to-reset rebinds to the wrapper (the img never received it in canvas mode) |
+
+Verified in a real browser (WebSocket mode): drawing a box zooms the visible
+canvas to `scale(2.25)` with finite translate, reset returns to 100%, 0 console
+errors. Playback box-zoom uses a real `<video>` element and was verified
+already working (unchanged).
+
 ### Tests
 - `test_config.py::TestStorageWritability` / `TestStoragePathMountSafety` — `is_storage_writable` true/false/no-mkdir; `storage_path` creates once, doesn't recreate after unmount.
 - `test_recorder.py::TestWriteFailureDetection` — `_check_segment_growth` baseline reset, growth→healthy, no-growth→write_failed, missing-file→write_failed, sampling gate.
