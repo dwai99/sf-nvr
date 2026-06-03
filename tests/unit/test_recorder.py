@@ -704,8 +704,8 @@ class TestWriteFailureDetection:
         assert rec.write_failed is False
         assert rec._last_segment_size == 200
 
-    def test_no_growth_sets_write_failed(self, temp_dir):
-        """A file that stops growing while recording flags write_failed."""
+    def test_no_growth_with_frames_sets_write_failed(self, temp_dir):
+        """No growth while frames ARE being written -> real disk failure."""
         rec = self._recorder(temp_dir)
         seg = temp_dir / "seg_c.mp4"
         seg.write_bytes(b"x" * 100)
@@ -713,6 +713,8 @@ class TestWriteFailureDetection:
         rec._last_size_check_path = seg
         rec._last_segment_size = 100               # same size -> no growth
         rec._last_size_check = time.monotonic() - 21
+        rec._frames_written_total = 300            # plenty of frames written...
+        rec._frames_at_last_check = 0              # ...since the last sample
         rec.actively_writing = True
         rec.write_failed = False
 
@@ -720,6 +722,24 @@ class TestWriteFailureDetection:
 
         assert rec.write_failed is True
         assert rec.actively_writing is False
+
+    def test_no_growth_few_frames_is_stall_not_disk_failure(self, temp_dir):
+        """No growth but few frames written -> stream stall (weak signal),
+        NOT a disk failure. write_failed must stay False."""
+        rec = self._recorder(temp_dir)
+        seg = temp_dir / "seg_weak.mp4"
+        seg.write_bytes(b"x" * 100)
+        rec.current_segment_path = seg
+        rec._last_size_check_path = seg
+        rec._last_segment_size = 100               # no growth
+        rec._last_size_check = time.monotonic() - 21
+        rec._frames_written_total = 3              # only a trickle (weak wifi)
+        rec._frames_at_last_check = 0
+        rec.write_failed = False
+
+        rec._check_segment_growth()
+
+        assert rec.write_failed is False, "a stream stall must not be reported as disk failure"
 
     def test_missing_file_sets_write_failed(self, temp_dir):
         """A vanished segment file (unmount/delete) flags write_failed."""

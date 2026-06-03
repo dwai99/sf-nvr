@@ -279,3 +279,16 @@ Opt-in HTTP Basic auth (chosen for an isolated camera-only LAN — simple, no fr
 | `tests/unit/test_api.py` | `TestBasicAuthCheck` — correct/wrong/missing/malformed creds, colon-in-password, non-Basic scheme |
 
 To enable: set `web.auth_password` (and optionally `web.auth_username`, default `admin`) in `config/config.yaml`, then `./restart.sh`. Verified live: 401 + `WWW-Authenticate` without creds, 200 with. Full suite: **338 passed**.
+
+### Changelog (2026-06-02, part 4 — write-failure detector is now signal-aware)
+
+A weak-signal camera (delivers frames slowly / stalls) could make a segment
+file stop growing and be mislabeled as a disk failure ("NO DISK" +
+`CAMERA_WRITE_FAILED`). Refined so the detector distinguishes the two:
+
+| File | Change |
+|------|--------|
+| `nvr/core/recorder.py` | `_check_segment_growth` only flags `write_failed` when no growth AND ≥15 frames were written in the window. Too few frames → treated as a stream stall (surfaces as `stale`/`degraded` via `last_frame_time`), not a disk failure. Added `_frames_written_total`/`_frames_at_last_check`. |
+| `tests/unit/test_recorder.py` | split into no-growth-**with**-frames (→ write_failed) and no-growth-**few**-frames (→ stall, not flagged). |
+
+Real disk failure (healthy camera, dead disk) still flags — frames keep arriving at full rate. Full suite: **339 passed**.

@@ -71,10 +71,15 @@ class RTSPRecorder:
         self.actively_writing = False  # True when actually writing frames to disk
         self.write_failed = False  # True when recording is not actually landing on disk
         # Mid-segment write-failure detection (volume goes read-only after a
-        # segment opened: writer stays non-None but the file stops growing)
+        # segment opened: writer stays non-None but the file stops growing).
+        # Frame counters let us tell a disk failure (frames written but bytes
+        # not landing) from a camera/network stall (no frames arriving) — the
+        # latter must NOT be reported as a disk failure.
         self._last_size_check = 0.0          # monotonic time of last size check
         self._last_size_check_path = None    # segment the baseline size belongs to
         self._last_segment_size = -1         # bytes at last check (-1 = no baseline)
+        self._frames_written_total = 0       # monotonic count of frames written
+        self._frames_at_last_check = 0       # frame count at last size sample
         self.buffered_frames = []  # Pre-motion buffer for motion-only mode
 
         # Callbacks
@@ -283,6 +288,7 @@ class RTSPRecorder:
                     # across frames so the health poll can see it).
                     if self.writer:
                         self.writer.write(frame)
+                        self._frames_written_total += 1
                         # _check_segment_growth() updates write_failed based on
                         # whether the file is actually growing on disk (catches
                         # silent mid-segment write loss, e.g. volume read-only).
@@ -450,6 +456,13 @@ class RTSPRecorder:
 
         now = time.monotonic()
 
+        # Minimum frames that must have been written in the sampling window for
+        # "no file growth" to mean a disk failure. Below this, the file isn't
+        # growing simply because frames aren't arriving (weak signal / stall) —
+        # a camera/network problem, not a disk one. ~15 frames over the ~20s
+        # window ≈ <1 fps; a healthy camera writes hundreds.
+        MIN_FRAMES_FOR_GROWTH = 15
+
         # Reset the baseline whenever the segment rolls over. A freshly-opened
         # segment is assumed healthy until proven otherwise (innocent until the
         # next sample shows no growth).
@@ -457,12 +470,16 @@ class RTSPRecorder:
             self._last_size_check_path = self.current_segment_path
             self._last_segment_size = -1
             self._last_size_check = now
+            self._frames_at_last_check = self._frames_written_total
             self.write_failed = False
             return
 
         if now - self._last_size_check < 20:
             return
         self._last_size_check = now
+
+        frames_delta = self._frames_written_total - self._frames_at_last_check
+        self._frames_at_last_check = self._frames_written_total
 
         try:
             size = self.current_segment_path.stat().st_size
@@ -477,14 +494,24 @@ class RTSPRecorder:
             return
 
         if self._last_segment_size >= 0 and size <= self._last_segment_size:
-            # No growth across the interval while actively writing → failing
-            if not self.write_failed:
-                logger.error(
-                    f"Recording NOT growing on disk for {self.camera_name} "
-                    f"(stuck at {size} bytes: {self.current_segment_path}) - storage may be unwritable"
+            if frames_delta >= MIN_FRAMES_FOR_GROWTH:
+                # Frames were written but bytes didn't land on disk → real failure
+                if not self.write_failed:
+                    logger.error(
+                        f"Recording NOT growing on disk for {self.camera_name} "
+                        f"(stuck at {size} bytes after {frames_delta} frames: "
+                        f"{self.current_segment_path}) - storage may be unwritable"
+                    )
+                self.write_failed = True
+                self.actively_writing = False
+            else:
+                # Too few frames to expect growth → camera/network stall, not a
+                # disk failure. Leave write_failed as-is; health reports this as
+                # 'stale'/'degraded' via last_frame_time.
+                logger.debug(
+                    f"{self.camera_name}: segment not growing but only {frames_delta} "
+                    f"frame(s) written in window - treating as stream stall, not disk failure"
                 )
-            self.write_failed = True
-            self.actively_writing = False
         else:
             # Growing normally → healthy (clears a prior transient failure)
             self.write_failed = False
