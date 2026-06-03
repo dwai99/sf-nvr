@@ -161,11 +161,11 @@ Severity: 🔴 Critical · 🟠 High · 🟡 Medium · ⚪ Low.
 ## Frontend — Playback (`playback.html`, `timeline-selector.js`)
 
 ### 🔴 Critical
-- ⬜ **`safeId` vs raw-id mismatch** (`playback.html:1902,1927,2025,2339,3360`) — `videoElements` keyed by raw id but DOM uses sanitized id; zoom crashes and timestamp/motion overlays die for ids with space/`.`/`:`. **Fix:** one `safeId()` helper everywhere.
-- ⬜ **Triple `keydown` listeners** (`playback.html:2998,3699,4044`) + duplicate `skipTime`/`changeSpeed` — Space double-toggles (appears frozen), arrows seek 10s not 5s, `,`/`.` frame-step force-resumes play. **Fix:** delete listeners #2/#3 + dead duplicates.
+- ✅ **`safeId` vs raw-id mismatch** — DOM elements created with sanitized `safeId` but lookups (zoom, timestamp, pan/drag) used unsanitized `cameraName`. Latent for this deployment (clean `cam_xxx` ids → `safeId` is a no-op) but would break zoom/overlays for any id with a space/`.`/`:`. **Fixed:** added a single `safeId()` helper and wrapped all 11 `getElementById` DOM-id lookups (behaviorally identical for clean ids, future-proof). Verified live: playback page loads with 0 console errors.
+- ✅ **Triple `keydown` listeners** + duplicate `skipTime`/`changeSpeed` — Space double-toggled (appeared frozen), arrows seeked 10s not 5s, `,`/`.` frame-step force-resumed play (the shadowing duplicate `skipTime` routed through `seekToTime`). **Fixed:** removed the 2nd and 3rd listeners and the duplicate `skipTime`/`jumpToPercentage`/`changePlaybackSpeed`/`showKeyboardShortcuts`; folded the unique-and-useful bindings (↑/↓ speed, M mute) into the single surviving listener.
 
 ### 🟠 High
-- ⬜ `skipTime`/frame-step force-resume playback (`seekToTime` always sets `playing=true`) (`playback.html:2811`).
+- ✅ `skipTime`/frame-step force-resume playback — resolved by removing the duplicate `skipTime` that routed through `seekToTime`; the surviving `skipTime` nudges `currentTime` directly without forcing play.
 - ⬜ Stale `loadRecordings` responses clobber newer state → timeline/video desync (`playback.html:1710`). **Fix:** request token / `AbortController`.
 - ⬜ `onloadedmetadata`/`onerror` reassigned repeatedly; `onerror` `replaceChildren` destroys the `<video>` still referenced (`playback.html:2568,2016`).
 - ⬜ Always-on 100ms interval does DOM writes + regex-parses `src` forever, even when paused/backgrounded (`playback.html:3642`).
