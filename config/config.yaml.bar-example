@@ -119,6 +119,10 @@ web:
   host: 0.0.0.0
   port: 8080
   stream_quality: medium
+  # Optional HTTP Basic auth for the web UI. Leave auth_password empty/unset to
+  # disable. When set, the browser prompts for these credentials once per session.
+  auth_username: admin
+  auth_password: ""
 
 # 📊 EXPECTED STORAGE USAGE WITH THIS CONFIGURATION:
 #

@@ -604,3 +604,48 @@ class TestPerformanceOptimizations:
 
         result = get_cached("test")
         assert result == "data"
+
+
+@pytest.mark.unit
+class TestBasicAuthCheck:
+    """Unit tests for the HTTP Basic auth header check (2026-06-02)."""
+
+    def _hdr(self, user, pwd):
+        import base64
+        token = base64.b64encode(f"{user}:{pwd}".encode()).decode()
+        return f"Basic {token}"
+
+    def test_correct_credentials(self):
+        from nvr.web.api import _check_basic_auth
+        assert _check_basic_auth(self._hdr("admin", "s3cret"), "admin", "s3cret") is True
+
+    def test_wrong_password(self):
+        from nvr.web.api import _check_basic_auth
+        assert _check_basic_auth(self._hdr("admin", "nope"), "admin", "s3cret") is False
+
+    def test_wrong_username(self):
+        from nvr.web.api import _check_basic_auth
+        assert _check_basic_auth(self._hdr("bob", "s3cret"), "admin", "s3cret") is False
+
+    def test_missing_header(self):
+        from nvr.web.api import _check_basic_auth
+        assert _check_basic_auth("", "admin", "s3cret") is False
+
+    def test_non_basic_scheme(self):
+        from nvr.web.api import _check_basic_auth
+        assert _check_basic_auth("Bearer abc", "admin", "s3cret") is False
+
+    def test_malformed_base64(self):
+        from nvr.web.api import _check_basic_auth
+        assert _check_basic_auth("Basic !!!notbase64!!!", "admin", "s3cret") is False
+
+    def test_no_colon_in_decoded(self):
+        from nvr.web.api import _check_basic_auth
+        import base64
+        bad = "Basic " + base64.b64encode(b"adminnopassword").decode()
+        assert _check_basic_auth(bad, "admin", "s3cret") is False
+
+    def test_password_containing_colon(self):
+        from nvr.web.api import _check_basic_auth
+        # Password with a colon must still match (partition on first colon only)
+        assert _check_basic_auth(self._hdr("admin", "pa:ss"), "admin", "pa:ss") is True

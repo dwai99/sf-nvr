@@ -15,7 +15,7 @@ Severity: 🔴 Critical · 🟠 High · 🟡 Medium · ⚪ Low.
 
 | # | Sev | Status | Issue | Where |
 |---|-----|--------|-------|-------|
-| 1 | 🔴 | ⬜ | No authentication on any endpoint + CORS `*` + bind `0.0.0.0` | `api.py:34`, `main.py:126` |
+| 1 | 🔴 | ✅* | No authentication on any endpoint (opt-in HTTP Basic added; CORS `*`/bind `0.0.0.0` unchanged — acceptable on isolated LAN) | `api.py` |
 | 2 | 🔴 | ✅ | Camera credentials (rtsp_url w/ password) sent to every browser | `api.py:565`, `settings.html` |
 | 3 | 🔴 | ✅ | `config.save_config()` doesn't exist → settings saves 500 | `settings_api.py:199,273` |
 | 4 | 🔴 | ✅ | `get_camera_health` NameError → endpoint always 500s | `api.py:621` |
@@ -25,7 +25,6 @@ Severity: 🔴 Critical · 🟠 High · 🟡 Medium · ⚪ Low.
 | 8 | 🔴 | ✅ | `write_failed` missed mid-segment write loss | `recorder.py` |
 | 9 | 🔴 | ✅ | `config.storage_path` recreates mountpoint on every access | `config.py` |
 | 10 | 🔴 | ✅* | DiskManager ignores retention / deletes active segment / spins on EPERM (*engine consolidation still open) | `storage_manager.py`, `disk_manager.py` |
-| 11 | 🔴 | ⬜ | No authentication on any endpoint + CORS `*` + bind `0.0.0.0` | `api.py:34`, `main.py:126` |
 
 ---
 
@@ -97,7 +96,7 @@ Severity: 🔴 Critical · 🟠 High · 🟡 Medium · ⚪ Low.
 ## Web API core (`api.py`, `recording_api.py`, `settings_api.py`, `main.py`)
 
 ### 🔴 Critical
-- ⬜ **No authentication anywhere.** No `Depends`/auth across `nvr/web/*.py`; `CORSMiddleware(allow_origins=["*"])` (`api.py:34`); bind `0.0.0.0` (`main.py:126`). Anyone on the network can view cameras, `POST /api/cameras/{id}/stop?permanent=true`, and `POST /api/config`. **Fix:** app-wide auth dependency; lock CORS; document port exposure.
+- ✅* **No authentication anywhere.** No `Depends`/auth across `nvr/web/*.py`; `CORSMiddleware(allow_origins=["*"])`; bind `0.0.0.0`. **Fixed (opt-in):** added HTTP Basic auth middleware (`basic_auth_middleware` + `_check_basic_auth`), enabled when `web.auth_password` is set in config. Runs only for HTTP (WebSockets stay open on the trusted LAN by design). CORS `*` and `0.0.0.0` bind left as-is — acceptable for this deployment (isolated network: only cameras + NVR), and Basic auth means browsers won't send creds cross-origin anyway. *Deployment note: keep port 8080 off any internet port-forward.*
 - ✅ **`get_camera_health` NameError** (`api.py:621`) — `camera_name` unbound → always 500. **Fixed:** use `recorder.camera_name`; also added `write_failed`/`actively_writing` + `write_failed` status.
 - ✅ **`live_stream` NameError** (`api.py:934`) — `camera_name` unbound on the motion path → default MJPEG stream aborts mid-response. **Fixed:** bind `camera_name = recorder.camera_name`.
 - ✅ **`settings_api.save_config()` missing** (`settings_api.py:199,273`) — motion & recording settings saves 500 and leave memory/disk divergent. **Fixed:** `config.save()`.
@@ -268,3 +267,15 @@ Fixes applied this session (Tier 3 detection + quick-win runtime bugs):
 - `test_settings_api.py` (new) — password/RTSP masking, no input mutation, write-only restore (masked/blank→restored, new→kept), full GET→POST round-trip preserves secret.
 
 Full unit suite: **330 passed** (3 consecutive runs); the occasional `test_frame_rate_limiting` blip is a pre-existing wall-clock flake unrelated to these changes.
+
+### Changelog (2026-06-02, part 3 — #1 authentication)
+
+Opt-in HTTP Basic auth (chosen for an isolated camera-only LAN — simple, no frontend changes).
+
+| File | Change |
+|------|--------|
+| `nvr/web/api.py` | `_check_basic_auth()` (constant-time) + `basic_auth_middleware` (HTTP-only, so WebSockets stay open); active when `web.auth_password` is set; OPTIONS preflight exempt |
+| `config/config.yaml.bar-example` | documented `web.auth_username` / `web.auth_password` (empty = disabled) |
+| `tests/unit/test_api.py` | `TestBasicAuthCheck` — correct/wrong/missing/malformed creds, colon-in-password, non-Basic scheme |
+
+To enable: set `web.auth_password` (and optionally `web.auth_username`, default `admin`) in `config/config.yaml`, then `./restart.sh`. Verified live: 401 + `WWW-Authenticate` without creds, 200 with. Full suite: **338 passed**.

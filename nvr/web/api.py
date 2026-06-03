@@ -1,6 +1,8 @@
 """FastAPI web application for NVR"""
 
+import base64
 import logging
+import secrets
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -37,6 +39,42 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _check_basic_auth(auth_header: str, username: str, password: str) -> bool:
+    """Constant-time check of an HTTP Basic 'Authorization' header."""
+    if not auth_header.startswith("Basic "):
+        return False
+    try:
+        decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
+    except Exception:
+        return False
+    user, sep, pwd = decoded.partition(":")
+    if not sep:
+        return False
+    # Compare both fields with constant-time comparison to avoid timing leaks
+    return (secrets.compare_digest(user, username) and
+            secrets.compare_digest(pwd, password))
+
+
+@app.middleware("http")
+async def basic_auth_middleware(request: Request, call_next):
+    """Optional HTTP Basic auth, enabled when web.auth_password is set.
+
+    Runs only for HTTP requests (not WebSocket — that scope never reaches HTTP
+    middleware), so the live-view/event WebSockets keep working on the trusted
+    LAN. Once the browser authenticates once for the origin it caches the
+    credentials and sends them on every page/api/img/video request.
+    """
+    password = config.get('web.auth_password') or ''
+    if password and request.method != "OPTIONS":  # OPTIONS = CORS preflight, no creds
+        username = config.get('web.auth_username', 'admin') or 'admin'
+        if not _check_basic_auth(request.headers.get("Authorization", ""), username, password):
+            return Response(
+                status_code=401,
+                headers={"WWW-Authenticate": 'Basic realm="SF-NVR"'},
+            )
+    return await call_next(request)
 
 # Templates and static files
 templates = Jinja2Templates(directory="nvr/templates")
