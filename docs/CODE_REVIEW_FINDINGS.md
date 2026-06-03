@@ -167,7 +167,7 @@ Severity: 🔴 Critical · 🟠 High · 🟡 Medium · ⚪ Low.
 ### 🟠 High
 - ✅ `skipTime`/frame-step force-resume playback — resolved by removing the duplicate `skipTime` that routed through `seekToTime`; the surviving `skipTime` nudges `currentTime` directly without forcing play.
 - ✅ Stale `loadRecordings` responses clobbered newer state → timeline/video desync (`playback.html`). **Fixed:** per-call sequence token (`loadRecordings._seq`) makes a superseded response bail before applying state. Verified with a rapid double-load.
-- ⬜ `onloadedmetadata`/`onerror` reassigned repeatedly; `onerror` `replaceChildren` destroys the `<video>` still referenced (`playback.html:2568,2016`).
+- ✅ `onerror` `replaceChildren` destroyed the `<video>` still referenced in `videoElements` and dead-ended playback at a bad/missing segment. **Fixed:** on a load error the player now auto-advances past the unplayable segment (like `onended`), and only shows a non-destructive overlay when there's no next segment — the `<video>` is never removed, so it stays usable/recoverable. Verified: errored segment with a successor auto-skips and the element survives; on the last segment an overlay shows and the element is still referenced.
 - ⬜ Always-on 100ms interval does DOM writes + regex-parses `src` forever, even when paused/backgrounded (`playback.html:3642`).
 - ✅ **Export reports success on failure** (`playback.html:3335`) — looped `a.click()` (browsers drop all but first), no response check, always-green toast. **Fixed:** `performExport` now fetches each camera, checks `response.ok`, downloads via blob URL (revoked after), and reports per-camera success/failure counts.
 

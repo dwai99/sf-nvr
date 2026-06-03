@@ -1955,14 +1955,39 @@
                         enterFullscreenPlayback(cameraId);
                     };
 
-                    // Handle errors
+                    // Handle load errors WITHOUT destroying the <video> element.
+                    // The old code did player.replaceChildren(errDiv), which removed
+                    // the <video> from the DOM while videoElements[cameraId] still
+                    // referenced it, and dead-ended playback at a bad/missing segment.
+                    // Instead: auto-advance past the unplayable segment (like onended)
+                    // so a flaky camera's gaps don't stop playback; only show a
+                    // non-destructive overlay when there's nothing left to play.
                     video.onerror = () => {
-                        const errDiv = document.createElement('div');
-                        errDiv.className = 'no-recording';
-                        errDiv.textContent = 'Error loading video';
-                        player.replaceChildren(errDiv);
                         console.error(`Failed to load video for ${cameraName} (id: ${cameraId}):`, video.error);
-                        showNotification(`Failed to load video for ${cameraName}`, 'error');
+
+                        const segments = currentRecordings[cameraId] || [];
+                        const curMatch = (video.src || '').match(/start_time=([^&]+)/);
+                        let hasNext = false;
+                        if (curMatch && segments.length) {
+                            const curMs = new Date(decodeURIComponent(curMatch[1])).getTime();
+                            hasNext = segments.some(s => new Date(s.start_time).getTime() > curMs);
+                        }
+
+                        if (hasNext) {
+                            // Skip past the unplayable segment and keep going.
+                            skipToNextSegment(cameraId);
+                        } else {
+                            // Nothing more to play — overlay an error message but keep
+                            // the <video> in videoElements so a later seek recovers it.
+                            let overlay = player.querySelector('.no-recording');
+                            if (!overlay) {
+                                overlay = document.createElement('div');
+                                overlay.className = 'no-recording';
+                                player.appendChild(overlay);
+                            }
+                            overlay.textContent = 'Error loading video';
+                            showNotification(`Failed to load video for ${cameraName}`, 'error');
+                        }
                     };
 
                     videoElements[cameraId] = video;
