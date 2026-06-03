@@ -2994,25 +2994,41 @@
         setInterval(fetchCameras, 5000);
         setInterval(fetchSystemStats, 2000); // Update stats every 2 seconds
 
-        // WebSocket for motion events
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const ws = new WebSocket(`${protocol}//${window.location.host}/ws/events`);
+        // WebSocket for motion events — auto-reconnects so the overlay survives
+        // server restarts (which happen on config changes).
+        let eventsWs = null;
+        let eventsReconnectDelay = 1000;
+        function connectEventsWs() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            eventsWs = new WebSocket(`${protocol}//${window.location.host}/ws/events`);
 
-        ws.onmessage = (event) => {
-            const events = JSON.parse(event.data);
-            events.forEach(e => {
-                if (e.type === 'motion') {
-                    const card = document.querySelector(`[data-camera="${e.camera}"]`);
-                    if (card) {
-                        const indicator = card.querySelector('.motion-indicator');
-                        if (indicator) {
-                            indicator.classList.add('active');
-                            setTimeout(() => indicator.classList.remove('active'), 3000);
+            eventsWs.onopen = () => { eventsReconnectDelay = 1000; };
+
+            eventsWs.onmessage = (event) => {
+                let events;
+                try { events = JSON.parse(event.data); } catch (err) { return; }  // ignore malformed frames
+                if (!Array.isArray(events)) return;
+                events.forEach(e => {
+                    if (e.type === 'motion' && e.camera != null) {
+                        const card = document.querySelector(`[data-camera="${CSS.escape(String(e.camera))}"]`);
+                        if (card) {
+                            const indicator = card.querySelector('.motion-indicator');
+                            if (indicator) {
+                                indicator.classList.add('active');
+                                setTimeout(() => indicator.classList.remove('active'), 3000);
+                            }
                         }
                     }
-                }
-            });
-        };
+                });
+            };
+
+            eventsWs.onclose = () => {
+                setTimeout(connectEventsWs, eventsReconnectDelay);
+                eventsReconnectDelay = Math.min(eventsReconnectDelay * 2, 15000);  // capped backoff
+            };
+            eventsWs.onerror = () => { try { eventsWs.close(); } catch (err) {} };
+        }
+        connectEventsWs();
 
         // Recording Toggle Modal
         let toggleRecordingCameraId = null;

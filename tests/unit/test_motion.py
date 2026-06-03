@@ -623,3 +623,29 @@ class TestMotionCooldown:
         # Due to cooldown, this should still be considered one continuous event
         # Motion should still be detected (cooldown hasn't expired)
         assert detector.motion_detected is True
+
+
+@pytest.mark.unit
+class TestMotionClockStep:
+    """A backward clock step must not leave a motion event running forever."""
+
+    def _frame(self, val=0):
+        return np.full((120, 160, 3), val, dtype=np.uint8)
+
+    def test_backward_clock_step_ends_event(self):
+        from datetime import timedelta
+        mock_recorder = Mock()
+        detector = MotionDetector(sensitivity=20, min_area=100, recorder=mock_recorder)
+        motion_frame = self._frame(255)
+        detector.process_frame(self._frame(0))   # baseline (prev=0)
+        detector.process_frame(motion_frame)     # 0->255 diff => motion
+        assert detector.motion_detected is True
+
+        # Simulate the wall clock having stepped BACKWARD: last_motion_time is now
+        # in the future relative to datetime.now(), so naive elapsed is negative.
+        detector.last_motion_time = datetime.now() + timedelta(seconds=30)
+
+        # An identical (no-motion) frame should still end the event despite the
+        # negative elapsed (clamped to expired), not hang the event forever.
+        detector.process_frame(motion_frame)     # 255->255 => no motion
+        assert detector.motion_detected is False

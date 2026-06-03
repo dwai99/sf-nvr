@@ -45,10 +45,10 @@ Severity: 🔴 Critical · 🟠 High · 🟡 Medium · ⚪ Low.
 - ✅ **Disconnect orphans open segment.** `_cleanup` released the writer but never called `_close_current_segment` → DB row stuck `end_time=NULL`, never transcoded. **Fixed:** `_cleanup` now finalizes + queues the open segment (idempotent); also fires on clean stop. Especially relevant for flaky cameras (e.g. Alley's weak wifi) that reconnect often.
 - ⬜ **`buffered_frames` / `pre_motion_seconds` unimplemented.** `recorder.py:73` declared, never used → motion clips start late; documented knob silently does nothing.
 - ⬜ **`motion_timeout` config unused** (`recording_modes.py:53`); motion post-roll logic split between layers.
-- ⬜ **`23:59` schedule gap.** `recording_modes.py:253-257` inclusive end drops ~59s before midnight every day for "24/7" presets. **Fix:** `end=time(23,59,59)` or half-open interval.
+- ✅ **`23:59` schedule gap.** **Fixed:** full-day presets now end at `23:59:59`, closing the ~59s gap before midnight.
 - ⬜ **`frame_lock` held across queue ops** (`recorder.py:304`) contends with every live-view/motion reader. **Fix:** rely on `Queue`'s own locking.
 - ⬜ **MOG2 background subtractor built but never used** (`motion.py:41`) — dead per-camera memory; `sensitivity` overloaded.
-- ⬜ **Motion timing uses naive `datetime.now()`** (`motion.py:130`) — backward clock step makes a motion event never end.
+- ✅ **Motion timing clock-step.** **Fixed:** the cooldown now treats a negative elapsed (backward clock step) as expired, so a motion event can't hang forever.
 
 ### ⚪ Low
 - ⬜ Dead `import gc` + no-op per-frame `del` (`recorder.py:14,317`).
@@ -146,7 +146,7 @@ Severity: 🔴 Critical · 🟠 High · 🟡 Medium · ⚪ Low.
 - ⬜ Reserved-space math mixes `total` vs `used+free` denominators (`storage_manager.py:131`).
 - ⬜ `_cleanup_empty_dirs` may rmdir live camera/cache dirs (`disk_manager.py:138`).
 - ⬜ `db_maintenance` VACUUM holds exclusive lock vs live writers (`playback_db.py:752`).
-- ⬜ Config singleton: no thread-safety, non-atomic `save()` can corrupt YAML; malformed YAML crashes startup (`config.py:30,49`). **Fix:** RLock + tmp-file `os.replace`; try/except around `safe_load`.
+- ✅ **Config singleton hardening.** **Fixed:** `RLock` guards load/save/set; `save()` writes a temp file then `os.replace()`s atomically; `load()` wraps `safe_load` in try/except so malformed YAML logs+keeps last-good instead of crashing startup.
 - ⬜ Runtime storage-threshold edits don't take effect (captured at startup) (`api.py:145`).
 - ⬜ SD-card `fromisoformat` of untrusted ONVIF data unguarded; string min/max (`sd_card_manager.py:121,258`).
 
@@ -173,7 +173,7 @@ Severity: 🔴 Critical · 🟠 High · 🟡 Medium · ⚪ Low.
 
 ### 🟡 Medium
 - ⬜ Dead motion-visualization code — toggle exists, container never rendered (`playback.html:2203`).
-- ⬜ In-video MOTION/PERSON/VEHICLE indicator never lights — keyed by id but `motionEvents` keyed by name (`playback.html:2374`).
+- ✅ **In-video MOTION indicator** — **verified NOT a bug:** both `/api/playback/recordings` and `/api/playback/motion-events` key by `camera_id`, and the frontend looks up `motionEvents[cameraId]` consistently (confirmed with 67+ real events). The original finding assumed name-keying, which isn't how the backend groups.
 - ⬜ `selectedCameras` holds ids but loops name them "cameraName" (`playback.html:2718`).
 - ⬜ Timeline rebuilt wholesale on every AI toggle / tick (`playback.html:2044`). **Fix:** CSS class toggle + `DocumentFragment`.
 - ⬜ `enforceFutureLimits` uses browser TZ not America/Chicago (`playback.html:1613`).
@@ -199,7 +199,7 @@ Severity: 🔴 Critical · 🟠 High · 🟡 Medium · ⚪ Low.
 ### 🟠 High
 - ⬜ MJPEG `<img>` connection leak on rebuild (`index.html:1938,1626`) — `innerHTML=''` without aborting sockets exhausts Chrome's 6-conn limit. **Fix:** `img.src='about:blank'` before clearing.
 - ⬜ `setQuality` relies on global `event` (`index.html:1813`); also de-selects stream-mode buttons sharing `.quality-btn`.
-- ⬜ `/ws/events` motion socket has no reconnect (`index.html:2982`) — dies on first server restart; unguarded `JSON.parse`; selector injection via `e.camera`.
+- ✅ **`/ws/events` motion socket reconnect.** **Fixed:** auto-reconnect with capped backoff so the live motion overlay survives server restarts; `JSON.parse` guarded; selector uses `CSS.escape`.
 - ✅ No input validation on settings save — **Fixed:** `saveSettings` validates port/duration/retention/resolution/percent ranges (target < cleanup) and reserved space before POST; invalid input is reported and not saved.
 - ✅ `runManualCleanup` called non-existent `loadStorageStatus()` — **Fixed:** calls `updateStorageStatus()`.
 - ⬜ "Save Changes" hard-redirects to `/` with no success/restart feedback (`settings.html:1822`).

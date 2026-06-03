@@ -84,3 +84,27 @@ class TestStoragePathMountSafety:
         result = config.storage_path
         assert result == storage
         assert not storage.exists(), "storage_path silently recreated the mountpoint"
+
+
+@pytest.mark.unit
+class TestConfigRobustness:
+    """Malformed YAML must not crash startup; save must be atomic."""
+
+    def test_malformed_yaml_does_not_crash(self, tmp_path):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("cameras: [unterminated\n  bad: : :\n")  # invalid YAML
+        config = Config(config_path=str(cfg))  # must not raise
+        assert isinstance(config._config, dict)
+
+    def test_save_is_atomic_and_valid(self, tmp_path):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("recording:\n  storage_path: /tmp/x\ncameras: []\n")
+        config = Config(config_path=str(cfg))
+        config.set('web.port', 9999)
+        config.save()
+
+        # File is valid YAML with the new value, and no temp file was left behind
+        reloaded = yaml.safe_load(cfg.read_text())
+        assert reloaded['web']['port'] == 9999
+        leftovers = [p.name for p in tmp_path.iterdir() if p.name != 'config.yaml']
+        assert leftovers == [], f"temp files left behind: {leftovers}"

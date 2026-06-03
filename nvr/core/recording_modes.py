@@ -209,7 +209,7 @@ def create_weekend_schedule() -> TimeRange:
     """Create a weekend-only schedule (Saturday-Sunday, all day)"""
     return TimeRange(
         start=time(hour=0, minute=0),
-        end=time(hour=23, minute=59),
+        end=time(hour=23, minute=59, second=59),  # inclusive end — avoid a ~59s gap before midnight
         days=[5, 6]  # Saturday, Sunday
     )
 
@@ -252,7 +252,7 @@ def get_preset_schedules() -> Dict[str, List[TimeRange]]:
         "weekends_only": [create_weekend_schedule()],
         "24_7": [TimeRange(
             start=time(hour=0, minute=0),
-            end=time(hour=23, minute=59),
+            end=time(hour=23, minute=59, second=59),  # inclusive end — avoid a ~59s gap before midnight
             days=list(range(7))
         )]
     }

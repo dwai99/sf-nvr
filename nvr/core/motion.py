@@ -142,6 +142,10 @@ class MotionDetector:
             # No motion in this frame - check cooldown before ending event
             if self.motion_detected and self.last_motion_time:
                 time_since_motion = (now - self.last_motion_time).total_seconds()
+                # A DST/NTP backward step makes this negative; treat that as the
+                # cooldown having elapsed so a motion event can't hang forever.
+                if time_since_motion < 0:
+                    time_since_motion = MOTION_COOLDOWN_SECONDS
                 if time_since_motion >= MOTION_COOLDOWN_SECONDS:
                     # Cooldown expired, end the motion event
                     self._on_motion_stopped()

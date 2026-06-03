@@ -3,6 +3,8 @@
 import os
 import yaml
 import uuid
+import tempfile
+import threading
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from dotenv import load_dotenv
@@ -18,38 +20,62 @@ class Config:
         self.config_path = Path(config_path)
         self._config: Dict[str, Any] = {}
         self._storage_initialized = False
+        self._lock = threading.RLock()  # guards load/save/set across threads
         self.load()
 
     def load(self) -> None:
         """Load configuration from YAML file"""
-        if not self.config_path.exists():
-            import logging
-            logging.getLogger(__name__).warning(f"Config file not found: {self.config_path}, using defaults")
-            self._config = {}
-            return
-
-        with open(self.config_path, 'r') as f:
-            self._config = yaml.safe_load(f)
-
-        # Ensure config is always a dictionary (yaml returns None for empty files)
-        if self._config is None:
-            self._config = {}
-
-        # Ensure all cameras have unique IDs
-        self._ensure_camera_ids()
-
-    def save(self) -> None:
-        """Save current configuration to YAML file"""
         import logging
         logger = logging.getLogger(__name__)
-        logger.info(f"Saving config to {self.config_path}")
-        # Log camera names being saved
-        cameras = self._config.get('cameras', [])
-        camera_names = [c.get('name', 'unknown') for c in cameras]
-        logger.info(f"Camera names being saved: {camera_names}")
-        with open(self.config_path, 'w') as f:
-            yaml.dump(self._config, f, default_flow_style=False)
-        logger.info("Config saved successfully")
+        with self._lock:
+            if not self.config_path.exists():
+                logger.warning(f"Config file not found: {self.config_path}, using defaults")
+                self._config = {}
+                return
+
+            try:
+                with open(self.config_path, 'r') as f:
+                    loaded = yaml.safe_load(f)
+            except (yaml.YAMLError, OSError) as e:
+                # Don't crash the whole app on a malformed/locked config — keep
+                # whatever we already have (empty on first load) and log loudly.
+                logger.error(f"Failed to parse {self.config_path}: {e}. Keeping existing config.")
+                if not self._config:
+                    self._config = {}
+                return
+
+            # yaml returns None for an empty file
+            self._config = loaded if loaded is not None else {}
+
+            # Ensure all cameras have unique IDs
+            self._ensure_camera_ids()
+
+    def save(self) -> None:
+        """Save current configuration to YAML file (atomic)."""
+        import logging
+        logger = logging.getLogger(__name__)
+        with self._lock:
+            cameras = self._config.get('cameras', [])
+            camera_names = [c.get('name', 'unknown') for c in cameras]
+            logger.info(f"Saving config to {self.config_path} (cameras: {camera_names})")
+
+            # Write to a temp file in the same directory, then atomically replace.
+            # A concurrent reader (or a crash mid-write) never sees a half-written
+            # config.yaml, and the dump happens under the lock so a concurrent
+            # set()/add_camera() can't mutate the dict mid-serialization.
+            self.config_path.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp = tempfile.mkstemp(suffix='.yaml', dir=str(self.config_path.parent))
+            try:
+                with os.fdopen(fd, 'w') as f:
+                    yaml.dump(self._config, f, default_flow_style=False)
+                os.replace(tmp, str(self.config_path))
+            except Exception:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+                raise
+            logger.info("Config saved successfully")
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get config value by dot-notation key (e.g., 'recording.storage_path')"""
@@ -66,15 +92,16 @@ class Config:
 
     def set(self, key: str, value: Any) -> None:
         """Set config value by dot-notation key"""
-        keys = key.split('.')
-        config = self._config
+        with self._lock:
+            keys = key.split('.')
+            config = self._config
 
-        for k in keys[:-1]:
-            if k not in config:
-                config[k] = {}
-            config = config[k]
+            for k in keys[:-1]:
+                if k not in config:
+                    config[k] = {}
+                config = config[k]
 
-        config[keys[-1]] = value
+            config[keys[-1]] = value
 
     @property
     def storage_path(self) -> Path:
