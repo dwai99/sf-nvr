@@ -1138,6 +1138,15 @@
         }
 
         // Load cameras list
+        // Escape text before inserting into innerHTML. Camera names (settable via
+        // rename) and ONVIF device strings are untrusted; without this a crafted
+        // name like <img src=x onerror=...> executes script on this admin page.
+        function escapeHtml(s) {
+            return String(s == null ? '' : s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
         async function loadCameras() {
             const cameraList = document.getElementById('camera-list');
             cameraList.innerHTML = '';
@@ -1159,20 +1168,20 @@
                         <div class="drag-handle">⋮⋮</div>
                         <div class="camera-info">
                             <div class="camera-name">
-                                ${camera.name}
+                                ${escapeHtml(camera.name)}
                                 <span class="status-badge ${camera.enabled ? 'status-online' : 'status-offline'}">
                                     ${camera.enabled ? 'Enabled' : 'Disabled'}
                                 </span>
                             </div>
                             <div class="camera-details">
-                                ${camera.rtsp_url ? camera.rtsp_url.replace(/:[^:@]+@/, ':***@') : 'No RTSP URL'}
+                                ${camera.rtsp_url ? escapeHtml(camera.rtsp_url.replace(/:[^:@]+@/, ':***@')) : 'No RTSP URL'}
                             </div>
-                            ${camera.id ? `<div class="camera-details" style="color: #666; font-size: 0.85em; margin-top: 4px;">ID: ${camera.id}</div>` : ''}
+                            ${camera.id ? `<div class="camera-details" style="color: #666; font-size: 0.85em; margin-top: 4px;">ID: ${escapeHtml(camera.id)}</div>` : ''}
                         </div>
                     </div>
                     <div class="camera-actions">
-                        <button class="btn btn-secondary btn-sm" onclick="editCamera('${camera.name}')">Edit</button>
-                        <button class="btn btn-danger btn-sm" onclick="deleteCamera('${camera.name}')">Delete</button>
+                        <button class="btn btn-secondary btn-sm" onclick="editCamera(${index})">Edit</button>
+                        <button class="btn btn-danger btn-sm" onclick="deleteCamera(${index})">Delete</button>
                     </div>
                 `;
 
@@ -1442,11 +1451,11 @@
                             <tbody>
                                 ${history.history.map(entry => `
                                     <tr style="border-bottom: 1px solid #222;">
-                                        <td style="padding: 0.5rem; color: #4a9eff;">${entry.camera_name}</td>
-                                        <td style="padding: 0.5rem; color: #888;">${entry.file_path.split('/').pop()}</td>
+                                        <td style="padding: 0.5rem; color: #4a9eff;">${escapeHtml(entry.camera_name)}</td>
+                                        <td style="padding: 0.5rem; color: #888;">${escapeHtml(entry.file_path.split('/').pop())}</td>
                                         <td style="padding: 0.5rem; text-align: right;">${entry.file_size_mb} MB</td>
                                         <td style="padding: 0.5rem; color: #888;">${new Date(entry.deleted_at).toLocaleString()}</td>
-                                        <td style="padding: 0.5rem; color: #e74c3c;">${entry.deletion_reason || 'Unknown'}</td>
+                                        <td style="padding: 0.5rem; color: #e74c3c;">${escapeHtml(entry.deletion_reason || 'Unknown')}</td>
                                     </tr>
                                 `).join('')}
                             </tbody>
@@ -1528,7 +1537,7 @@
 
                     // Reload storage status after cleanup
                     setTimeout(() => {
-                        loadStorageStatus();
+                        updateStorageStatus();
                         resultSpan.textContent = '';
                     }, 3000);
                 } else {
@@ -1628,7 +1637,7 @@
                     <div style="background: #1a1a1a; padding: 15px; border-radius: 6px; border: 1px solid #333;">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
                             <div style="font-size: 1.1em; font-weight: bold; color: #4a9eff;">
-                                ${camera.camera_name}
+                                ${escapeHtml(camera.camera_name)}
                             </div>
                             <span style="font-size: 0.8em; color: ${mode === 'motion_only' ? '#4caf50' : '#888'};">
                                 ${mode === 'motion_only' ? 'Saving storage' : 'Recording continuously'}
@@ -1820,6 +1829,30 @@
                     cameras: config.cameras || [] // Keep existing cameras
                 };
 
+                // Validate before sending — a NaN/out-of-range value could write a
+                // config the server can't boot from (e.g. an invalid web port).
+                const errs = [];
+                const r = updatedConfig.recording, w = updatedConfig.web, st = updatedConfig.storage;
+                if (!Number.isInteger(w.port) || w.port < 1 || w.port > 65535) errs.push('Web port must be 1–65535');
+                if (!Number.isFinite(r.segment_duration) || r.segment_duration < 10 || r.segment_duration > 3600) errs.push('Segment duration must be 10–3600 seconds');
+                if (!Number.isInteger(r.retention_days) || r.retention_days < 1) errs.push('Retention days must be at least 1');
+                if (![360, 480, 720, 1080].includes(r.max_resolution)) errs.push('Max resolution must be 360, 480, 720, or 1080');
+                if (st.cleanup_threshold_percent !== undefined &&
+                    (!Number.isFinite(st.cleanup_threshold_percent) || st.cleanup_threshold_percent < 1 || st.cleanup_threshold_percent > 100))
+                    errs.push('Cleanup threshold must be 1–100%');
+                if (st.target_percent !== undefined &&
+                    (!Number.isFinite(st.target_percent) || st.target_percent < 1 || st.target_percent > 100))
+                    errs.push('Target percent must be 1–100%');
+                if (Number.isFinite(st.target_percent) && Number.isFinite(st.cleanup_threshold_percent) &&
+                    st.target_percent >= st.cleanup_threshold_percent)
+                    errs.push('Target percent must be below the cleanup threshold');
+                if (st.reserved_space_gb !== undefined && (!Number.isFinite(st.reserved_space_gb) || st.reserved_space_gb < 0))
+                    errs.push('Reserved space must be 0 or more GB');
+                if (errs.length) {
+                    showNotification('Invalid settings: ' + errs.join('; '), 'error', 7000);
+                    return;  // finally{} re-enables the button and dismisses the loader
+                }
+
                 const response = await fetch('/api/config', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1877,15 +1910,20 @@
                 const data = await response.json();
 
                 if (data.cameras && data.cameras.length > 0) {
-                    discoveredDiv.innerHTML = data.cameras.map(cam => `
-                        <div onclick="selectDiscoveredCamera(${JSON.stringify(cam).replace(/"/g, '&quot;')})"
+                    // Keep the objects and reference them by index — passing a
+                    // JSON blob through an HTML attribute (the old approach) both
+                    // broke on quotes and was an injection vector from a hostile
+                    // ONVIF device.
+                    window._discoveredCameras = data.cameras;
+                    discoveredDiv.innerHTML = data.cameras.map((cam, i) => `
+                        <div onclick="selectDiscoveredCamera(${i})"
                              style="padding: 0.6rem; background: #333; border-radius: 4px; margin-bottom: 0.5rem; cursor: pointer; transition: background 0.2s;"
                              onmouseover="this.style.background='#444'" onmouseout="this.style.background='#333'">
-                            <div style="font-weight: 500; color: #4a9eff;">${cam.name || 'Unknown Camera'}</div>
+                            <div style="font-weight: 500; color: #4a9eff;">${escapeHtml(cam.name || 'Unknown Camera')}</div>
                             <div style="font-size: 0.85em; color: #888;">
-                                ${cam.onvif_host || 'Unknown IP'}
-                                ${cam.device_info?.manufacturer ? ' - ' + cam.device_info.manufacturer : ''}
-                                ${cam.device_info?.model ? ' ' + cam.device_info.model : ''}
+                                ${escapeHtml(cam.onvif_host || 'Unknown IP')}
+                                ${cam.device_info?.manufacturer ? ' - ' + escapeHtml(cam.device_info.manufacturer) : ''}
+                                ${cam.device_info?.model ? ' ' + escapeHtml(cam.device_info.model) : ''}
                             </div>
                         </div>
                     `).join('');
@@ -1905,7 +1943,7 @@
                 console.error('Scan error:', error);
                 discoveredDiv.innerHTML = `
                     <div style="color: #e74c3c; font-size: 0.9em;">
-                        Scan failed: ${error.message}. Try entering details manually.
+                        Scan failed: ${escapeHtml(error.message)}. Try entering details manually.
                     </div>
                 `;
             } finally {
@@ -1914,7 +1952,9 @@
             }
         }
 
-        function selectDiscoveredCamera(camera) {
+        function selectDiscoveredCamera(index) {
+            const camera = (window._discoveredCameras || [])[index];
+            if (!camera) return;
             // Auto-fill the form with discovered camera details
             document.getElementById('modal-camera-name').value = camera.name || '';
             document.getElementById('modal-ip-address').value = camera.onvif_host || '';
@@ -2014,16 +2054,19 @@
             }
         }
 
-        function editCamera(name) {
+        function editCamera(index) {
             showNotification('Edit camera functionality coming soon!', 'info');
         }
 
-        async function deleteCamera(name) {
-            if (!confirm(`Are you sure you want to delete camera "${name}"?`)) {
+        async function deleteCamera(index) {
+            const cam = config.cameras[index];
+            if (!cam) return;
+            if (!confirm(`Are you sure you want to delete camera "${cam.name}"?`)) {
                 return;
             }
 
-            config.cameras = config.cameras.filter(c => c.name !== name);
+            // Remove by object identity (index-safe even if the list changed)
+            config.cameras = config.cameras.filter(c => c !== cam);
 
             try {
                 const response = await fetch('/api/config', {
@@ -2096,7 +2139,7 @@
                 return `
                 <div style="background: #1a1a1a; padding: 15px; border-radius: 6px; border: 1px solid #333;">
                     <div style="font-size: 1.1em; font-weight: bold; margin-bottom: 10px; color: #4a9eff;">
-                        ${camera.name}
+                        ${escapeHtml(camera.name)}
                     </div>
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
                         <div>
