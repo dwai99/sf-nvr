@@ -3,6 +3,7 @@
 import cv2
 import numpy as np
 import logging
+import threading
 from typing import Optional, Callable, List, Tuple
 from datetime import datetime
 import asyncio
@@ -47,6 +48,10 @@ class MotionDetector:
         # Previous frame for comparison
         self.prev_frame: Optional[np.ndarray] = None
 
+        # Serializes process_frame: the detector is shared between the motion
+        # monitor (now a worker thread) and the live-view overlay.
+        self._lock = threading.Lock()
+
         # Motion state
         self.motion_detected = False
         self.last_motion_time: Optional[datetime] = None
@@ -56,6 +61,15 @@ class MotionDetector:
         self.on_motion_end: Optional[Callable] = None
 
     def process_frame(self, frame: np.ndarray) -> Tuple[bool, List[Tuple[int, int, int, int]]]:
+        """Process a frame and detect motion (thread-safe wrapper).
+
+        Serializes access to prev_frame/state because the detector is shared
+        between the motion-monitor thread and the live-view overlay.
+        """
+        with self._lock:
+            return self._process_frame_impl(frame)
+
+    def _process_frame_impl(self, frame: np.ndarray) -> Tuple[bool, List[Tuple[int, int, int, int]]]:
         """
         Process a frame and detect motion
 
@@ -259,51 +273,56 @@ class MotionMonitor:
         """Get motion detector for a camera"""
         return self.detectors.get(camera_name)
 
+    # How often each camera's motion is sampled. A few checks/sec is ample for
+    # motion detection and keeps CPU/event-loop load low.
+    POLL_INTERVAL_SECONDS = 0.2
+
     async def monitor_recorder(
         self,
         camera_name: str,
         recorder,
-        check_interval: int = 1
+        check_interval: int = 1,  # deprecated/unused: we now skip unchanged frames
     ) -> None:
         """
-        Monitor motion from a recorder's frame queue
+        Monitor motion from a recorder's latest frame.
 
-        Args:
-            camera_name: Camera name
-            recorder: RTSPRecorder instance
-            check_interval: Frames to skip between checks
+        The heavy work (JPEG decode + contour detection) runs in a worker thread
+        via asyncio.to_thread so it never blocks the event loop, and we skip
+        frames we've already processed (get_latest_frame returns the cached frame
+        when no new one has arrived), avoiding redundant CPU on every tick.
         """
         detector = self.get_detector(camera_name)
         if not detector:
             logger.error(f"No motion detector for {camera_name}")
             return
 
-        frame_count = 0
+        last_processed = None  # identity of the last JPEG buffer we ran detection on
+
+        def _decode_and_process(jpeg_bytes):
+            # Runs off the event loop
+            nparr = np.frombuffer(jpeg_bytes, np.uint8)
+            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            if frame is None:
+                return None
+            return detector.process_frame(frame)
 
         while self.is_running:
             try:
-                # Get latest frame from recorder (JPEG bytes)
                 jpeg_data = recorder.get_latest_frame()
 
-                if jpeg_data is not None:
-                    # Decode JPEG bytes to numpy array for motion detection
-                    nparr = np.frombuffer(jpeg_data, np.uint8)
-                    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                # Only process genuinely new frames (get_latest_frame returns the
+                # same cached object when the queue is empty).
+                if jpeg_data is not None and jpeg_data is not last_processed:
+                    last_processed = jpeg_data
+                    result = await asyncio.to_thread(_decode_and_process, jpeg_data)
+                    if result:
+                        has_motion, boxes = result
+                        if has_motion:
+                            logger.debug(
+                                f"Motion on {camera_name}: {len(boxes)} area(s) detected"
+                            )
 
-                    if frame is not None:
-                        frame_count += 1
-
-                        # Only check every Nth frame to reduce CPU
-                        if frame_count % check_interval == 0:
-                            has_motion, boxes = detector.process_frame(frame)
-
-                            if has_motion:
-                                logger.debug(
-                                    f"Motion on {camera_name}: "
-                                    f"{len(boxes)} area(s) detected"
-                                )
-
-                await asyncio.sleep(0.01)  # Small delay to prevent busy loop
+                await asyncio.sleep(self.POLL_INTERVAL_SECONDS)
 
             except Exception as e:
                 logger.error(f"Error monitoring motion for {camera_name}: {e}")
