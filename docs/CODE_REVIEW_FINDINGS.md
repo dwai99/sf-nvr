@@ -276,6 +276,23 @@ canvas to `scale(2.25)` with finite translate, reset returns to 100%, 0 console
 errors. Playback box-zoom uses a real `<video>` element and was verified
 already working (unchanged).
 
+### Changelog (2026-06-03 — fullscreen showed the wrong camera)
+
+Clicking a camera in live view opens a shared fullscreen modal that draws frames
+onto one `#fullscreen-canvas`. `goFullscreen()` never cleared it between cameras,
+so opening a camera that's slow to deliver its first frame (e.g. weak-signal
+Alley) left the PREVIOUS camera's frozen frame on screen while the title showed
+the new camera — i.e. "wrong camera". (The card wiring was correct — verified
+Alley's card passes its own id.)
+
+| File | Change |
+|------|--------|
+| `nvr/templates/index.html` | `goFullscreen()` clears the canvas + resets the `<img>` src (and resets zoom) on open, so a stalled camera shows black/loading, never the previously-viewed camera's image |
+
+Verified in a real browser: after painting a frame for camera A and switching to
+weak-signal camera B, the canvas is cleared (B no longer shows A's frame); 0
+console errors.
+
 ### Tests
 - `test_config.py::TestStorageWritability` / `TestStoragePathMountSafety` — `is_storage_writable` true/false/no-mkdir; `storage_path` creates once, doesn't recreate after unmount.
 - `test_recorder.py::TestWriteFailureDetection` — `_check_segment_growth` baseline reset, growth→healthy, no-growth→write_failed, missing-file→write_failed, sampling gate.

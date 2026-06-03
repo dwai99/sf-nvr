@@ -2413,6 +2413,17 @@
             }
             fullscreenWs = null;
 
+            // Clear the previously-viewed camera's last frame. Without this, a
+            // camera that's slow to deliver its first frame (e.g. weak-signal
+            // Alley) keeps showing the PREVIOUS camera's frozen image while the
+            // title says the new camera — i.e. "wrong camera".
+            try {
+                const fsCtx = streamCanvas.getContext('2d');
+                fsCtx.clearRect(0, 0, streamCanvas.width, streamCanvas.height);
+            } catch (e) {}
+            streamImg.removeAttribute('src');
+            if (typeof resetZoom === 'function') resetZoom();  // don't carry zoom between cameras
+
             cameraNameElem.textContent = cameraName;
             statusElem.textContent = 'Loading...';
             fullscreenCameraId = cameraId;
