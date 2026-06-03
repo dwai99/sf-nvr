@@ -11,7 +11,6 @@ from datetime import datetime, timedelta
 import threading
 import queue
 import time
-import gc
 
 # Set OpenCV FFmpeg options for TCP RTSP transport BEFORE any OpenCV usage
 # This MUST be set before cv2.VideoCapture is called
@@ -357,13 +356,6 @@ class RTSPRecorder:
                                     pass
                             # Always update last_frame for fallback
                             self.last_frame = jpeg_data
-
-                # CRITICAL: Explicitly delete to free memory immediately
-                del jpeg_bytes
-
-                # CRITICAL: Explicitly delete frame to free memory immediately
-                # Without this, Python's garbage collector may not free memory fast enough
-                del frame
             except Exception as _frame_err:
                 # A single bad/corrupt frame (common on weak-signal cameras)
                 # must not tear down the capture session and force a full
@@ -696,45 +688,6 @@ class RTSPRecorder:
             if not self.is_recording:
                 break
             threading.Event().wait(0.1)  # 100ms intervals instead of 1s
-
-    def _is_frame_corrupted(self, frame: np.ndarray) -> bool:
-        """Check if frame appears corrupted (decode artifacts)
-
-        Corrupted frames from H.264/H.265 decode errors often have:
-        - Excessive green (common decode error color)
-        - Large uniform blocks (macroblocking)
-        - Very low entropy
-
-        Returns True if frame appears corrupted.
-        """
-        try:
-            # Sample a small region (center 100x100) for speed
-            h, w = frame.shape[:2]
-            cy, cx = h // 2, w // 2
-            sample = frame[cy-50:cy+50, cx-50:cx+50]
-
-            if sample.size == 0:
-                return False
-
-            # Check for excessive green (BGR format)
-            # Green decode errors have high G, low R/B
-            b, g, r = cv2.split(sample)
-            mean_g = np.mean(g)
-            mean_r = np.mean(r)
-            mean_b = np.mean(b)
-
-            # If green dominates significantly, likely corrupted
-            if mean_g > 150 and mean_g > (mean_r + 30) and mean_g > (mean_b + 30):
-                return True
-
-            # Check for uniform color (low variance = likely solid block)
-            variance = np.var(sample)
-            if variance < 50:  # Very uniform = likely corrupted
-                return True
-
-            return False
-        except Exception:
-            return False  # On error, assume frame is okay
 
     def get_latest_frame(self) -> Optional[bytes]:
         """Get the latest frame from the stream (for live view)

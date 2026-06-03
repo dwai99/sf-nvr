@@ -535,71 +535,6 @@
         }
 
         /* Motion visualization layer above timeline */
-        .motion-visualization {
-            position: absolute;
-            bottom: 100%;
-            left: 0;
-            right: 0;
-            height: 30px;
-            margin-bottom: 5px;
-            pointer-events: none;
-        }
-
-        .motion-bar {
-            position: absolute;
-            bottom: 0;
-            height: 100%;
-            background: linear-gradient(to top, rgba(255, 77, 77, 0.8), rgba(255, 77, 77, 0.3));
-            border-radius: 2px 2px 0 0;
-            transition: opacity 0.2s;
-        }
-
-        .motion-bar.low {
-            height: 30%;
-            background: linear-gradient(to top, rgba(76, 175, 80, 0.6), rgba(76, 175, 80, 0.2));
-        }
-
-        .motion-bar.medium {
-            height: 60%;
-            background: linear-gradient(to top, rgba(255, 152, 0, 0.7), rgba(255, 152, 0, 0.3));
-        }
-
-        .motion-bar.high {
-            height: 100%;
-            background: linear-gradient(to top, rgba(244, 67, 54, 0.8), rgba(244, 67, 54, 0.3));
-        }
-
-        .motion-bar.ai-detection {
-            background: linear-gradient(to top, rgba(156, 39, 176, 0.8), rgba(156, 39, 176, 0.3));
-        }
-
-        /* Toggle button for motion visualization */
-        .motion-viz-toggle {
-            background: #333;
-            border: 1px solid #4a9eff;
-            color: #e0e0e0;
-            padding: 6px 12px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 13px;
-            margin-left: 10px;
-            transition: all 0.2s;
-        }
-
-        .motion-viz-toggle.active {
-            background: #4a9eff;
-            color: white;
-        }
-
-        .motion-viz-toggle:hover {
-            background: #444;
-            border-color: #5aafff;
-        }
-
-        .motion-viz-toggle.active:hover {
-            background: #5aafff;
-        }
-
         .timeline-handle {
             position: absolute;
             bottom: 11px;  /* Align with track */
@@ -1403,8 +1338,7 @@
             startTime: null,
             endTime: null,
             isDragging: false,
-            showAIDetections: true,
-            showMotionVisualization: true
+            showAIDetections: true
         };
 
         async function init() {
@@ -2200,136 +2134,10 @@
                 });
             });
 
-            // Render motion visualization bars
-            renderMotionVisualization();
-
             // Update time labels
             document.getElementById('start-label').textContent = formatTime(playbackState.startTime);
             document.getElementById('end-label').textContent = formatTime(playbackState.endTime);
             document.getElementById('total-time-display').textContent = formatDuration(rangeMs / 1000);
-        }
-
-        function renderMotionVisualization() {
-            const vizContainer = document.getElementById('motion-visualization');
-            if (!vizContainer) return;
-
-            // Clear existing bars
-            vizContainer.innerHTML = '';
-
-            // Don't render if visualization is disabled
-            if (!playbackState.showMotionVisualization) {
-                vizContainer.style.display = 'none';
-                return;
-            }
-            vizContainer.style.display = 'block';
-
-            if (!playbackState.startTime || !playbackState.endTime) return;
-
-            const startMs = new Date(playbackState.startTime).getTime();
-            const endMs = new Date(playbackState.endTime).getTime();
-            const rangeMs = endMs - startMs;
-
-            // Group motion events into time buckets for visualization
-            const bucketSize = Math.max(5000, rangeMs / 100); // At least 5 seconds, max 100 buckets
-            const buckets = new Map();
-
-            // Helper to check if time is within recording segments
-            function isTimeWithinRecordings(timeMs, cameraId) {
-                const segments = currentRecordings[cameraId] || [];
-                return segments.some(seg => {
-                    const segStart = new Date(seg.start_time).getTime();
-                    const segEnd = new Date(seg.end_time).getTime();
-                    return timeMs >= segStart && timeMs <= segEnd;
-                });
-            }
-
-            // Collect all motion events across selected cameras
-            Object.keys(motionEvents).forEach(cameraName => {
-                const cameraId = getCameraId(cameraName);
-                if (!selectedCameras.has(cameraId)) return;
-
-                motionEvents[cameraName].forEach(event => {
-                    const eventTime = new Date(event.event_time).getTime();
-
-                    // Only include events within available recordings
-                    if (!isTimeWithinRecordings(eventTime, cameraId)) {
-                        return;
-                    }
-
-                    // Calculate which bucket this event belongs to
-                    const bucketIndex = Math.floor((eventTime - startMs) / bucketSize);
-
-                    if (!buckets.has(bucketIndex)) {
-                        buckets.set(bucketIndex, {
-                            count: 0,
-                            hasAI: false,
-                            startTime: startMs + (bucketIndex * bucketSize),
-                            endTime: startMs + ((bucketIndex + 1) * bucketSize)
-                        });
-                    }
-
-                    const bucket = buckets.get(bucketIndex);
-                    bucket.count++;
-
-                    // Check if this bucket has AI detections
-                    const isAIDetection = event.event_type === 'ai_person' || event.event_type === 'ai_vehicle';
-                    if (isAIDetection) {
-                        bucket.hasAI = true;
-                    }
-                });
-            });
-
-            // Render motion bars
-            buckets.forEach((bucket, index) => {
-                const position = ((bucket.startTime - startMs) / rangeMs) * 100;
-                const width = (bucketSize / rangeMs) * 100;
-
-                if (position >= 0 && position <= 100) {
-                    const bar = document.createElement('div');
-                    bar.className = 'motion-bar';
-
-                    // Determine intensity level
-                    if (bucket.hasAI) {
-                        bar.classList.add('ai-detection');
-                        bar.title = `AI Detection (${bucket.count} events)`;
-                    } else if (bucket.count >= 5) {
-                        bar.classList.add('high');
-                        bar.title = `High Motion (${bucket.count} events)`;
-                    } else if (bucket.count >= 2) {
-                        bar.classList.add('medium');
-                        bar.title = `Medium Motion (${bucket.count} events)`;
-                    } else {
-                        bar.classList.add('low');
-                        bar.title = `Low Motion (${bucket.count} event${bucket.count > 1 ? 's' : ''})`;
-                    }
-
-                    bar.style.left = position + '%';
-                    bar.style.width = width + '%';
-
-                    vizContainer.appendChild(bar);
-                }
-            });
-        }
-
-        function toggleMotionVisualization() {
-            playbackState.showMotionVisualization = !playbackState.showMotionVisualization;
-            renderMotionVisualization();
-        }
-
-        function toggleMotionVizSwitch() {
-            const checkbox = document.getElementById('show-motion-viz');
-            const toggleSwitch = document.getElementById('motion-viz-switch');
-
-            checkbox.checked = !checkbox.checked;
-            playbackState.showMotionVisualization = checkbox.checked;
-
-            if (checkbox.checked) {
-                toggleSwitch.classList.add('active');
-            } else {
-                toggleSwitch.classList.remove('active');
-            }
-
-            renderMotionVisualization();
         }
 
         function formatTime(isoString) {

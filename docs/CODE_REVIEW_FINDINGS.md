@@ -47,15 +47,15 @@ Severity: 🔴 Critical · 🟠 High · 🟡 Medium · ⚪ Low.
 - ⬜ **`motion_timeout` config unused** (`recording_modes.py:53`); motion post-roll logic split between layers.
 - ✅ **`23:59` schedule gap.** **Fixed:** full-day presets now end at `23:59:59`, closing the ~59s gap before midnight.
 - ⬜ **`frame_lock` held across queue ops** (`recorder.py:304`) contends with every live-view/motion reader. **Fix:** rely on `Queue`'s own locking.
-- ⬜ **MOG2 background subtractor built but never used** (`motion.py:41`) — dead per-camera memory; `sensitivity` overloaded.
+- ✅ MOG2 background subtractor (built, never used) — **removed** from `__init__` and `reset()`.
 - ✅ **Motion timing clock-step.** **Fixed:** the cooldown now treats a negative elapsed (backward clock step) as expired, so a motion event can't hang forever.
 
 ### ⚪ Low
-- ⬜ Dead `import gc` + no-op per-frame `del` (`recorder.py:14,317`).
-- ⬜ `_is_frame_corrupted` dead code (`recorder.py:548-585`).
+- ✅ Dead `import gc` + no-op per-frame `del` — **removed**.
+- ✅ `_is_frame_corrupted` dead method — **removed**.
 - ⬜ `cleanup_old_recordings` deletes files but not DB rows (`recorder.py:740`).
 - ⬜ Deprecated `stimeout` in RTSP options (`recorder.py:18`).
-- ⬜ Transcoder `priority=True` accepted but ignored (`transcoder.py:87`).
+- ✅ Transcoder `priority` param (accepted but ignored) — **removed** (no callers used it).
 - ⬜ `log_motion_event()` double-counts first motion frame (`motion.py:137`).
 
 ---
@@ -172,7 +172,7 @@ Severity: 🔴 Critical · 🟠 High · 🟡 Medium · ⚪ Low.
 - ✅ **Export reports success on failure** (`playback.html:3335`) — looped `a.click()` (browsers drop all but first), no response check, always-green toast. **Fixed:** `performExport` now fetches each camera, checks `response.ok`, downloads via blob URL (revoked after), and reports per-camera success/failure counts.
 
 ### 🟡 Medium
-- ⬜ Dead motion-visualization code — toggle exists, container never rendered (`playback.html:2203`).
+- ✅ Dead motion-visualization code — **removed** (functions, call site, CSS, and the orphaned `showMotionVisualization` state).
 - ✅ **In-video MOTION indicator** — **verified NOT a bug:** both `/api/playback/recordings` and `/api/playback/motion-events` key by `camera_id`, and the frontend looks up `motionEvents[cameraId]` consistently (confirmed with 67+ real events). The original finding assumed name-keying, which isn't how the backend groups.
 - ⬜ `selectedCameras` holds ids but loops name them "cameraName" (`playback.html:2718`).
 - ⬜ Timeline rebuilt wholesale on every AI toggle / tick (`playback.html:2044`). **Fix:** CSS class toggle + `DocumentFragment`.

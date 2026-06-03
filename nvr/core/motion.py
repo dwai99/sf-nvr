@@ -38,13 +38,6 @@ class MotionDetector:
         self.camera_name = camera_name
         self.recorder = recorder
 
-        # Background subtractor
-        self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(
-            history=500,
-            varThreshold=sensitivity,
-            detectShadows=True
-        )
-
         # Previous frame for comparison
         self.prev_frame: Optional[np.ndarray] = None
 
@@ -227,11 +220,6 @@ class MotionDetector:
         """Reset motion detector state"""
         self.prev_frame = None
         self.motion_detected = False
-        self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(
-            history=500,
-            varThreshold=self.sensitivity,
-            detectShadows=True
-        )
 
 
 class MotionMonitor:

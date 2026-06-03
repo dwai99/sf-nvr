@@ -53,13 +53,6 @@ class TestMotionDetectorInit:
         detector = MotionDetector(blur_size=19)
         assert detector.blur_size == 19
 
-    def test_init_creates_background_subtractor(self):
-        """Test that background subtractor is created"""
-        detector = MotionDetector()
-
-        assert detector.bg_subtractor is not None
-        assert hasattr(detector.bg_subtractor, 'apply')
-
 
 @pytest.mark.unit
 class TestMotionDetection:
@@ -416,18 +409,6 @@ class TestMotionDetectorReset:
         # State should be cleared
         assert detector.prev_frame is None
         assert detector.motion_detected is False
-
-    def test_reset_recreates_background_subtractor(self):
-        """Test that reset recreates background subtractor"""
-        detector = MotionDetector()
-
-        old_subtractor = detector.bg_subtractor
-
-        # Reset
-        detector.reset()
-
-        # Should have new subtractor
-        assert detector.bg_subtractor is not old_subtractor
 
 
 @pytest.mark.unit

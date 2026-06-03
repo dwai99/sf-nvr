@@ -150,7 +150,7 @@ def main():
         timeout_graceful_shutdown=30,  # Allow recorders to finalize MP4 headers
         reload=dev_mode,  # Enable auto-reload in dev mode
         reload_dirs=["nvr"] if dev_mode else None,  # Watch nvr directory
-        workers=workers,  # Multiple workers for better performance
+        workers=workers,  # always 1 — recorders hold frames in-process (see above)
         backlog=2048,  # Increase connection backlog
         timeout_keep_alive=5  # Keep connections alive for better performance
     )

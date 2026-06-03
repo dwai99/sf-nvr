@@ -66,13 +66,12 @@ class BackgroundTranscoder:
         self.workers.clear()
         logger.info("Stopped transcoder workers")
 
-    def queue_transcode(self, source_path: Path, priority: bool = False):
+    def queue_transcode(self, source_path: Path):
         """
         Queue a video file for transcoding
 
         Args:
             source_path: Path to the source video file
-            priority: If True, add to front of queue
         """
         if not source_path.exists():
             logger.warning(f"Cannot transcode non-existent file: {source_path}")
@@ -84,13 +83,7 @@ class BackgroundTranscoder:
             logger.debug(f"Already transcoded: {source_path.name}")
             return
 
-        # Queue for transcoding
-        if priority:
-            # For priority items, we'd need a PriorityQueue - for now just log
-            logger.info(f"Priority transcode queued: {source_path.name}")
-        else:
-            logger.info(f"Transcode queued: {source_path.name}")
-
+        logger.info(f"Transcode queued: {source_path.name}")
         self.transcode_queue.put(source_path)
 
     def _detect_best_encoder(self) -> Tuple[str, List[str]]:
