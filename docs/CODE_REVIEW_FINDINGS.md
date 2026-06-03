@@ -200,8 +200,8 @@ Severity: 🔴 Critical · 🟠 High · 🟡 Medium · ⚪ Low.
 - ⬜ MJPEG `<img>` connection leak on rebuild (`index.html:1938,1626`) — `innerHTML=''` without aborting sockets exhausts Chrome's 6-conn limit. **Fix:** `img.src='about:blank'` before clearing.
 - ⬜ `setQuality` relies on global `event` (`index.html:1813`); also de-selects stream-mode buttons sharing `.quality-btn`.
 - ⬜ `/ws/events` motion socket has no reconnect (`index.html:2982`) — dies on first server restart; unguarded `JSON.parse`; selector injection via `e.camera`.
-- ⬜ No input validation on settings save (`settings.html:1770`) — NaN/out-of-range → corrupt config, possible boot failure.
-- ⬜ `runManualCleanup` calls non-existent `loadStorageStatus()` (`settings.html:1531`) — cleanup errors after appearing to succeed. **Fix:** `updateStorageStatus()`.
+- ✅ No input validation on settings save — **Fixed:** `saveSettings` validates port/duration/retention/resolution/percent ranges (target < cleanup) and reserved space before POST; invalid input is reported and not saved.
+- ✅ `runManualCleanup` called non-existent `loadStorageStatus()` — **Fixed:** calls `updateStorageStatus()`.
 - ⬜ "Save Changes" hard-redirects to `/` with no success/restart feedback (`settings.html:1822`).
 
 ### 🟡 Medium
@@ -210,7 +210,7 @@ Severity: 🔴 Critical · 🟠 High · 🟡 Medium · ⚪ Low.
 - ⬜ Per-`<img>` handler closures never cleared (`index.html:2118`).
 - ⬜ WebRTC reconnect can spawn parallel connections (`webrtc-client.js:141`).
 - ⬜ Camera reorder has no own save path; indices stale (`settings.html:1218`).
-- ⬜ `selectDiscoveredCamera` hand-rolled JSON-in-attribute escaping (`settings.html:1872`).
+- ✅ `selectDiscoveredCamera` hand-rolled JSON-in-attribute escaping — **Fixed:** discovered cameras referenced by index, not an interpolated JSON blob.
 - ⬜ No empty/error/loading states for stats/async sections (`settings.html:1252`).
 - ⬜ `ui-utils.js` 2s `initTooltips` DOM sweep forever (`:580`); modal Escape listener leaks (`:379`).
 - ⬜ `fullscreen.html` hardcoded "RECORDING" status, MJPEG-only, 10s reload recovery (`:167`).
@@ -222,7 +222,7 @@ Severity: 🔴 Critical · 🟠 High · 🟡 Medium · ⚪ Low.
 - ⬜ `fullscreen.html` contextmenu hijacked to navigate home (`:227`).
 
 ### Cross-cutting frontend
-- ⬜ `escapeHtml` defined only in `index.html` but needed in `settings.html`.
+- ✅ `escapeHtml` now defined in `settings.html` too and applied to interpolated strings.
 - ⬜ `safeId` regex duplicated 4+ ways (one variant causes the reconnect bug). **Fix:** centralize.
 - ⬜ No `document.hidden` gating on any poller.
 
