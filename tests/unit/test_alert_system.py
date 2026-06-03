@@ -410,3 +410,63 @@ class TestAlertEdgeCases:
         )
 
         assert alert.details == {}  # Should default to empty dict
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+class TestWriteFailureAlerts:
+    """Alerts for the silent-recording-failure class (2026-06-02 fix).
+
+    Before this, health/alerts only looked at disk usage, so a camera that was
+    connected but not writing to disk produced no alert.
+    """
+
+    async def test_write_failed_status_fires_critical_alert(self, alert_system):
+        """status == 'write_failed' raises a CRITICAL CAMERA_WRITE_FAILED alert."""
+        await alert_system.check_camera_health('cam', {'status': 'healthy'})  # baseline
+
+        await alert_system.check_camera_health('cam', {'status': 'write_failed'})
+
+        assert len(alert_system.alerts) == 1
+        assert alert_system.alerts[0].alert_type == AlertType.CAMERA_WRITE_FAILED
+        assert alert_system.alerts[0].level == AlertLevel.CRITICAL
+
+    async def test_recovery_from_write_failed(self, alert_system):
+        """write_failed -> healthy raises a recovery alert."""
+        await alert_system.check_camera_health('cam', {'status': 'write_failed'})  # baseline
+        await alert_system.check_camera_health('cam', {'status': 'healthy'})
+
+        assert any(a.alert_type == AlertType.CAMERA_RECOVERED for a in alert_system.alerts)
+
+    async def test_storage_unwritable_fires_critical(self, alert_system):
+        """A failing writability probe raises STORAGE_UNWRITABLE."""
+        await alert_system.check_storage_writable(False)
+
+        assert len(alert_system.alerts) == 1
+        assert alert_system.alerts[0].alert_type == AlertType.STORAGE_UNWRITABLE
+        assert alert_system.alerts[0].level == AlertLevel.CRITICAL
+
+    async def test_storage_writable_initially_no_alert(self, alert_system):
+        """A healthy probe on first run does not alert."""
+        await alert_system.check_storage_writable(True)
+
+        assert len(alert_system.alerts) == 0
+
+    async def test_storage_unwritable_then_recovers(self, alert_system):
+        """unwritable -> writable raises a recovery (info) alert."""
+        await alert_system.check_storage_writable(False)
+        await alert_system.check_storage_writable(True)
+
+        # First the critical, then a recovery info alert
+        types = [a.alert_type for a in alert_system.alerts]
+        assert AlertType.STORAGE_UNWRITABLE in types
+        assert alert_system.alerts[-1].level == AlertLevel.INFO
+
+    async def test_storage_unwritable_not_repeated_while_still_failing(self, alert_system):
+        """Staying unwritable does not re-fire on every check (only on transition)."""
+        await alert_system.check_storage_writable(False)
+        await alert_system.check_storage_writable(False)
+
+        unwritable = [a for a in alert_system.alerts
+                      if a.alert_type == AlertType.STORAGE_UNWRITABLE]
+        assert len(unwritable) == 1

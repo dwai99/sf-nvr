@@ -1062,8 +1062,13 @@ async def generate_timelapse(
 
 
 @router.post("/api/playback/export")
-async def export_clip(request: PlaybackRequest):
-    """Export a video clip for a specific time range"""
+async def export_clip(request: PlaybackRequest, req: Request, background_tasks: BackgroundTasks):
+    """Export a video clip for a specific time range.
+
+    Delegates to the streaming endpoint with the correct keyword arguments
+    (previously passed positionally, which bound the start_time string to the
+    `request`/`background_tasks` params and made every export 500).
+    """
     from nvr.web.api import playback_db
 
     try:
@@ -1084,13 +1089,19 @@ async def export_clip(request: PlaybackRequest):
         if not segments:
             raise HTTPException(status_code=404, detail="No recordings found")
 
-        # Use the stream endpoint to get the video
+        # Reuse the streaming pipeline (handles transcode + range) with the
+        # real Request/BackgroundTasks objects FastAPI injected here.
         return await stream_video_segment(
-            request.camera_id,
-            request.start_time,
-            request.end_time
+            camera_id=request.camera_id,
+            request=req,
+            background_tasks=background_tasks,
+            start_time=request.start_time,
+            end_time=request.end_time,
+            speed=request.speed,
         )
 
+    except HTTPException:
+        raise  # don't mask 404/202 from the streaming pipeline as a 500
     except Exception as e:
         logger.error(f"Error exporting clip: {e}")
         raise HTTPException(status_code=500, detail=str(e))

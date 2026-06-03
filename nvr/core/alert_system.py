@@ -22,8 +22,10 @@ class AlertType(Enum):
     CAMERA_OFFLINE = "camera_offline"
     CAMERA_DEGRADED = "camera_degraded"
     CAMERA_RECOVERED = "camera_recovered"
+    CAMERA_WRITE_FAILED = "camera_write_failed"
     STORAGE_LOW = "storage_low"
     STORAGE_CRITICAL = "storage_critical"
+    STORAGE_UNWRITABLE = "storage_unwritable"
     DATABASE_ERROR = "database_error"
     SYSTEM_ERROR = "system_error"
 
@@ -120,6 +122,7 @@ class AlertSystem:
 
         # Camera state tracking
         self.camera_states: Dict[str, str] = {}  # camera_name -> status
+        self.storage_writable: Optional[bool] = None  # track unwritable transitions
 
     def add_handler(self, handler: AlertHandler):
         """Add an alert handler"""
@@ -174,7 +177,16 @@ class AlertSystem:
             return
 
         # Alert on status changes
-        if status == 'stopped' and previous_status != 'stopped':
+        if status == 'write_failed' and previous_status != 'write_failed':
+            await self.send_alert(Alert(
+                alert_type=AlertType.CAMERA_WRITE_FAILED,
+                level=AlertLevel.CRITICAL,
+                message=f"Camera {camera_name} is NOT writing to disk - recordings are being lost",
+                camera_name=camera_name,
+                details={'previous_status': previous_status}
+            ))
+
+        elif status == 'stopped' and previous_status != 'stopped':
             await self.send_alert(Alert(
                 alert_type=AlertType.CAMERA_OFFLINE,
                 level=AlertLevel.ERROR,
@@ -206,7 +218,7 @@ class AlertSystem:
                 }
             ))
 
-        elif status == 'healthy' and previous_status in ['stopped', 'degraded', 'stale']:
+        elif status == 'healthy' and previous_status in ['stopped', 'degraded', 'stale', 'write_failed']:
             await self.send_alert(Alert(
                 alert_type=AlertType.CAMERA_RECOVERED,
                 level=AlertLevel.INFO,
@@ -230,6 +242,31 @@ class AlertSystem:
                 level=AlertLevel.WARNING,
                 message=f"Storage running low: {disk_percent:.1f}% used, {free_gb:.1f} GB free",
                 details={'disk_percent': disk_percent, 'free_gb': free_gb}
+            ))
+
+    async def check_storage_writable(self, writable: bool):
+        """Alert when the storage volume can't actually be written to.
+
+        Disk-usage numbers stay healthy when a volume is read-only / unmounted /
+        permission-revoked, so this is the signal that actually catches the
+        "everything looks fine but nothing is recording" failure mode.
+        """
+        was_writable = self.storage_writable
+        self.storage_writable = writable
+
+        if not writable and was_writable is not False:
+            await self.send_alert(Alert(
+                alert_type=AlertType.STORAGE_UNWRITABLE,
+                level=AlertLevel.CRITICAL,
+                message="Storage volume is NOT writable - recordings cannot be saved",
+                details={'writable': False}
+            ))
+        elif writable and was_writable is False:
+            await self.send_alert(Alert(
+                alert_type=AlertType.SYSTEM_ERROR,
+                level=AlertLevel.INFO,
+                message="Storage volume is writable again",
+                details={'writable': True}
             ))
 
 

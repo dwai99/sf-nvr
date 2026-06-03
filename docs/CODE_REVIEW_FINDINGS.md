@@ -1,0 +1,270 @@
+# NVR Code Review — Findings
+
+Comprehensive review of ~21k lines (10k Python, 11.5k templates/JS) conducted 2026-06-02 across 6 subsystems. Findings are grouped by area, with severity, `file:line`, the problem, and the fix. Status legend:
+
+- ✅ **FIXED** — addressed in the 2026-06-02 session (see [Changelog](#changelog-2026-06-02)).
+- ⬜ **OPEN** — not yet addressed.
+
+Severity: 🔴 Critical · 🟠 High · 🟡 Medium · ⚪ Low.
+
+> Methodology note: every concrete runtime claim below was verified against source (9/9 spot-checks confirmed). Line numbers drift as the code changes — search by symbol if a line doesn't match.
+
+---
+
+## Top priorities (cross-cutting, deduplicated)
+
+| # | Sev | Status | Issue | Where |
+|---|-----|--------|-------|-------|
+| 1 | 🔴 | ⬜ | No authentication on any endpoint + CORS `*` + bind `0.0.0.0` | `api.py:34`, `main.py:126` |
+| 2 | 🔴 | ✅ | Camera credentials (rtsp_url w/ password) sent to every browser | `api.py:565`, `settings.html` |
+| 3 | 🔴 | ✅ | `config.save_config()` doesn't exist → settings saves 500 | `settings_api.py:199,273` |
+| 4 | 🔴 | ✅ | `get_camera_health` NameError → endpoint always 500s | `api.py:621` |
+| 5 | 🔴 | ✅ | `live_stream` NameError on motion path | `api.py:934` |
+| 6 | 🔴 | ✅ | `export_clip` misbinds positional args → export always 500s | `playback_api.py:1088` |
+| 7 | 🔴 | ✅ | Health & alerts ignore `write_failed` (silent-outage blind spot) | `api.py`, `alert_system.py` |
+| 8 | 🔴 | ✅ | `write_failed` missed mid-segment write loss | `recorder.py` |
+| 9 | 🔴 | ✅ | `config.storage_path` recreates mountpoint on every access | `config.py` |
+| 10 | 🔴 | ✅* | DiskManager ignores retention / deletes active segment / spins on EPERM (*engine consolidation still open) | `storage_manager.py`, `disk_manager.py` |
+| 11 | 🔴 | ⬜ | No authentication on any endpoint + CORS `*` + bind `0.0.0.0` | `api.py:34`, `main.py:126` |
+
+---
+
+## Recording pipeline (`recorder.py`, `transcoder.py`, `motion.py`, `recording_modes.py`)
+
+### 🔴 Critical
+- ✅ **Mid-segment silent write loss.** `write_failed` was `self.writer is None`, only set when a *new* segment fails to open. A volume going read-only mid-segment leaves `writer` non-None while `write()` silently no-ops → up to 5 min of green "REC" with zero bytes. **Fixed:** added `_check_segment_growth()` sampling the segment file size every ~20s; flags `write_failed` if it stops growing or vanishes.
+- ⬜ **Motion detection blocks the event loop.** `motion.py:283` runs `cv2.imdecode` + full contour detection synchronously on the asyncio loop, `check_interval=1` (every frame × every camera), and re-decodes the same cached frame every 10ms when idle. *Single biggest perf problem.* **Fix:** run per-camera motion in a thread (`asyncio.to_thread`); raise `check_interval`; skip unchanged frames (return a frame-id from `get_latest_frame`).
+
+### 🟠 High
+- ⬜ **DST / clock-step corruption.** Naive `datetime.now()` subtraction (`recorder.py:402,432,622`) yields negative durations; wall-clock filenames collide and `INSERT OR REPLACE` (`playback_db.py`) overwrites the earlier segment's row *and* file. **Fix:** `time.monotonic()` for durations; uniquify filenames; clamp `duration >= 0`.
+- ⬜ **Non-atomic transcode replace.** `transcoder.py:263` does `unlink()` then `rename()`; a crash/IO error between them destroys the segment. **Fix:** `os.replace(transcoded, source)` (atomic, no prior unlink).
+- ⬜ **No transcode queue de-dup.** `transcoder.py:68-93` — same file can be queued twice and transcoded by two workers concurrently to the same path. **Fix:** track in-flight paths in a lock-guarded set.
+- ⬜ **In-place start/stop race.** `recorder.py:96-129` — streaming↔recording restart calls `stop()` (0.5s join) then `start()` while the old thread may still be in `capture.read()` (up to 60s RTSP timeout); `_cleanup()` releases `VideoCapture`/`VideoWriter` concurrently with the live thread. **Fix:** refuse start while prior thread alive; lower RTSP socket timeout; serialize cleanup.
+- ⬜ **Per-frame exception kills capture session.** No try/except around the per-frame body (`recorder.py:~291`); one bad frame triggers a full RTSP reconnect. **Fix:** wrap per-frame processing, log + continue.
+
+### 🟡 Medium
+- ⬜ **Disconnect orphans open segment.** `recorder.py:243` + `_cleanup` releases the writer but never calls `_close_current_segment` → DB row stuck `end_time=NULL`, never transcoded. **Fix:** finalize + queue the open segment on disconnect.
+- ⬜ **`buffered_frames` / `pre_motion_seconds` unimplemented.** `recorder.py:73` declared, never used → motion clips start late; documented knob silently does nothing.
+- ⬜ **`motion_timeout` config unused** (`recording_modes.py:53`); motion post-roll logic split between layers.
+- ⬜ **`23:59` schedule gap.** `recording_modes.py:253-257` inclusive end drops ~59s before midnight every day for "24/7" presets. **Fix:** `end=time(23,59,59)` or half-open interval.
+- ⬜ **`frame_lock` held across queue ops** (`recorder.py:304`) contends with every live-view/motion reader. **Fix:** rely on `Queue`'s own locking.
+- ⬜ **MOG2 background subtractor built but never used** (`motion.py:41`) — dead per-camera memory; `sensitivity` overloaded.
+- ⬜ **Motion timing uses naive `datetime.now()`** (`motion.py:130`) — backward clock step makes a motion event never end.
+
+### ⚪ Low
+- ⬜ Dead `import gc` + no-op per-frame `del` (`recorder.py:14,317`).
+- ⬜ `_is_frame_corrupted` dead code (`recorder.py:548-585`).
+- ⬜ `cleanup_old_recordings` deletes files but not DB rows (`recorder.py:740`).
+- ⬜ Deprecated `stimeout` in RTSP options (`recorder.py:18`).
+- ⬜ Transcoder `priority=True` accepted but ignored (`transcoder.py:87`).
+- ⬜ `log_motion_event()` double-counts first motion frame (`motion.py:137`).
+
+---
+
+## Playback backend (`playback_db.py`, `playback_api.py`)
+
+### 🔴 Critical
+- ✅ **`export_clip` broken.** `playback_api.py:1088` called `stream_video_segment(request.camera_id, request.start_time, request.end_time)` but the signature is `(camera_id, request, background_tasks, ...)` — the string bound to `request`, `.headers.get()` threw, export always 500'd. **Fixed:** call with keyword args + real injected `Request`/`BackgroundTasks`, and `except HTTPException: raise` so 404/202 aren't masked as 500. Verified live (HTTP 200, `video/mp4`). The frontend's actual export path (`GET /api/playback/video` via `performExport`) was also hardened — see frontend section.
+
+### 🟠 High
+- ⬜ **Synchronous transcode on request path.** `playback_api.py:612,654` run `ffprobe`/`ffmpeg` via blocking `subprocess.run`, no timeout, blocking the event loop for the whole transcode; TOCTOU cache race serves half-written files. **Fix:** `asyncio.to_thread` + timeout + per-path lock + temp-file-then-replace.
+- ⬜ **H.264 transcode cache has no freshness check** (`playback_api.py:641`) — only `exists()`; stale transcode served forever after source changes. **Fix:** compare mtime like the speed cache does.
+- ⬜ **Range requests non-conformant.** `playback_api.py:136-169` — no `416` for unsatisfiable ranges (negative-length empty 206), `ValueError` 500 on malformed header, mis-parses suffix ranges (`bytes=-500`), missing Content-Length on 206. **Fix:** use Starlette `FileResponse` for simple cases (fixes blocking I/O too).
+- ⬜ **`/sd-card-gaps` serial blocking ONVIF calls per camera** (`playback_api.py:1349`) — one slow camera hangs the whole response; self-DoS. **Fix:** `asyncio.gather` + per-camera `wait_for`.
+- ⬜ **SQLite has no WAL / busy_timeout** (`playback_db.py:24`) — connection-per-call with defaults → `database is locked` under record+playback. **Fix:** `PRAGMA journal_mode=WAL`, `busy_timeout=5000`, `timeout=30`.
+- ⬜ **Long maintenance txns wrap ffprobe/file scans** (`playback_db.py:1071`) — hold write lock for minutes. **Fix:** do slow work outside the transaction.
+
+### 🟡 Medium
+- ⬜ **Path-traversal check prefix-bypassable.** `playback_api.py:707` uses `str.startswith` on resolved paths → `/Volumes/Video Storage_backup/...` passes. **Fix:** `Path.is_relative_to` or compare with trailing `os.sep`; restrict to `.mp4`.
+- ⬜ **camera_id/camera_name fallback drops legacy rows.** `playback_db.py:420,503` queries by id, falls back to name *only if empty* → mixed-keying cameras silently lose rows. **Fix:** single `(camera_id = ? OR camera_name = ?)` query + dedupe.
+- ⬜ **Inconsistent overlap operators** between single- vs all-camera range queries (`playback_db.py:422` vs `472`) → boundary segments differ between views.
+- ⬜ **Blocking file-iterator generators** (`playback_api.py:151`) block the loop on slow storage.
+- ⬜ **Redundant `exists()`/`stat()` per segment** (`playback_api.py:507-547`) — hundreds of syscalls on full-day requests.
+- ⬜ **Fallback loads all segments** on a range miss (`playback_api.py:476`). **Fix:** `get_next_segment_after(...) LIMIT 1`.
+- ⬜ **Motion bucketing `strftime('%s')` → epoch 0** for unparseable timestamps (`playback_db.py:580`).
+- ⬜ **`get_storage_stats` full-table scan + groups by name not id** (`playback_db.py:625`).
+- ⬜ **SD streaming 10MB pipe buffer + process leak** if client never connects (`playback_api.py:806`).
+
+### ⚪ Low
+- ⬜ `delete_segment_by_path` unescaped LIKE wildcards (`playback_db.py:763`).
+- ⬜ `fromisoformat` assumes str without guard (`playback_db.py:726,1110`).
+- ⬜ `INSERT OR REPLACE` changes row id / resets columns (`playback_db.py:357`).
+- ⬜ Timelapse `end_time` boundary + validation (`playback_api.py:953`).
+- ⬜ SD times tz-aware vs naive-local gap math (`playback_api.py:1430`).
+
+---
+
+## Web API core (`api.py`, `recording_api.py`, `settings_api.py`, `main.py`)
+
+### 🔴 Critical
+- ⬜ **No authentication anywhere.** No `Depends`/auth across `nvr/web/*.py`; `CORSMiddleware(allow_origins=["*"])` (`api.py:34`); bind `0.0.0.0` (`main.py:126`). Anyone on the network can view cameras, `POST /api/cameras/{id}/stop?permanent=true`, and `POST /api/config`. **Fix:** app-wide auth dependency; lock CORS; document port exposure.
+- ✅ **`get_camera_health` NameError** (`api.py:621`) — `camera_name` unbound → always 500. **Fixed:** use `recorder.camera_name`; also added `write_failed`/`actively_writing` + `write_failed` status.
+- ✅ **`live_stream` NameError** (`api.py:934`) — `camera_name` unbound on the motion path → default MJPEG stream aborts mid-response. **Fixed:** bind `camera_name = recorder.camera_name`.
+- ✅ **`settings_api.save_config()` missing** (`settings_api.py:199,273`) — motion & recording settings saves 500 and leave memory/disk divergent. **Fixed:** `config.save()`.
+
+### 🟠 High
+- ⬜ **Blocking cv2 in `live_stream` generator** (`api.py:917`) — decode/resize/motion/encode on the event loop, single worker → stalls all requests. **Fix:** `asyncio.to_thread`.
+- ⬜ **Blocking `process.stdout.read()` in RTSP/MSE proxies** (`rtsp_proxy.py:67,135`) — no `await` between reads; ffmpeg subprocess leaks on disconnect. **Fix:** async subprocess; track+kill processes.
+- ⬜ **WebSockets never `close()` on generic error** (`api.py:1128,1225`).
+- ⬜ **Health-monitor runs a second event loop in a thread** (`api.py:194`) calling async handlers + touching main-loop objects. **Fix:** `asyncio.create_task` on the main loop.
+- ⬜ **`POST /api/config` no validation, replaces whole sections** (`settings_api.py:45`) — one bad PATCH can drop `storage_path`. **Fix:** typed models + deep merge.
+
+### 🟡 Medium
+- ⬜ Deprecated `@app.on_event`; background tasks never cancelled on shutdown (`api.py:70,402`).
+- ⬜ Control endpoints return 200 with `{success:false}` instead of error codes (`api.py:757,795,...`).
+- ⬜ Per-request full directory walk + blocking `stat()`, no pagination (`api.py:1000,1078`).
+- ⬜ `psutil.cpu_percent(interval=1)` blocks loop 1s (`settings_api.py:117`; `api.py:1469`).
+- ⬜ None-deref when managers not yet initialized; inconsistent 503 guarding (`api.py`).
+- ⬜ Cleanup runs blocking deletes in async tasks (`api.py:432,465`).
+- ⬜ `recording_api` generic `except Exception` masks intended 503/400 (`recording_api.py:91,127,205,247`).
+
+### ⚪ Low
+- ⬜ `discover_cameras(ip_range=None)` + bare `except:` (`api.py:693,715`).
+- ⬜ Startup `queue_mp4v_files_async` spawns ffprobe per file across archive (`api.py:90`).
+- ⬜ `debug_camera` swallows errors into 200, leaks internals (`api.py:593`).
+- ⬜ `main.py` stale "multiple workers" comment (`main.py:153`); startup transcode-cache wipe (`main.py:113`).
+
+---
+
+## Storage & lifecycle (`storage_manager.py`, `disk_manager.py`, `sd_card_manager.py`, `cache_cleaner.py`, `db_maintenance.py`, `alert_system.py`, `config.py`)
+
+### 🔴 Critical
+- ✅ **No write-failure / unwritable-storage detection (root cause of the Jan outage).** Recorder knew (`write_failed`) and `/api/cameras` exposed it, but `get_all_cameras_health` and `alert_system.check_storage` ignored it → "storage low" fired forever while nothing recorded. **Fixed:** health status now includes `write_failed`; added `AlertType.CAMERA_WRITE_FAILED` + `STORAGE_UNWRITABLE`; `config.is_storage_writable()` probe wired into the health loop.
+- ✅ **`config.storage_path` recreates the mountpoint on every access** (`config.py`) — on unmount, silently recreates the dir on the boot drive and writes recordings there. **Fixed:** create once (`_storage_initialized`); never recreate after init.
+- ✅ **Cleanup deletes the actively-writing segment.** Both engines now accept `protected_paths` from `RecorderManager.get_active_segment_paths()` and skip active segments; `_cleanup_empty_dirs` skips active camera dirs + hidden cache dirs. *(Single shared cleanup lock / engine consolidation still ⬜.)*
+- ✅ **`DiskManager` ignored `retention_days` entirely** (`disk_manager.py`) — could delete today's footage. **Fixed:** honors `retention_days` (never deletes within the cutoff); `disk_monitor_task` passes the configured value.
+
+### 🟠 High
+- ✅ **EPERM/EROFS on delete swallowed; loops spin** (`storage_manager.py`, `disk_manager.py`) — read-only volume → `DiskManager` re-walked 926GB per batch (effectively infinite). **Fixed:** candidate list built once; cleanup aborts on `EROFS/EACCES/EPERM`; `disk_monitor_task` gates on `is_storage_writable()` and alerts instead.
+- ✅ **`cleanup_deleted_files` wipes the DB on transient unmount** (`playback_db.py:661`) — every file "missing" → deletes all rows. **Fixed:** `db_maintenance.run_maintenance` skips orphan cleanup when storage isn't writable/mounted.
+- ⬜ **O(N) DB scan per deleted file** (`storage_manager.py:176`) — quadratic cleanup. **Fix:** indexed `get_segment_by_path`.
+- ⬜ **Full-volume `rglob` every cycle + on-demand stats endpoint** (`storage_manager.py:113,279`). **Fix:** drive from DB.
+- ⬜ **`db_maintenance` resurrects/ fabricates segments** by estimating duration from file size (`db_maintenance.py:46`, `playback_db.py:716`).
+- ⬜ **`write_failed` only on new-segment open** — see recording pipeline (fixed via growth check).
+
+### 🟡 Medium
+- ⬜ `delete_motion_events_in_range` inclusive `BETWEEN` deletes neighbor's boundary event (`storage_manager.py:212`).
+- ⬜ Reserved-space math mixes `total` vs `used+free` denominators (`storage_manager.py:131`).
+- ⬜ `_cleanup_empty_dirs` may rmdir live camera/cache dirs (`disk_manager.py:138`).
+- ⬜ `db_maintenance` VACUUM holds exclusive lock vs live writers (`playback_db.py:752`).
+- ⬜ Config singleton: no thread-safety, non-atomic `save()` can corrupt YAML; malformed YAML crashes startup (`config.py:30,49`). **Fix:** RLock + tmp-file `os.replace`; try/except around `safe_load`.
+- ⬜ Runtime storage-threshold edits don't take effect (captured at startup) (`api.py:145`).
+- ⬜ SD-card `fromisoformat` of untrusted ONVIF data unguarded; string min/max (`sd_card_manager.py:121,258`).
+
+### ⚪ Low
+- ⬜ Cache cleaner stats twice per file; only `*.mp4` (`cache_cleaner.py:78`).
+- ⬜ Two divergent cache-cleaning implementations.
+- ⬜ Alert id collision in same microsecond (`alert_system.py:48`).
+- ⬜ `get()` dot-notation masks non-dict intermediates (`config.py:57`).
+
+---
+
+## Frontend — Playback (`playback.html`, `timeline-selector.js`)
+
+### 🔴 Critical
+- ⬜ **`safeId` vs raw-id mismatch** (`playback.html:1902,1927,2025,2339,3360`) — `videoElements` keyed by raw id but DOM uses sanitized id; zoom crashes and timestamp/motion overlays die for ids with space/`.`/`:`. **Fix:** one `safeId()` helper everywhere.
+- ⬜ **Triple `keydown` listeners** (`playback.html:2998,3699,4044`) + duplicate `skipTime`/`changeSpeed` — Space double-toggles (appears frozen), arrows seek 10s not 5s, `,`/`.` frame-step force-resumes play. **Fix:** delete listeners #2/#3 + dead duplicates.
+
+### 🟠 High
+- ⬜ `skipTime`/frame-step force-resume playback (`seekToTime` always sets `playing=true`) (`playback.html:2811`).
+- ⬜ Stale `loadRecordings` responses clobber newer state → timeline/video desync (`playback.html:1710`). **Fix:** request token / `AbortController`.
+- ⬜ `onloadedmetadata`/`onerror` reassigned repeatedly; `onerror` `replaceChildren` destroys the `<video>` still referenced (`playback.html:2568,2016`).
+- ⬜ Always-on 100ms interval does DOM writes + regex-parses `src` forever, even when paused/backgrounded (`playback.html:3642`).
+- ✅ **Export reports success on failure** (`playback.html:3335`) — looped `a.click()` (browsers drop all but first), no response check, always-green toast. **Fixed:** `performExport` now fetches each camera, checks `response.ok`, downloads via blob URL (revoked after), and reports per-camera success/failure counts.
+
+### 🟡 Medium
+- ⬜ Dead motion-visualization code — toggle exists, container never rendered (`playback.html:2203`).
+- ⬜ In-video MOTION/PERSON/VEHICLE indicator never lights — keyed by id but `motionEvents` keyed by name (`playback.html:2374`).
+- ⬜ `selectedCameras` holds ids but loops name them "cameraName" (`playback.html:2718`).
+- ⬜ Timeline rebuilt wholesale on every AI toggle / tick (`playback.html:2044`). **Fix:** CSS class toggle + `DocumentFragment`.
+- ⬜ `enforceFutureLimits` uses browser TZ not America/Chicago (`playback.html:1613`).
+- ⬜ timeline-selector: success toast on every change (`:368`); per-instance resize listener never removed (`:152`); `toISOString` date → UTC day skew (`:378`).
+
+### ⚪ Low
+- ⬜ `changeSpeed` matches buttons by `textContent.includes` (`playback.html:3117`).
+- ⬜ `formatTime` relies on OS locale (`:2326`).
+- ⬜ Misleading quick-range names (`:1577`).
+- ⬜ `togglePlayPause` flip-flops with N videos (`:2476`).
+- ⬜ Wheel `preventDefault` blocks page scroll over players (`:3457`).
+
+---
+
+## Frontend — Live view & Settings (`index.html`, `settings.html`, `ui-utils.js`, `webrtc-client.js`, `fullscreen.html`)
+
+### 🔴 Critical
+- ✅ **Recording badge ignored `actively_writing`/`write_failed`** — initial render (`createCameraCard`, `index.html:2183`) showed green "REC" on first paint for a failed camera. **Fixed:** initial render now uses the same REC / NO DISK / STOPPED logic as the poll path. *(Remaining ⬜: a connected-but-stalled writer still shows REC until the growth check trips; consider an explicit "ARMED" state for motion-only idle.)*
+- ✅ **Credentials shipped to browser** (`index.html:1881` consumed `rtsp_url` every 5s; `settings.html` round-tripped plaintext passwords). **Fixed:** `/api/cameras` no longer returns `rtsp_url`; `/api/config` masks passwords + RTSP creds (`SECRET_MASK`); `update_config` restores secrets from stored config on save (write-only), so editing other settings never wipes passwords. Verified: save round-trip preserves all 7 camera passwords.
+- ⬜ **Settings save clobbers cleanup config with defaults** (`settings.html:1805`) if the Storage tab wasn't rendered → can zero `reserved_space_gb`. **Fix:** only persist keys whose inputs exist / seed from loaded config.
+- ⬜ **Stored XSS on Settings** (`settings.html:1162,1872,1443`) — no `escapeHtml`; a renamed camera or hostile ONVIF device name executes script on the admin page. **Fix:** escape all interpolated strings; use `dataset`+listeners.
+
+### 🟠 High
+- ⬜ MJPEG `<img>` connection leak on rebuild (`index.html:1938,1626`) — `innerHTML=''` without aborting sockets exhausts Chrome's 6-conn limit. **Fix:** `img.src='about:blank'` before clearing.
+- ⬜ `setQuality` relies on global `event` (`index.html:1813`); also de-selects stream-mode buttons sharing `.quality-btn`.
+- ⬜ `/ws/events` motion socket has no reconnect (`index.html:2982`) — dies on first server restart; unguarded `JSON.parse`; selector injection via `e.camera`.
+- ⬜ No input validation on settings save (`settings.html:1770`) — NaN/out-of-range → corrupt config, possible boot failure.
+- ⬜ `runManualCleanup` calls non-existent `loadStorageStatus()` (`settings.html:1531`) — cleanup errors after appearing to succeed. **Fix:** `updateStorageStatus()`.
+- ⬜ "Save Changes" hard-redirects to `/` with no success/restart feedback (`settings.html:1822`).
+
+### 🟡 Medium
+- ⬜ `reconnectCamera` uses different `safeId` regex → status feedback targets nothing (`index.html:2928`).
+- ⬜ Pollers never pause on hidden tab / open modal (`index.html:2978`).
+- ⬜ Per-`<img>` handler closures never cleared (`index.html:2118`).
+- ⬜ WebRTC reconnect can spawn parallel connections (`webrtc-client.js:141`).
+- ⬜ Camera reorder has no own save path; indices stale (`settings.html:1218`).
+- ⬜ `selectDiscoveredCamera` hand-rolled JSON-in-attribute escaping (`settings.html:1872`).
+- ⬜ No empty/error/loading states for stats/async sections (`settings.html:1252`).
+- ⬜ `ui-utils.js` 2s `initTooltips` DOM sweep forever (`:580`); modal Escape listener leaks (`:379`).
+- ⬜ `fullscreen.html` hardcoded "RECORDING" status, MJPEG-only, 10s reload recovery (`:167`).
+
+### ⚪ Low
+- ⬜ `escapeHtml` wrong escaper for JS-string-in-attribute context (`index.html:2166`).
+- ⬜ `navigateAway` breaks middle/ctrl-click (`index.html:2581`).
+- ⬜ Timezone select hardcoded/dead (`settings.html:544`); `system-name` hardcoded/dead (`:1102`).
+- ⬜ `fullscreen.html` contextmenu hijacked to navigate home (`:227`).
+
+### Cross-cutting frontend
+- ⬜ `escapeHtml` defined only in `index.html` but needed in `settings.html`.
+- ⬜ `safeId` regex duplicated 4+ ways (one variant causes the reconnect bug). **Fix:** centralize.
+- ⬜ No `document.hidden` gating on any poller.
+
+---
+
+## Changelog (2026-06-02)
+
+Fixes applied this session (Tier 3 detection + quick-win runtime bugs):
+
+| File | Change |
+|------|--------|
+| `nvr/web/settings_api.py` | `config.save_config()` → `config.save()` (×2) — settings saves no longer 500 |
+| `nvr/web/api.py` | `get_camera_health`: bind `recorder.camera_name`, add `write_failed` status + fields |
+| `nvr/web/api.py` | `get_all_cameras_health`: add `write_failed` status + `actively_writing`/`write_failed` fields |
+| `nvr/web/api.py` | `live_stream`: bind `camera_name = recorder.camera_name` |
+| `nvr/web/api.py` | health-monitor loop: call `alert_system.check_storage_writable(config.is_storage_writable())` |
+| `nvr/core/config.py` | `storage_path` creates dir once (no mountpoint recreation on unmount); added `is_storage_writable()` |
+| `nvr/core/recorder.py` | added `_check_segment_growth()` mid-segment write-loss detection; reworked `write_failed`/`actively_writing` ownership |
+| `nvr/core/alert_system.py` | added `CAMERA_WRITE_FAILED` + `STORAGE_UNWRITABLE` alert types; `check_camera_health` fires on `write_failed`; added `check_storage_writable()` |
+| `nvr/templates/index.html` | initial card render uses REC / NO DISK / STOPPED logic |
+| `nvr/templates/playback.html` | removed dev "Test 3hr" button + `loadTestRange()` |
+
+### Changelog (2026-06-02, part 2 — #2 credentials, #6 export, #10 cleanup)
+
+| File | Change |
+|------|--------|
+| `nvr/web/playback_api.py` | `export_clip`: correct kwargs + injected `Request`/`BackgroundTasks`; `except HTTPException: raise` |
+| `nvr/templates/playback.html` | `performExport`: sequential blob downloads, `response.ok` checks, honest per-camera success/fail toast |
+| `nvr/web/api.py` | `/api/cameras` drops `rtsp_url`; `disk_monitor_task` gates on writability + passes `retention_days`/`protected_paths`; cleanup callers pass active segments |
+| `nvr/web/settings_api.py` | `SECRET_MASK`; `_redact_cameras` (GET) + `_restore_camera_secrets`/`_reapply_rtsp_credentials` (POST write-only password handling) |
+| `nvr/core/recorder.py` | `RecorderManager.get_active_segment_paths()`; flag-consistency fix (`actively_writing = not write_failed`) |
+| `nvr/core/disk_manager.py` | `cleanup_old_recordings` honors `retention_days` + `protected_paths`; candidate list built once; abort on EROFS/EACCES/EPERM; `_cleanup_empty_dirs` skips cache/active dirs |
+| `nvr/core/storage_manager.py` | `check_and_cleanup`/`_cleanup_old_files` accept `protected_paths`; abort on EROFS/EACCES/EPERM |
+| `nvr/core/db_maintenance.py` | skip orphan-entry cleanup when storage not writable/mounted |
+
+### Tests
+- `test_config.py::TestStorageWritability` / `TestStoragePathMountSafety` — `is_storage_writable` true/false/no-mkdir; `storage_path` creates once, doesn't recreate after unmount.
+- `test_recorder.py::TestWriteFailureDetection` — `_check_segment_growth` baseline reset, growth→healthy, no-growth→write_failed, missing-file→write_failed, sampling gate.
+- `test_recorder.py::TestActiveSegmentPaths` — `get_active_segment_paths` returns current segments, ignores recorders without one.
+- `test_alert_system.py::TestWriteFailureAlerts` — `CAMERA_WRITE_FAILED` on `write_failed`; `STORAGE_UNWRITABLE` on probe false + recovery; no alert when writable; no re-fire while still failing.
+- `test_disk_manager.py` (new) — retention honored, active segments protected, EPERM aborts (no infinite loop), empty-dir cleanup skips cache/active dirs.
+- `test_settings_api.py` (new) — password/RTSP masking, no input mutation, write-only restore (masked/blank→restored, new→kept), full GET→POST round-trip preserves secret.
+
+Full unit suite: **330 passed** (3 consecutive runs); the occasional `test_frame_rate_limiting` blip is a pre-existing wall-clock flake unrelated to these changes.

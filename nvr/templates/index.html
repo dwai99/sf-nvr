@@ -1162,6 +1162,16 @@
             background: #888 !important;
             animation: none !important;
         }
+
+        .status-error {
+            background: #b8860b !important;
+            color: #fff !important;
+        }
+
+        .status-error .rec-dot {
+            background: #fff !important;
+            animation: none !important;
+        }
     </style>
 </head>
 <body>
@@ -1954,12 +1964,19 @@
             cameras.forEach(camera => {
                 const safeId = (camera.id || camera.name).replace(/[^a-zA-Z0-9-_]/g, '_');
 
-                // Update recording status
+                // Recording status: REC (red pulse) when frames hitting disk,
+                // NO DISK (amber) when recorder tried but VideoWriter failed,
+                // STOPPED (gray) when not recording at all.
+                // Motion-only cameras idling between events stay on REC — they're armed.
                 const statusEl = document.getElementById(`status-${safeId}`);
                 if (statusEl) {
+                    const failed = !!camera.write_failed;
                     statusEl.classList.toggle('status-stopped', !camera.recording);
-                    const recDot = statusEl.querySelector('.rec-dot');
-                    statusEl.innerHTML = `<span class="rec-dot"></span>${camera.recording ? 'REC' : 'STOPPED'}`;
+                    statusEl.classList.toggle('status-error', failed);
+                    let label = 'STOPPED';
+                    if (failed) label = 'NO DISK';
+                    else if (camera.recording) label = 'REC';
+                    statusEl.innerHTML = `<span class="rec-dot"></span>${label}`;
                 }
 
                 // Update health indicator
@@ -2163,9 +2180,9 @@
                     <button class="reconnect-btn" id="reconnect-${safeId}" onclick="reconnectCamera('${escapeHtml(camera.id)}')" title="Force reconnect camera">
                         ↻
                     </button>
-                    <span class="status-recording${camera.recording ? '' : ' status-stopped'}" id="status-${safeId}" onclick="showRecordingModal('${escapeHtml(camera.id)}', '${escapeHtml(camera.name)}', event)" title="Click to toggle recording">
+                    <span class="status-recording${camera.write_failed ? ' status-error' : (camera.recording ? '' : ' status-stopped')}" id="status-${safeId}" onclick="showRecordingModal('${escapeHtml(camera.id)}', '${escapeHtml(camera.name)}', event)" title="Click to toggle recording">
                         <span class="rec-dot"></span>
-                        ${camera.recording ? 'REC' : 'STOPPED'}
+                        ${camera.write_failed ? 'NO DISK' : (camera.recording ? 'REC' : 'STOPPED')}
                     </span>
                 </div>
                 <div class="camera-video" onclick="goFullscreen('${escapeHtml(camera.id)}', '${escapeHtml(camera.name)}')">

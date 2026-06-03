@@ -17,6 +17,7 @@ class Config:
     def __init__(self, config_path: str = "config/config.yaml"):
         self.config_path = Path(config_path)
         self._config: Dict[str, Any] = {}
+        self._storage_initialized = False
         self.load()
 
     def load(self) -> None:
@@ -77,10 +78,35 @@ class Config:
 
     @property
     def storage_path(self) -> Path:
-        """Get recordings storage path"""
+        """Get recordings storage path.
+
+        The directory is created ONCE (first access). We deliberately do not
+        mkdir on every access: if the external volume unmounts, recreating the
+        mountpoint here would silently make recordings write to the boot drive
+        and hide the failure. After first init, callers see the real (possibly
+        now-missing) path and writes fail loudly instead.
+        """
         path = Path(self.get('recording.storage_path', './recordings'))
-        path.mkdir(parents=True, exist_ok=True)
+        if not self._storage_initialized:
+            path.mkdir(parents=True, exist_ok=True)
+            self._storage_initialized = True
         return path
+
+    def is_storage_writable(self) -> bool:
+        """Probe whether the storage path actually accepts writes right now.
+
+        Catches the failure mode where statvfs/disk_usage still report healthy
+        numbers but the volume is read-only / permission-revoked / unmounted, so
+        recordings silently stop. Used by the health monitor to raise an alert.
+        """
+        path = Path(self.get('recording.storage_path', './recordings'))
+        probe = path / '.nvr_write_test'
+        try:
+            probe.write_text('ok')
+            probe.unlink()
+            return True
+        except OSError:
+            return False
 
     @property
     def cameras(self) -> List[Dict[str, Any]]:

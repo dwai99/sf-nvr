@@ -162,7 +162,8 @@ async def startup_event():
                 try:
                     time.sleep(6 * 3600)  # 6 hours
                     logger.info("Running scheduled storage cleanup check")
-                    stats = storage_manager.check_and_cleanup()
+                    protected = recorder_manager.get_active_segment_paths() if recorder_manager else set()
+                    stats = storage_manager.check_and_cleanup(protected_paths=protected)
                     if stats['cleanup_triggered']:
                         logger.info(f"Storage cleanup completed: deleted {stats['files_deleted']} files, freed {stats['space_freed_gb']:.2f} GB")
                 except Exception as e:
@@ -204,12 +205,19 @@ async def startup_event():
                             camera_health
                         )
 
-                    # Check storage
+                    # Check storage capacity
                     import psutil
                     disk = psutil.disk_usage(str(config.storage_path))
                     await alert_system.check_storage(
                         disk.percent,
                         disk.free / (1024**3)
+                    )
+
+                    # Check storage is actually WRITABLE (catches read-only /
+                    # unmounted / permission-revoked volumes that still report
+                    # healthy disk usage but silently drop all recordings)
+                    await alert_system.check_storage_writable(
+                        config.is_storage_writable()
                     )
 
                 except Exception as e:
@@ -456,18 +464,39 @@ async def disk_monitor_task():
             if not usage:
                 continue
 
+            needs_cleanup = (usage['percent'] >= CRITICAL_THRESHOLD or
+                             usage['free_gb'] < MIN_FREE_GB or
+                             usage['percent'] >= WARNING_THRESHOLD)
+
+            # Don't attempt deletes on a non-writable volume — it would fail on
+            # every file and spin. Surface it as the real problem instead.
+            if needs_cleanup and not config.is_storage_writable():
+                logger.error("Disk pressure but storage is NOT writable - skipping cleanup")
+                if alert_system:
+                    await alert_system.check_storage_writable(False)
+                continue
+
+            # Never delete recordings still within retention, nor the segments
+            # being written right now.
+            retention_days = config.get('recording.retention_days', 7)
+            protected = recorder_manager.get_active_segment_paths() if recorder_manager else set()
+
             # Check if we need emergency cleanup
             if usage['percent'] >= CRITICAL_THRESHOLD or usage['free_gb'] < MIN_FREE_GB:
                 logger.error(f"CRITICAL: Disk space low! {usage['free_gb']:.1f}GB free ({usage['percent']:.1f}% used)")
                 logger.info("Starting emergency cleanup to free 10GB...")
 
                 # Aggressive cleanup: try to free 10GB
-                files_deleted, bytes_freed = disk_manager.cleanup_old_recordings(target_free_gb=MIN_FREE_GB + 10)
+                files_deleted, bytes_freed = disk_manager.cleanup_old_recordings(
+                    target_free_gb=MIN_FREE_GB + 10,
+                    retention_days=retention_days,
+                    protected_paths=protected,
+                )
 
                 if files_deleted > 0:
                     logger.info(f"Emergency cleanup: deleted {files_deleted} files, freed {bytes_freed/(1024**3):.2f}GB")
                 else:
-                    logger.error("Emergency cleanup failed - no files to delete!")
+                    logger.error("Emergency cleanup freed nothing - all recordings within retention or storage unwritable!")
 
             # Regular cleanup if above warning threshold
             elif usage['percent'] >= WARNING_THRESHOLD:
@@ -475,7 +504,11 @@ async def disk_monitor_task():
                 logger.info("Starting cleanup to maintain free space...")
 
                 # Normal cleanup: try to get to 15GB free
-                files_deleted, bytes_freed = disk_manager.cleanup_old_recordings(target_free_gb=15.0)
+                files_deleted, bytes_freed = disk_manager.cleanup_old_recordings(
+                    target_free_gb=15.0,
+                    retention_days=retention_days,
+                    protected_paths=protected,
+                )
 
                 if files_deleted > 0:
                     logger.info(f"Cleanup: deleted {files_deleted} files, freed {bytes_freed/(1024**3):.2f}GB")
@@ -548,13 +581,23 @@ async def get_cameras(response: Response) -> List[Dict[str, Any]]:
                        recorder.is_recording and
                        not recorder.streaming_only) if recorder else False
 
+        # actively_writing = frames hitting disk right now.
+        # write_failed = recorder tried to start a segment but VideoWriter wouldn't open
+        # (a real error — distinct from motion-only cameras idling between events).
+        actively_writing = bool(is_recording and recorder.actively_writing)
+        write_failed = bool(is_recording and recorder.write_failed)
+
         result.append({
             'name': camera_name,
             'id': camera.get('id', camera_name),
             'enabled': camera.get('enabled', True),
             'recording': is_recording,
+            'actively_writing': actively_writing,
+            'write_failed': write_failed,
             'streaming': recorder is not None and recorder.is_recording if recorder else False,
-            'rtsp_url': camera.get('rtsp_url', ''),
+            # NOTE: rtsp_url is intentionally omitted — it embeds the camera
+            # password and this endpoint is polled by every browser. Camera
+            # config (incl. redacted RTSP URL) is available via /api/config.
             'device_info': camera.get('device_info', {})
         })
 
@@ -600,20 +643,25 @@ async def get_camera_health(camera_id: str) -> Dict[str, Any]:
         delta = datetime.now() - recorder.last_frame_time
         time_since_last_frame = delta.total_seconds()
 
-    # Determine health status
+    # Determine health status. write_failed means frames are NOT landing on
+    # disk even though the camera may be connected — surface it above degraded.
     status = 'healthy'
     if not recorder.is_recording:
         status = 'stopped'
+    elif getattr(recorder, 'write_failed', False):
+        status = 'write_failed'
     elif recorder.consecutive_failures > 0:
         status = 'degraded'
     elif time_since_last_frame and time_since_last_frame > 30:
         status = 'stale'
 
     return {
-        'camera_name': camera_name,
+        'camera_name': recorder.camera_name,
         'camera_id': recorder.camera_id,
         'status': status,
         'is_recording': recorder.is_recording,
+        'actively_writing': getattr(recorder, 'actively_writing', False),
+        'write_failed': getattr(recorder, 'write_failed', False),
         'stream_info': {
             'fps': recorder.stream_fps,
             'width': recorder.stream_width,
@@ -659,10 +707,13 @@ async def get_all_cameras_health() -> List[Dict[str, Any]]:
             delta = datetime.now() - recorder.last_frame_time
             time_since_last_frame = delta.total_seconds()
 
-        # Determine health status
+        # Determine health status. write_failed means frames are NOT landing on
+        # disk even though the camera may be connected — surface it above degraded.
         status = 'healthy'
         if not recorder.is_recording:
             status = 'stopped'
+        elif getattr(recorder, 'write_failed', False):
+            status = 'write_failed'
         elif recorder.consecutive_failures > 0:
             status = 'degraded'
         elif time_since_last_frame and time_since_last_frame > 30:
@@ -673,6 +724,8 @@ async def get_all_cameras_health() -> List[Dict[str, Any]]:
             'camera_id': recorder.camera_id,
             'status': status,
             'is_recording': recorder.is_recording,
+            'actively_writing': getattr(recorder, 'actively_writing', False),
+            'write_failed': getattr(recorder, 'write_failed', False),
             'time_since_last_frame_seconds': round(time_since_last_frame, 2) if time_since_last_frame else None,
             'total_reconnects': recorder.total_reconnects,
             'consecutive_failures': recorder.consecutive_failures,
@@ -883,6 +936,8 @@ async def live_stream(camera_id: str, raw: bool = False, quality: int = 50, real
     recorder = recorder_manager.get_recorder_by_id(camera_id)
     if not recorder:
         raise HTTPException(status_code=404, detail="Camera not found")
+
+    camera_name = recorder.camera_name  # motion detector is keyed by name
 
     # Clamp quality to valid range
     jpeg_quality = max(1, min(100, quality))
@@ -1262,7 +1317,8 @@ async def run_manual_cleanup():
 
     try:
         logger.info("Manual storage cleanup triggered via API")
-        stats = storage_manager.check_and_cleanup()
+        protected = recorder_manager.get_active_segment_paths() if recorder_manager else set()
+        stats = storage_manager.check_and_cleanup(protected_paths=protected)
 
         return {
             'success': True,

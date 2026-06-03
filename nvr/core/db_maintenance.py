@@ -33,13 +33,20 @@ def run_maintenance(playback_db):
     except Exception as e:
         logger.error(f"Error repairing segment end_times: {e}")
 
-    # 2. Clean up entries for deleted files
+    # 2. Clean up entries for deleted files — but ONLY if storage is actually
+    # writable/mounted. On a transient unmount every file looks "missing", and
+    # cleanup_deleted_files would delete every segment row (mass metadata loss)
+    # while the recordings are fine and simply offline.
     try:
         from nvr.core.config import config
-        storage_path = config.storage_path
-        deleted = playback_db.cleanup_deleted_files(storage_path)
-        results['orphaned_files_cleaned'] = deleted
-        logger.info(f"Cleaned up {deleted} orphaned database entries")
+        if not config.is_storage_writable():
+            logger.warning("Storage not writable/mounted - skipping orphaned-entry cleanup "
+                           "to avoid wiping segment metadata for offline recordings")
+        else:
+            storage_path = config.storage_path
+            deleted = playback_db.cleanup_deleted_files(storage_path)
+            results['orphaned_files_cleaned'] = deleted
+            logger.info(f"Cleaned up {deleted} orphaned database entries")
     except Exception as e:
         logger.error(f"Error cleaning up orphaned entries: {e}")
 

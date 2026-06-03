@@ -656,3 +656,125 @@ class TestRTSPRecorderEdgeCases:
 
         # Should finish in ~0.1s, not 10s
         assert elapsed < 1.0
+
+
+@pytest.mark.unit
+class TestWriteFailureDetection:
+    """_check_segment_growth() — detects silent mid-segment write loss.
+
+    Covers the 2026-06-02 fix: VideoWriter.write() does not raise when the
+    volume goes read-only mid-segment, so we sample the segment file size and
+    flag write_failed if it stops growing or the file vanishes.
+    """
+
+    def _recorder(self, temp_dir):
+        return RTSPRecorder(
+            camera_name="Test Camera",
+            rtsp_url="rtsp://example.com/stream",
+            storage_path=temp_dir,
+        )
+
+    def test_baseline_reset_on_new_segment(self, temp_dir):
+        """First sample of a new segment establishes a baseline and returns."""
+        rec = self._recorder(temp_dir)
+        seg = temp_dir / "seg_a.mp4"
+        seg.write_bytes(b"x" * 100)
+        rec.current_segment_path = seg
+        rec._last_size_check_path = None  # never sampled
+
+        rec._check_segment_growth()
+
+        assert rec._last_size_check_path == seg
+        assert rec._last_segment_size == -1  # baseline, no comparison yet
+        assert rec.write_failed is False
+
+    def test_growth_clears_write_failed(self, temp_dir):
+        """A growing file marks the recorder healthy (clears prior failure)."""
+        rec = self._recorder(temp_dir)
+        seg = temp_dir / "seg_b.mp4"
+        seg.write_bytes(b"x" * 200)
+        rec.current_segment_path = seg
+        rec._last_size_check_path = seg            # baseline already set
+        rec._last_segment_size = 50                # was smaller -> grew
+        rec._last_size_check = time.monotonic() - 21  # past the 20s gate
+        rec.write_failed = True                    # simulate prior transient failure
+
+        rec._check_segment_growth()
+
+        assert rec.write_failed is False
+        assert rec._last_segment_size == 200
+
+    def test_no_growth_sets_write_failed(self, temp_dir):
+        """A file that stops growing while recording flags write_failed."""
+        rec = self._recorder(temp_dir)
+        seg = temp_dir / "seg_c.mp4"
+        seg.write_bytes(b"x" * 100)
+        rec.current_segment_path = seg
+        rec._last_size_check_path = seg
+        rec._last_segment_size = 100               # same size -> no growth
+        rec._last_size_check = time.monotonic() - 21
+        rec.actively_writing = True
+        rec.write_failed = False
+
+        rec._check_segment_growth()
+
+        assert rec.write_failed is True
+        assert rec.actively_writing is False
+
+    def test_missing_file_sets_write_failed(self, temp_dir):
+        """A vanished segment file (unmount/delete) flags write_failed."""
+        rec = self._recorder(temp_dir)
+        seg = temp_dir / "gone.mp4"  # never created
+        rec.current_segment_path = seg
+        rec._last_size_check_path = seg
+        rec._last_segment_size = 100
+        rec._last_size_check = time.monotonic() - 21
+        rec.actively_writing = True
+
+        rec._check_segment_growth()
+
+        assert rec.write_failed is True
+        assert rec.actively_writing is False
+
+    def test_gate_skips_check_within_interval(self, temp_dir):
+        """Within the sampling interval the check is a no-op (does not flag)."""
+        rec = self._recorder(temp_dir)
+        seg = temp_dir / "seg_d.mp4"
+        seg.write_bytes(b"x" * 100)
+        rec.current_segment_path = seg
+        rec._last_size_check_path = seg
+        rec._last_segment_size = 200               # would be "no growth" if it ran
+        rec._last_size_check = time.monotonic()    # just checked -> gate closed
+        rec.write_failed = False
+
+        rec._check_segment_growth()
+
+        # Gate closed -> no comparison happened, flag untouched
+        assert rec.write_failed is False
+        assert rec._last_segment_size == 200
+
+
+@pytest.mark.unit
+class TestActiveSegmentPaths:
+    """RecorderManager.get_active_segment_paths() — protects in-progress writes."""
+
+    def test_returns_current_segment_paths(self, temp_dir):
+        mgr = RecorderManager(storage_path=temp_dir)
+        rec = RTSPRecorder(camera_name="Cam A", rtsp_url="rtsp://x/s", storage_path=temp_dir)
+        seg = temp_dir / "Cam A" / "live.mp4"
+        seg.parent.mkdir(parents=True, exist_ok=True)
+        seg.write_bytes(b"")
+        rec.current_segment_path = seg
+        mgr.recorders["Cam A"] = rec
+
+        paths = mgr.get_active_segment_paths()
+
+        assert seg.resolve() in paths
+
+    def test_ignores_recorders_without_segment(self, temp_dir):
+        mgr = RecorderManager(storage_path=temp_dir)
+        rec = RTSPRecorder(camera_name="Cam A", rtsp_url="rtsp://x/s", storage_path=temp_dir)
+        rec.current_segment_path = None
+        mgr.recorders["Cam A"] = rec
+
+        assert mgr.get_active_segment_paths() == set()

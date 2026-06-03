@@ -1,9 +1,10 @@
 """Storage management for automatic cleanup of old recordings"""
 
+import errno
 import logging
 from pathlib import Path
 from datetime import datetime, timedelta
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional, Set
 import psutil
 
 logger = logging.getLogger(__name__)
@@ -39,9 +40,12 @@ class StorageManager:
         self.target_percent = target_percent
         self.reserved_space_gb = reserved_space_gb
 
-    def check_and_cleanup(self) -> Dict[str, Any]:
+    def check_and_cleanup(self, protected_paths: Optional[Set] = None) -> Dict[str, Any]:
         """
         Check disk usage and perform cleanup if needed
+
+        Args:
+            protected_paths: resolved Paths to never delete (active segments)
 
         Returns:
             Dict with cleanup statistics
@@ -81,7 +85,7 @@ class StorageManager:
             logger.warning(f"Disk usage ({usage_percent:.1f}%) exceeds threshold ({self.cleanup_threshold}%), starting cleanup")
 
             # Perform cleanup
-            deleted_files, space_freed = self._cleanup_old_files()
+            deleted_files, space_freed = self._cleanup_old_files(protected_paths)
             stats['files_deleted'] = deleted_files
             stats['space_freed_gb'] = space_freed / (1024**3)
 
@@ -97,21 +101,31 @@ class StorageManager:
 
         return stats
 
-    def _cleanup_old_files(self) -> tuple[int, int]:
+    def _cleanup_old_files(self, protected_paths: Optional[Set] = None) -> tuple[int, int]:
         """
         Delete old recording files to free up space
+
+        Args:
+            protected_paths: resolved Paths to never delete (active segments)
 
         Returns:
             Tuple of (files_deleted, bytes_freed)
         """
         deleted_count = 0
         bytes_freed = 0
+        protected = protected_paths or set()
 
         try:
             # Get all recording files with their timestamps
             files = []
             for video_file in self.storage_path.rglob('*.mp4'):
                 if video_file.is_file():
+                    try:
+                        resolved = video_file.resolve()
+                    except OSError:
+                        resolved = video_file
+                    if resolved in protected:
+                        continue  # never delete an actively-writing segment
                     stat = video_file.stat()
                     files.append({
                         'path': video_file,
@@ -216,6 +230,13 @@ class StorageManager:
                         except Exception as db_err:
                             logger.warning(f"Failed to update database for {file_path.name}: {db_err}")
 
+                except OSError as e:
+                    # Read-only / permission-revoked / unmounted volume: abort
+                    # instead of logging an error for every undeletable file.
+                    if e.errno in (errno.EROFS, errno.EACCES, errno.EPERM):
+                        logger.error(f"Storage appears unwritable ({e}); aborting cleanup")
+                        break
+                    logger.error(f"Failed to delete {file_info['path']}: {e}")
                 except Exception as e:
                     logger.error(f"Failed to delete {file_info['path']}: {e}")
 

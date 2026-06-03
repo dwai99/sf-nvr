@@ -3,8 +3,9 @@ Settings API endpoints for managing system configuration
 """
 
 import logging
+import re
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 import psutil
 from fastapi import APIRouter, HTTPException
@@ -15,6 +16,68 @@ from nvr.core.config import config
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Sentinel returned in place of real camera passwords. The UI sends it back
+# unchanged when the user doesn't edit the password; the server then restores
+# the stored secret (write-only password handling).
+SECRET_MASK = "********"
+
+
+def _redact_cameras(cameras: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Return a copy of the camera list with passwords/RTSP creds masked.
+
+    Never mutates the live config objects. The RTSP URL keeps host/port/path so
+    the settings UI can still parse and display it, but the password is masked.
+    """
+    redacted = []
+    for cam in cameras:
+        c = dict(cam)
+        if c.get('password'):
+            c['password'] = SECRET_MASK
+        url = c.get('rtsp_url')
+        if url:
+            # Replace the password portion of rtsp://user:pass@host/... with the mask
+            c['rtsp_url'] = re.sub(r'(://[^:/@]*:)[^@/]*(@)', rf'\g<1>{SECRET_MASK}\g<2>', url)
+        redacted.append(c)
+    return redacted
+
+
+def _reapply_rtsp_credentials(incoming_url: str, username: str, password: str, old_url: str) -> str:
+    """Rebuild an RTSP URL's credentials when the client sent a masked/stripped one."""
+    if not incoming_url:
+        return old_url or ''
+    # Client typed a real new password -> trust the incoming URL as-is
+    if '@' in incoming_url and SECRET_MASK not in incoming_url:
+        return incoming_url
+    m = re.match(r'^(\w+)://(?:[^@/]*@)?(.*)$', incoming_url)
+    if not m:
+        return old_url or incoming_url
+    scheme, hostpart = m.group(1), m.group(2)
+    if username and password:
+        return f"{scheme}://{username}:{password}@{hostpart}"
+    return f"{scheme}://{hostpart}"
+
+
+def _restore_camera_secrets(incoming: List[Dict[str, Any]],
+                            existing: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Restore masked secrets from stored config so a save doesn't wipe passwords.
+
+    Matches incoming cameras to existing ones by id; when the client sends the
+    SECRET_MASK (or a blank password), the stored password and RTSP credentials
+    are carried over instead of being overwritten with the mask.
+    """
+    by_id = {c.get('id'): c for c in (existing or []) if c.get('id')}
+    for cam in incoming:
+        old = by_id.get(cam.get('id'))
+        if not old:
+            continue  # brand-new camera: keep whatever the client supplied
+        if not cam.get('password') or cam.get('password') == SECRET_MASK:
+            cam['password'] = old.get('password', '')
+        cam['rtsp_url'] = _reapply_rtsp_credentials(
+            cam.get('rtsp_url', ''), cam.get('username'), cam.get('password'),
+            old.get('rtsp_url', '')
+        )
+    return incoming
 
 
 class ConfigUpdate(BaseModel):
@@ -38,7 +101,7 @@ async def get_config():
         "web": config.get('web', {}),
         "onvif": config.get('onvif', {}),
         "storage": config.get('storage', {}),
-        "cameras": config.cameras or []
+        "cameras": _redact_cameras(config.cameras or [])
     }
 
 
@@ -70,9 +133,11 @@ async def update_config(updates: ConfigUpdate):
         if updates.storage:
             config.set('storage', updates.storage)
 
-        # Update cameras list
+        # Update cameras list. Restore any masked passwords/RTSP creds from the
+        # stored config so a settings save doesn't overwrite secrets with the mask.
         if updates.cameras is not None:
-            config.set('cameras', updates.cameras)
+            restored = _restore_camera_secrets(updates.cameras, config.cameras)
+            config.set('cameras', restored)
 
         # Save configuration to file
         config.save()
@@ -196,7 +261,7 @@ async def update_camera_recording_settings(camera_id: str, settings: CameraRecor
             raise HTTPException(status_code=404, detail="Camera not found")
 
         # Save updated config
-        config.save_config()
+        config.save()
 
         # Update recording mode manager if running
         if settings.recording_mode:
@@ -270,7 +335,7 @@ async def update_camera_motion_settings(camera_id: str, settings: MotionSettings
             raise HTTPException(status_code=404, detail="Camera not found")
 
         # Save updated config to file
-        config.save_config()
+        config.save()
 
         logger.info(f"Updated motion settings for {camera_name}: sensitivity={settings.sensitivity}, min_area={settings.min_area}")
 

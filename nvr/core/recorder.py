@@ -69,6 +69,12 @@ class RTSPRecorder:
 
         # Recording mode tracking
         self.actively_writing = False  # True when actually writing frames to disk
+        self.write_failed = False  # True when recording is not actually landing on disk
+        # Mid-segment write-failure detection (volume goes read-only after a
+        # segment opened: writer stays non-None but the file stops growing)
+        self._last_size_check = 0.0          # monotonic time of last size check
+        self._last_size_check_path = None    # segment the baseline size belongs to
+        self._last_segment_size = -1         # bytes at last check (-1 = no baseline)
         self.buffered_frames = []  # Pre-motion buffer for motion-only mode
 
         # Callbacks
@@ -270,12 +276,25 @@ class RTSPRecorder:
                         self._start_new_segment(fps, recording_width, recording_height)
                         next_segment_time = self._get_next_segment_boundary()
                         current_segment_started = True
-                        self.actively_writing = True
 
-                    # Write frame to disk
+                    # Distinguish "frames hitting disk" from "tried but couldn't".
+                    # NOTE: don't reset write_failed every frame here — _check_segment_growth
+                    # owns the writer-exists case (it must persist a mid-segment failure
+                    # across frames so the health poll can see it).
                     if self.writer:
                         self.writer.write(frame)
+                        # _check_segment_growth() updates write_failed based on
+                        # whether the file is actually growing on disk (catches
+                        # silent mid-segment write loss, e.g. volume read-only).
+                        self._check_segment_growth()
+                        # Keep the two flags consistent: only "actively writing"
+                        # if bytes are really landing on disk.
+                        self.actively_writing = not self.write_failed
+                    else:
+                        self.actively_writing = False
+                        self.write_failed = True  # VideoWriter never opened
                 else:
+                    self.write_failed = False
                     # Not recording - close current segment if open
                     if self.actively_writing and self.writer:
                         self._close_current_segment()
@@ -416,6 +435,60 @@ class RTSPRecorder:
                 logger.warning(f"Failed to queue transcode for {self.current_segment_path}: {e}")
 
             logger.info(f"Closed segment for {self.camera_name}: {self.current_segment_path.name} ({duration}s, {file_size / (1024*1024):.1f}MB)")
+
+    def _check_segment_growth(self) -> None:
+        """Detect a silently-failing writer by verifying the segment grows on disk.
+
+        VideoWriter.write() returns nothing and does not raise when the
+        underlying volume goes read-only mid-segment, so `self.writer` stays
+        non-None while no bytes are written. We sample the file size every ~20s;
+        if it stops growing (or the file vanishes), flag write_failed so the
+        health monitor and UI surface it instead of showing a false "REC".
+        """
+        if not self.current_segment_path:
+            return
+
+        now = time.monotonic()
+
+        # Reset the baseline whenever the segment rolls over. A freshly-opened
+        # segment is assumed healthy until proven otherwise (innocent until the
+        # next sample shows no growth).
+        if self.current_segment_path != self._last_size_check_path:
+            self._last_size_check_path = self.current_segment_path
+            self._last_segment_size = -1
+            self._last_size_check = now
+            self.write_failed = False
+            return
+
+        if now - self._last_size_check < 20:
+            return
+        self._last_size_check = now
+
+        try:
+            size = self.current_segment_path.stat().st_size
+        except OSError:
+            # File gone (volume unmounted / deleted under us) = write failure
+            if not self.write_failed:
+                logger.error(
+                    f"Segment file missing for {self.camera_name}: {self.current_segment_path}"
+                )
+            self.write_failed = True
+            self.actively_writing = False
+            return
+
+        if self._last_segment_size >= 0 and size <= self._last_segment_size:
+            # No growth across the interval while actively writing → failing
+            if not self.write_failed:
+                logger.error(
+                    f"Recording NOT growing on disk for {self.camera_name} "
+                    f"(stuck at {size} bytes: {self.current_segment_path}) - storage may be unwritable"
+                )
+            self.write_failed = True
+            self.actively_writing = False
+        else:
+            # Growing normally → healthy (clears a prior transient failure)
+            self.write_failed = False
+        self._last_segment_size = size
 
     def _start_new_segment(self, fps: float, width: int, height: int) -> None:
         """Start a new recording segment"""
@@ -705,6 +778,24 @@ class RecorderManager:
         del self.recorders[camera_name]
 
         return True
+
+    def get_active_segment_paths(self) -> set:
+        """Resolved paths of segments currently open for writing.
+
+        Cleanup routines must never delete these — removing a file mid-write
+        corrupts the recording (and on macOS the writer keeps writing to an
+        unlinked inode, silently losing the footage).
+        """
+        paths = set()
+        for rec in self.recorders.values():
+            seg = getattr(rec, 'current_segment_path', None)
+            if seg is None:
+                continue
+            try:
+                paths.add(Path(seg).resolve())
+            except OSError:
+                paths.add(Path(seg))
+        return paths
 
     def get_recorder(self, camera_name: str) -> Optional[RTSPRecorder]:
         """Get recorder by camera name"""

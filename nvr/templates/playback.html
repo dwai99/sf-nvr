@@ -1138,7 +1138,6 @@
         <div class="header-actions">
             <button class="btn" onclick="window.location.href='/'">← Live View</button>
             <button class="btn btn-success" onclick="showExportPanel()">📥 Export Recording</button>
-            <button class="btn" onclick="loadTestRange()" style="background: #e74c3c;">🧪 Test 3hr</button>
         </div>
     </div>
 
@@ -1661,46 +1660,6 @@
                     loadRecordings();
                 }, 1000); // Wait 1 second after user stops typing
             }
-        }
-
-        function loadTestRange() {
-            const now = new Date();
-
-            // Calculate 3 hours ago and 2 hours ago in local time
-            const threeHoursAgo = new Date(now.getTime() - 3 * 60 * 60 * 1000);
-            const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
-
-            // Format date as YYYY-MM-DD (local date, not UTC)
-            const year = threeHoursAgo.getFullYear();
-            const month = String(threeHoursAgo.getMonth() + 1).padStart(2, '0');
-            const day = String(threeHoursAgo.getDate()).padStart(2, '0');
-            const dateStr = `${year}-${month}-${day}`;
-
-            // Format times as HH:MM (local time)
-            const startTime = String(threeHoursAgo.getHours()).padStart(2, '0') + ':' +
-                             String(threeHoursAgo.getMinutes()).padStart(2, '0');
-            const endTime = String(twoHoursAgo.getHours()).padStart(2, '0') + ':' +
-                           String(twoHoursAgo.getMinutes()).padStart(2, '0');
-
-            // Set the form values
-            document.getElementById('playback-date').value = dateStr;
-            document.getElementById('start-time').value = startTime;
-            document.getElementById('end-time').value = endTime;
-
-            // If no camera selected, select the first available
-            if (selectedCameras.size === 0 && cameras.length > 0) {
-                const firstCamera = cameras[0];
-
-                // Simulate checkbox click to properly select camera
-                const checkboxes = document.querySelectorAll('#camera-checkboxes input[type="checkbox"]');
-                if (checkboxes.length > 0) {
-                    checkboxes[0].checked = true;
-                    toggleCamera(firstCamera.name, true);
-                }
-            }
-
-            // Load recordings
-            loadRecordings();
         }
 
         function setDuration(minutes) {
@@ -3378,22 +3337,59 @@
             const startTime = document.getElementById('start-time').value;
             const endTime = document.getElementById('end-time').value;
 
+            if (!date || !startTime || !endTime) {
+                showNotification('Select a date, start time and end time first', 'warning');
+                return;
+            }
+
             const startDateTime = `${date}T${startTime}`;
             const endDateTime = `${date}T${endTime}`;
+            const cameras = Array.from(selectedCameras);
 
-            // Export each camera
-            for (const cameraName of selectedCameras) {
-                const url = `/api/playback/video/${encodeURIComponent(cameraName)}?start_time=${encodeURIComponent(startDateTime)}&end_time=${encodeURIComponent(endDateTime)}`;
-
-                // Create download link
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `${cameraName}_${date}_${startTime.replace(/:/g, '')}-${endTime.replace(/:/g, '')}.mp4`;
-                a.click();
+            if (cameras.length === 0) {
+                showNotification('Select at least one camera to export', 'warning');
+                return;
             }
 
             hideExportPanel();
-            showNotification('Download started. Files will be saved to your Downloads folder.', 'success', 5000);
+            showNotification(`Preparing ${cameras.length} clip(s) for download…`, 'info');
+
+            // Download sequentially with real status checks. Looping a.click()
+            // (the old approach) silently dropped all but the first download and
+            // reported success even when the server returned 404/500.
+            let ok = 0, failed = 0;
+            for (const cameraId of cameras) {
+                const url = `/api/playback/video/${encodeURIComponent(cameraId)}?start_time=${encodeURIComponent(startDateTime)}&end_time=${encodeURIComponent(endDateTime)}`;
+                try {
+                    const resp = await fetch(url);
+                    if (!resp.ok) {
+                        failed++;
+                        console.error(`Export failed for ${cameraId}: HTTP ${resp.status}`);
+                        continue;
+                    }
+                    const blob = await resp.blob();
+                    const objUrl = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = objUrl;
+                    a.download = `${cameraId}_${date}_${startTime.replace(/:/g, '')}-${endTime.replace(/:/g, '')}.mp4`;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    URL.revokeObjectURL(objUrl);
+                    ok++;
+                } catch (e) {
+                    failed++;
+                    console.error(`Export error for ${cameraId}:`, e);
+                }
+            }
+
+            if (failed === 0) {
+                showNotification(`Downloaded ${ok} clip(s) to your Downloads folder.`, 'success', 5000);
+            } else if (ok === 0) {
+                showNotification(`Export failed for all ${failed} camera(s) — no recordings in range?`, 'error', 6000);
+            } else {
+                showNotification(`Downloaded ${ok} clip(s); ${failed} failed.`, 'warning', 6000);
+            }
         }
 
         // Zoom functionality for playback videos
