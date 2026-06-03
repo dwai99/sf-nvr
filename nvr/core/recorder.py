@@ -116,6 +116,19 @@ class RTSPRecorder:
             logger.warning(f"Recorder for {self.camera_name} already running")
             return False
 
+        # Guard against the previous capture thread still being alive. stop()
+        # only joins for 0.5s, but capture.read() can block for the RTSP socket
+        # timeout — starting a second thread would run two capture loops against
+        # one recorder and let _cleanup() race the live thread on the
+        # VideoCapture/VideoWriter (OpenCV use-after-free).
+        prior_thread = getattr(self, 'record_thread', None)
+        if prior_thread and prior_thread.is_alive():
+            logger.warning(f"Previous capture thread for {self.camera_name} still alive; waiting before restart")
+            prior_thread.join(timeout=2.0)
+            if prior_thread.is_alive():
+                logger.error(f"Cannot start {self.camera_name}: previous capture thread still running")
+                return False
+
         self.streaming_only = streaming_only
         mode = "streaming only" if streaming_only else "recording"
         logger.info(f"Starting recorder for {self.camera_name} ({mode})")
@@ -134,12 +147,18 @@ class RTSPRecorder:
         logger.info(f"Stopping recorder for {self.camera_name}")
         self.is_recording = False
 
-        # Don't block waiting for thread - cleanup will happen in thread
-        # Reduced timeout from 5s to 0.5s for faster shutdown
+        # Brief join for fast shutdown; capture.read() may still be blocking.
         if self.record_thread and self.record_thread.is_alive():
             self.record_thread.join(timeout=0.5)
 
-        self._cleanup()
+        # Only clean up here if the thread has actually exited. If it's still
+        # alive (stuck in read()), its own finally: self._cleanup() will run when
+        # read() returns — calling _cleanup() now would release the VideoCapture
+        # out from under the live thread (use-after-free).
+        if not (self.record_thread and self.record_thread.is_alive()):
+            self._cleanup()
+        else:
+            logger.warning(f"{self.camera_name}: capture thread still alive after join; deferring cleanup to it")
 
     def _record_loop(self) -> None:
         """Main recording loop (runs in separate thread)"""
@@ -268,82 +287,91 @@ class RTSPRecorder:
             consecutive_failures = 0
             self.last_frame_time = datetime.now()
 
-            # CRITICAL: Scale down frame to recording dimensions if needed
-            if width > max_width:
-                frame = cv2.resize(frame, (recording_width, recording_height), interpolation=cv2.INTER_AREA)
+            try:
+                # CRITICAL: Scale down frame to recording dimensions if needed
+                if width > max_width:
+                    frame = cv2.resize(frame, (recording_width, recording_height), interpolation=cv2.INTER_AREA)
 
-            # Only handle recording if not in streaming-only mode
-            if not self.streaming_only:
-                # Check if we should be recording based on mode and motion state
-                now = datetime.now()
-                should_record = self._should_record_frame(now)
+                # Only handle recording if not in streaming-only mode
+                if not self.streaming_only:
+                    # Check if we should be recording based on mode and motion state
+                    now = datetime.now()
+                    should_record = self._should_record_frame(now)
 
-                # Start new segment if needed and we should be recording
-                if should_record:
-                    if not current_segment_started or now >= next_segment_time:
-                        self._start_new_segment(fps, recording_width, recording_height)
-                        next_segment_time = self._get_next_segment_boundary()
-                        current_segment_started = True
+                    # Start new segment if needed and we should be recording
+                    if should_record:
+                        if not current_segment_started or now >= next_segment_time:
+                            self._start_new_segment(fps, recording_width, recording_height)
+                            next_segment_time = self._get_next_segment_boundary()
+                            current_segment_started = True
 
-                    # Distinguish "frames hitting disk" from "tried but couldn't".
-                    # NOTE: don't reset write_failed every frame here — _check_segment_growth
-                    # owns the writer-exists case (it must persist a mid-segment failure
-                    # across frames so the health poll can see it).
-                    if self.writer:
-                        self.writer.write(frame)
-                        self._frames_written_total += 1
-                        # _check_segment_growth() updates write_failed based on
-                        # whether the file is actually growing on disk (catches
-                        # silent mid-segment write loss, e.g. volume read-only).
-                        self._check_segment_growth()
-                        # Keep the two flags consistent: only "actively writing"
-                        # if bytes are really landing on disk.
-                        self.actively_writing = not self.write_failed
+                        # Distinguish "frames hitting disk" from "tried but couldn't".
+                        # NOTE: don't reset write_failed every frame here — _check_segment_growth
+                        # owns the writer-exists case (it must persist a mid-segment failure
+                        # across frames so the health poll can see it).
+                        if self.writer:
+                            self.writer.write(frame)
+                            self._frames_written_total += 1
+                            # _check_segment_growth() updates write_failed based on
+                            # whether the file is actually growing on disk (catches
+                            # silent mid-segment write loss, e.g. volume read-only).
+                            self._check_segment_growth()
+                            # Keep the two flags consistent: only "actively writing"
+                            # if bytes are really landing on disk.
+                            self.actively_writing = not self.write_failed
+                        else:
+                            self.actively_writing = False
+                            self.write_failed = True  # VideoWriter never opened
                     else:
-                        self.actively_writing = False
-                        self.write_failed = True  # VideoWriter never opened
-                else:
-                    self.write_failed = False
-                    # Not recording - close current segment if open
-                    if self.actively_writing and self.writer:
-                        self._close_current_segment()
-                        self.actively_writing = False
-                        current_segment_started = False
+                        self.write_failed = False
+                        # Not recording - close current segment if open
+                        if self.actively_writing and self.writer:
+                            self._close_current_segment()
+                            self.actively_writing = False
+                            current_segment_started = False
 
-            # Compress frame to JPEG for live viewing (saves memory)
-            # Quality 85 is good balance between size and quality
-            success, jpeg_bytes = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                # Compress frame to JPEG for live viewing (saves memory)
+                # Quality 85 is good balance between size and quality
+                success, jpeg_bytes = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
 
-            if success and jpeg_bytes is not None:
-                # Make an immutable copy of the bytes immediately
-                jpeg_data = bytes(jpeg_bytes.tobytes())
+                if success and jpeg_bytes is not None:
+                    # Make an immutable copy of the bytes immediately
+                    jpeg_data = bytes(jpeg_bytes.tobytes())
 
-                # Validate JPEG structure before queuing
-                # Must start with FFD8 (SOI) and end with FFD9 (EOI)
-                if (len(jpeg_data) > 1000 and
-                    jpeg_data[0:2] == b'\xff\xd8' and
-                    jpeg_data[-2:] == b'\xff\xd9'):
+                    # Validate JPEG structure before queuing
+                    # Must start with FFD8 (SOI) and end with FFD9 (EOI)
+                    if (len(jpeg_data) > 1000 and
+                        jpeg_data[0:2] == b'\xff\xd8' and
+                        jpeg_data[-2:] == b'\xff\xd9'):
 
-                    # Put compressed frame in queue for live viewing
-                    with self.frame_lock:
-                        try:
-                            self.frame_queue.put_nowait(jpeg_data)
-                        except queue.Full:
-                            # Replace oldest frame with new one
+                        # Put compressed frame in queue for live viewing
+                        with self.frame_lock:
                             try:
-                                self.frame_queue.get_nowait()
                                 self.frame_queue.put_nowait(jpeg_data)
-                            except queue.Empty:
-                                pass
-                        # Always update last_frame for fallback
-                        self.last_frame = jpeg_data
+                            except queue.Full:
+                                # Replace oldest frame with new one
+                                try:
+                                    self.frame_queue.get_nowait()
+                                    self.frame_queue.put_nowait(jpeg_data)
+                                except queue.Empty:
+                                    pass
+                            # Always update last_frame for fallback
+                            self.last_frame = jpeg_data
 
-            # CRITICAL: Explicitly delete to free memory immediately
-            del jpeg_bytes
+                # CRITICAL: Explicitly delete to free memory immediately
+                del jpeg_bytes
 
-            # CRITICAL: Explicitly delete frame to free memory immediately
-            # Without this, Python's garbage collector may not free memory fast enough
-            del frame
+                # CRITICAL: Explicitly delete frame to free memory immediately
+                # Without this, Python's garbage collector may not free memory fast enough
+                del frame
+            except Exception as _frame_err:
+                # A single bad/corrupt frame (common on weak-signal cameras)
+                # must not tear down the capture session and force a full
+                # RTSP reconnect. Log sparingly and skip just this frame.
+                self._frame_error_count = getattr(self, '_frame_error_count', 0) + 1
+                if self._frame_error_count <= 3 or self._frame_error_count % 100 == 0:
+                    logger.warning(f"Error processing frame for {self.camera_name}: {_frame_err} (count={self._frame_error_count})")
+                continue
 
     def _get_next_segment_boundary(self) -> datetime:
         """Calculate the next segment boundary aligned to clock intervals

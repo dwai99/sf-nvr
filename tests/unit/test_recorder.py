@@ -864,3 +864,23 @@ class TestSegmentNoOverwrite:
         assert rec.current_segment_path != boundary_file
         assert rec.current_segment_path.name == f"{ts}_1.mp4"
         assert boundary_file.read_bytes() == b"PRIOR SEGMENT DATA"
+
+
+@pytest.mark.unit
+class TestStartStopRace:
+    """start() must refuse while the previous capture thread is still alive."""
+
+    @pytest.mark.asyncio
+    async def test_start_refuses_while_prior_thread_alive(self, temp_dir):
+        from unittest.mock import Mock
+        rec = RTSPRecorder(camera_name="Cam", rtsp_url="rtsp://x/s", storage_path=temp_dir)
+        rec.is_recording = False
+        prior = Mock()
+        prior.is_alive.return_value = True  # never dies within the join window
+        rec.record_thread = prior
+
+        result = await rec.start()
+
+        assert result is False, "must not start a second capture loop"
+        prior.join.assert_called_once_with(timeout=2.0)
+        assert rec.is_recording is False
