@@ -798,3 +798,38 @@ class TestActiveSegmentPaths:
         mgr.recorders["Cam A"] = rec
 
         assert mgr.get_active_segment_paths() == set()
+
+
+@pytest.mark.unit
+class TestCleanupFinalizesSegment:
+    """_cleanup() must finalize an open segment (disconnect/stop), not orphan it."""
+
+    def test_cleanup_finalizes_open_segment(self, temp_dir):
+        from unittest.mock import MagicMock, patch
+        rec = RTSPRecorder(camera_name="Cam", rtsp_url="rtsp://x/s", storage_path=temp_dir)
+        rec.playback_db = MagicMock()
+        seg = temp_dir / "Cam" / "seg.mp4"
+        seg.parent.mkdir(parents=True, exist_ok=True)
+        seg.write_bytes(b"x" * 1000)
+        rec.writer = MagicMock()
+        rec.current_segment_path = seg
+        rec.current_segment_start = datetime.now() - timedelta(seconds=10)
+
+        with patch('nvr.core.transcoder.get_transcoder', return_value=MagicMock()):
+            rec._cleanup()
+
+        # Segment was finalized in the DB and the writer released
+        rec.playback_db.update_segment_end.assert_called_once()
+        assert rec.writer is None
+        assert rec.actively_writing is False
+
+    def test_cleanup_no_segment_is_safe(self, temp_dir):
+        from unittest.mock import MagicMock
+        rec = RTSPRecorder(camera_name="Cam", rtsp_url="rtsp://x/s", storage_path=temp_dir)
+        rec.playback_db = MagicMock()
+        rec.writer = None
+        rec.current_segment_path = None
+
+        rec._cleanup()  # must not raise
+
+        rec.playback_db.update_segment_end.assert_not_called()

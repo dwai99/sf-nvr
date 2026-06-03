@@ -36,13 +36,13 @@ Severity: 🔴 Critical · 🟠 High · 🟡 Medium · ⚪ Low.
 
 ### 🟠 High
 - ⬜ **DST / clock-step corruption.** Naive `datetime.now()` subtraction (`recorder.py:402,432,622`) yields negative durations; wall-clock filenames collide and `INSERT OR REPLACE` (`playback_db.py`) overwrites the earlier segment's row *and* file. **Fix:** `time.monotonic()` for durations; uniquify filenames; clamp `duration >= 0`.
-- ⬜ **Non-atomic transcode replace.** `transcoder.py:263` does `unlink()` then `rename()`; a crash/IO error between them destroys the segment. **Fix:** `os.replace(transcoded, source)` (atomic, no prior unlink).
+- ✅ **Non-atomic transcode replace.** `transcoder.py` did `unlink()` then `rename()`; a crash/IO error between them destroyed the segment. **Fixed:** single atomic `os.replace(transcoded, source)`.
 - ⬜ **No transcode queue de-dup.** `transcoder.py:68-93` — same file can be queued twice and transcoded by two workers concurrently to the same path. **Fix:** track in-flight paths in a lock-guarded set.
 - ⬜ **In-place start/stop race.** `recorder.py:96-129` — streaming↔recording restart calls `stop()` (0.5s join) then `start()` while the old thread may still be in `capture.read()` (up to 60s RTSP timeout); `_cleanup()` releases `VideoCapture`/`VideoWriter` concurrently with the live thread. **Fix:** refuse start while prior thread alive; lower RTSP socket timeout; serialize cleanup.
 - ⬜ **Per-frame exception kills capture session.** No try/except around the per-frame body (`recorder.py:~291`); one bad frame triggers a full RTSP reconnect. **Fix:** wrap per-frame processing, log + continue.
 
 ### 🟡 Medium
-- ⬜ **Disconnect orphans open segment.** `recorder.py:243` + `_cleanup` releases the writer but never calls `_close_current_segment` → DB row stuck `end_time=NULL`, never transcoded. **Fix:** finalize + queue the open segment on disconnect.
+- ✅ **Disconnect orphans open segment.** `_cleanup` released the writer but never called `_close_current_segment` → DB row stuck `end_time=NULL`, never transcoded. **Fixed:** `_cleanup` now finalizes + queues the open segment (idempotent); also fires on clean stop. Especially relevant for flaky cameras (e.g. Alley's weak wifi) that reconnect often.
 - ⬜ **`buffered_frames` / `pre_motion_seconds` unimplemented.** `recorder.py:73` declared, never used → motion clips start late; documented knob silently does nothing.
 - ⬜ **`motion_timeout` config unused** (`recording_modes.py:53`); motion post-roll logic split between layers.
 - ⬜ **`23:59` schedule gap.** `recording_modes.py:253-257` inclusive end drops ~59s before midnight every day for "24/7" presets. **Fix:** `end=time(23,59,59)` or half-open interval.
@@ -70,7 +70,7 @@ Severity: 🔴 Critical · 🟠 High · 🟡 Medium · ⚪ Low.
 - ⬜ **H.264 transcode cache has no freshness check** (`playback_api.py:641`) — only `exists()`; stale transcode served forever after source changes. **Fix:** compare mtime like the speed cache does.
 - ⬜ **Range requests non-conformant.** `playback_api.py:136-169` — no `416` for unsatisfiable ranges (negative-length empty 206), `ValueError` 500 on malformed header, mis-parses suffix ranges (`bytes=-500`), missing Content-Length on 206. **Fix:** use Starlette `FileResponse` for simple cases (fixes blocking I/O too).
 - ⬜ **`/sd-card-gaps` serial blocking ONVIF calls per camera** (`playback_api.py:1349`) — one slow camera hangs the whole response; self-DoS. **Fix:** `asyncio.gather` + per-camera `wait_for`.
-- ⬜ **SQLite has no WAL / busy_timeout** (`playback_db.py:24`) — connection-per-call with defaults → `database is locked` under record+playback. **Fix:** `PRAGMA journal_mode=WAL`, `busy_timeout=5000`, `timeout=30`.
+- ✅ **SQLite has no WAL / busy_timeout** (`playback_db.py`) — connection-per-call with defaults → `database is locked` under record+playback. **Fixed:** `_get_connection` sets `journal_mode=WAL`, `busy_timeout=5000`, `timeout=30`. Verified WAL active live.
 - ⬜ **Long maintenance txns wrap ffprobe/file scans** (`playback_db.py:1071`) — hold write lock for minutes. **Fix:** do slow work outside the transaction.
 
 ### 🟡 Medium

@@ -20,9 +20,19 @@ class PlaybackDatabase:
 
     @contextmanager
     def _get_connection(self):
-        """Context manager for database connections"""
-        conn = sqlite3.connect(str(self.db_path))
+        """Context manager for database connections.
+
+        WAL mode + a busy timeout let the recorder keep writing segments while
+        playback/maintenance read concurrently, instead of failing with
+        'database is locked'.
+        """
+        conn = sqlite3.connect(str(self.db_path), timeout=30)
         conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=5000")
+        except sqlite3.Error as e:
+            logger.warning(f"Could not set SQLite pragmas: {e}")
         try:
             yield conn
             conn.commit()

@@ -624,7 +624,21 @@ class RTSPRecorder:
         return codec_map.get(self.codec.lower(), 'H264')
 
     def _cleanup(self) -> None:
-        """Clean up resources"""
+        """Clean up resources.
+
+        Finalizes any open segment first so a disconnect/stop doesn't leave an
+        orphaned NULL-end DB row and an untranscoded file. This matters for
+        flaky cameras (e.g. weak wifi) that reconnect frequently.
+        _close_current_segment() is idempotent (guards on self.writer).
+        """
+        try:
+            if self.writer and self.current_segment_path and self.playback_db:
+                self._close_current_segment()
+        except Exception as e:
+            logger.warning(f"Error finalizing segment on cleanup for {self.camera_name}: {e}")
+
+        self.actively_writing = False
+
         if self.writer:
             self.writer.release()
             self.writer = None

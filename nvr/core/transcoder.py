@@ -1,5 +1,6 @@
 """Background video transcoder for instant playback"""
 
+import os
 import subprocess
 import threading
 import queue
@@ -259,11 +260,12 @@ class BackgroundTranscoder:
                         transcoded_size = transcoded_path.stat().st_size / (1024 * 1024)  # MB
                         savings = original_size - transcoded_size
 
-                        # Delete original file
-                        source_path.unlink()
-
-                        # Rename transcoded file to original name
-                        transcoded_path.rename(source_path)
+                        # Atomically replace the original with the transcoded
+                        # version. os.replace() is a single rename syscall, so
+                        # there is no window where the original is deleted but
+                        # the new file isn't in place (a crash/IO error in the
+                        # old unlink()+rename() sequence destroyed the segment).
+                        os.replace(str(transcoded_path), str(source_path))
 
                         logger.info(f"Replaced original with transcoded version. Saved {savings:.1f}MB ({original_size:.1f}MB -> {transcoded_size:.1f}MB)")
                     except Exception as e:
