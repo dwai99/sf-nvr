@@ -1727,6 +1727,10 @@
             const startDateTime = `${date}T${startTimeWithSeconds}`;
             const endDateTime = `${date}T${endTimeWithSeconds}`;
 
+            // Sequence token: if a newer loadRecordings() starts while this one is
+            // awaiting, the stale response must not clobber the newer state.
+            const myReq = (loadRecordings._seq = (loadRecordings._seq || 0) + 1);
+
             const loader = showLoading('Loading recordings...');
             try {
                 // Load recordings for all cameras
@@ -1737,6 +1741,8 @@
 
                 const response = await fetch(url);
                 const data = await response.json();
+
+                if (myReq !== loadRecordings._seq) return;  // superseded by a newer request
 
                 currentRecordings = data.cameras;
 
@@ -1762,6 +1768,9 @@
                     `/api/playback/motion-events?start_time=${encodeURIComponent(startDateTime)}&end_time=${encodeURIComponent(endDateTime)}`
                 );
                 const motionData = await motionResponse.json();
+
+                if (myReq !== loadRecordings._seq) return;  // superseded by a newer request
+
                 motionEvents = motionData.cameras;
 
                 // Store time range in playback state

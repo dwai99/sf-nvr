@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from typing import Optional, List, Dict
 from datetime import datetime, timedelta
 from pathlib import Path
+import asyncio
 import logging
 import subprocess
 import tempfile
@@ -14,6 +15,26 @@ import os
 from nvr.core.config import config as nvr_config
 
 logger = logging.getLogger(__name__)
+
+# Per-output-path locks so concurrent requests for the same segment don't launch
+# competing ffmpeg processes (which raced on the output file and served partials).
+_transcode_locks: Dict[str, asyncio.Lock] = {}
+
+
+def _transcode_lock(key: str) -> asyncio.Lock:
+    lock = _transcode_locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _transcode_locks[key] = lock
+    return lock
+
+
+def _cache_is_fresh(cached: Path, source: Path) -> bool:
+    """True if a cached/transcoded file exists and is newer than its source."""
+    try:
+        return cached.exists() and cached.stat().st_mtime >= source.stat().st_mtime
+    except OSError:
+        return False
 
 # Cache directory for speed-processed videos
 SPEED_CACHE_DIR = nvr_config.storage_path / ".speed_cache"
@@ -608,57 +629,71 @@ async def stream_video_segment(
             else:
                 logger.info(f"Serving best matching segment (of {len(existing_segments)}): {file_path} (start: {segment_to_serve['start_time']})")
 
-            # Check if file needs transcoding (mp4v -> H.264 for browser compatibility)
-            probe_result = subprocess.run(
-                ['ffprobe', '-v', 'error', '-select_streams', 'v:0',
-                 '-show_entries', 'stream=codec_name', '-of', 'default=noprint_wrappers=1:nokey=1',
-                 str(file_path)],
-                capture_output=True,
-                text=True
-            )
-            codec = probe_result.stdout.strip()
+            # Check if file needs transcoding (mp4v -> H.264 for browser compatibility).
+            # ffprobe runs off the event loop with a timeout so a hung probe can't
+            # stall the whole server.
+            try:
+                probe_result = await asyncio.to_thread(
+                    subprocess.run,
+                    ['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+                     '-show_entries', 'stream=codec_name', '-of', 'default=noprint_wrappers=1:nokey=1',
+                     str(file_path)],
+                    capture_output=True, text=True, timeout=15,
+                )
+                codec = probe_result.stdout.strip()
+            except subprocess.TimeoutExpired:
+                logger.error(f"ffprobe timed out for {file_path}; serving original")
+                codec = ''
 
             if codec == 'mpeg4':
                 # Transcode mp4v to H.264 for browser compatibility
                 logger.info(f"Transcoding {file_path.name} from mp4v to H.264 for browser")
 
-                # First check if background transcoder already created the file (next to original)
+                # First check if the background transcoder already produced a fresh file
                 background_transcoded = file_path.parent / f"{file_path.stem}_h264{file_path.suffix}"
 
-                if background_transcoded.exists():
+                if _cache_is_fresh(background_transcoded, file_path):
                     logger.info(f"Using background-transcoded file: {background_transcoded.name}")
                     return range_requests_response(background_transcoded, request, content_type="video/mp4")
 
-                # Fall back to on-demand transcoding
-                # Create transcoded file in temp directory
-                from nvr.core.config import config as nvr_config
+                # Fall back to on-demand transcoding (cached under .transcoded)
                 transcode_dir = nvr_config.storage_path / ".transcoded"
                 transcode_dir.mkdir(exist_ok=True)
-
                 transcoded_file = transcode_dir / f"{file_path.stem}_h264.mp4"
 
-                # Check if already transcoded
-                if not transcoded_file.exists():
-                    logger.info(f"Creating transcoded file: {transcoded_file.name}")
-                    transcode_cmd = [
-                        'ffmpeg', '-i', str(file_path),
-                        '-c:v', 'libx264',  # H.264 codec
-                        '-preset', 'fast',  # Fast encoding
-                        '-crf', '23',  # Quality (lower = better, 23 is default)
-                        '-c:a', 'aac',  # AAC audio (if any)
-                        '-movflags', '+faststart',  # Enable streaming
-                        '-y',  # Overwrite
-                        str(transcoded_file)
-                    ]
-
-                    result = subprocess.run(transcode_cmd, capture_output=True)
-                    if result.returncode != 0:
-                        logger.error(f"Transcode failed: {result.stderr.decode()}")
-                        raise HTTPException(status_code=500, detail="Video transcode failed")
-
-                    logger.info(f"Transcode complete: {transcoded_file.name}")
-                else:
-                    logger.info(f"Using cached transcoded file: {transcoded_file.name}")
+                # Serialize concurrent requests for the SAME output, and re-check
+                # freshness inside the lock so a second waiter reuses the result.
+                async with _transcode_lock(str(transcoded_file)):
+                    if not _cache_is_fresh(transcoded_file, file_path):
+                        logger.info(f"Creating transcoded file: {transcoded_file.name}")
+                        # Write to a temp file then atomically publish, so a
+                        # concurrent/aborted request never serves a partial file.
+                        tmp_fd, tmp_path = tempfile.mkstemp(suffix='.mp4', dir=str(transcode_dir))
+                        os.close(tmp_fd)
+                        transcode_cmd = [
+                            'ffmpeg', '-i', str(file_path),
+                            '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+                            '-c:a', 'aac', '-movflags', '+faststart',
+                            '-y', tmp_path,
+                        ]
+                        try:
+                            result = await asyncio.to_thread(
+                                subprocess.run, transcode_cmd, capture_output=True, timeout=180,
+                            )
+                        except subprocess.TimeoutExpired:
+                            try: os.unlink(tmp_path)
+                            except OSError: pass
+                            logger.error(f"On-demand transcode timed out: {file_path.name}")
+                            raise HTTPException(status_code=504, detail="Video transcode timed out")
+                        if result.returncode != 0:
+                            try: os.unlink(tmp_path)
+                            except OSError: pass
+                            logger.error(f"Transcode failed: {result.stderr.decode(errors='ignore')[-500:]}")
+                            raise HTTPException(status_code=500, detail="Video transcode failed")
+                        os.replace(tmp_path, str(transcoded_file))
+                        logger.info(f"Transcode complete: {transcoded_file.name}")
+                    else:
+                        logger.info(f"Using cached transcoded file: {transcoded_file.name}")
 
                 # Use transcoded file as the base for serving
                 file_to_serve = transcoded_file

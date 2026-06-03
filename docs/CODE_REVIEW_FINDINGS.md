@@ -66,8 +66,8 @@ Severity: 🔴 Critical · 🟠 High · 🟡 Medium · ⚪ Low.
 - ✅ **`export_clip` broken.** `playback_api.py:1088` called `stream_video_segment(request.camera_id, request.start_time, request.end_time)` but the signature is `(camera_id, request, background_tasks, ...)` — the string bound to `request`, `.headers.get()` threw, export always 500'd. **Fixed:** call with keyword args + real injected `Request`/`BackgroundTasks`, and `except HTTPException: raise` so 404/202 aren't masked as 500. Verified live (HTTP 200, `video/mp4`). The frontend's actual export path (`GET /api/playback/video` via `performExport`) was also hardened — see frontend section.
 
 ### 🟠 High
-- ⬜ **Synchronous transcode on request path.** `playback_api.py:612,654` run `ffprobe`/`ffmpeg` via blocking `subprocess.run`, no timeout, blocking the event loop for the whole transcode; TOCTOU cache race serves half-written files. **Fix:** `asyncio.to_thread` + timeout + per-path lock + temp-file-then-replace.
-- ⬜ **H.264 transcode cache has no freshness check** (`playback_api.py:641`) — only `exists()`; stale transcode served forever after source changes. **Fix:** compare mtime like the speed cache does.
+- ✅ **Synchronous transcode on request path.** **Fixed:** `ffprobe`/`ffmpeg` now run via `asyncio.to_thread` with timeouts (15s/180s), so playback of a legacy mp4v segment no longer freezes the server; a per-output `asyncio.Lock` serializes concurrent requests for the same file, and the transcode writes to a temp file then `os.replace`s atomically (never serves a partial). Verified: video serves (206), API ~8ms during.
+- ✅ **H.264 transcode cache has no freshness check** — **Fixed:** `_cache_is_fresh()` compares the cached transcode's mtime to the source (applied to both the background-transcoded and on-demand paths).
 - ⬜ **Range requests non-conformant.** `playback_api.py:136-169` — no `416` for unsatisfiable ranges (negative-length empty 206), `ValueError` 500 on malformed header, mis-parses suffix ranges (`bytes=-500`), missing Content-Length on 206. **Fix:** use Starlette `FileResponse` for simple cases (fixes blocking I/O too).
 - ⬜ **`/sd-card-gaps` serial blocking ONVIF calls per camera** (`playback_api.py:1349`) — one slow camera hangs the whole response; self-DoS. **Fix:** `asyncio.gather` + per-camera `wait_for`.
 - ✅ **SQLite has no WAL / busy_timeout** (`playback_db.py`) — connection-per-call with defaults → `database is locked` under record+playback. **Fixed:** `_get_connection` sets `journal_mode=WAL`, `busy_timeout=5000`, `timeout=30`. Verified WAL active live.
@@ -166,7 +166,7 @@ Severity: 🔴 Critical · 🟠 High · 🟡 Medium · ⚪ Low.
 
 ### 🟠 High
 - ✅ `skipTime`/frame-step force-resume playback — resolved by removing the duplicate `skipTime` that routed through `seekToTime`; the surviving `skipTime` nudges `currentTime` directly without forcing play.
-- ⬜ Stale `loadRecordings` responses clobber newer state → timeline/video desync (`playback.html:1710`). **Fix:** request token / `AbortController`.
+- ✅ Stale `loadRecordings` responses clobbered newer state → timeline/video desync (`playback.html`). **Fixed:** per-call sequence token (`loadRecordings._seq`) makes a superseded response bail before applying state. Verified with a rapid double-load.
 - ⬜ `onloadedmetadata`/`onerror` reassigned repeatedly; `onerror` `replaceChildren` destroys the `<video>` still referenced (`playback.html:2568,2016`).
 - ⬜ Always-on 100ms interval does DOM writes + regex-parses `src` forever, even when paused/backgrounded (`playback.html:3642`).
 - ✅ **Export reports success on failure** (`playback.html:3335`) — looped `a.click()` (browsers drop all but first), no response check, always-green toast. **Fixed:** `performExport` now fetches each camera, checks `response.ok`, downloads via blob URL (revoked after), and reports per-camera success/failure counts.
