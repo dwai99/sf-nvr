@@ -80,6 +80,9 @@ class RTSPRecorder:
         self._last_segment_size = -1         # bytes at last check (-1 = no baseline)
         self._frames_written_total = 0       # monotonic count of frames written
         self._frames_at_last_check = 0       # frame count at last size sample
+        # Monotonic clock at segment start — used for duration so DST/NTP steps
+        # can't produce negative or wrong durations (wall-clock subtraction does)
+        self._segment_start_monotonic = 0.0
         self.buffered_frames = []  # Pre-motion buffer for motion-only mode
 
         # Callbacks
@@ -418,9 +421,10 @@ class RTSPRecorder:
             self.writer.release()
             self.writer = None
 
-            # Calculate actual segment duration and size
+            # Calculate actual segment duration and size. Use the monotonic clock
+            # for duration (immune to DST/NTP backward steps) and clamp to >= 0.
             end_time = datetime.now()
-            duration = int((end_time - self.current_segment_start).total_seconds())
+            duration = max(0, int(time.monotonic() - self._segment_start_monotonic))
             file_size = self.current_segment_path.stat().st_size if self.current_segment_path.exists() else 0
 
             # Update database with segment info
@@ -523,9 +527,9 @@ class RTSPRecorder:
         if self.writer and self.current_segment_path and self.playback_db:
             self.writer.release()
 
-            # Calculate actual segment duration and size
+            # Calculate actual segment duration and size (monotonic, clamped)
             end_time = datetime.now()
-            duration = int((end_time - self.current_segment_start).total_seconds())
+            duration = max(0, int(time.monotonic() - self._segment_start_monotonic))
             file_size = self.current_segment_path.stat().st_size if self.current_segment_path.exists() else 0
 
             # Update database with segment info
@@ -555,9 +559,19 @@ class RTSPRecorder:
         boundary_minute = boundary_minutes % 60
 
         self.current_segment_start = datetime(now.year, now.month, now.day, boundary_hour, boundary_minute, 0)
+        self._segment_start_monotonic = time.monotonic()
         timestamp = self.current_segment_start.strftime("%Y%m%d_%H%M%S")
         filename = f"{timestamp}.{self.container}"
         filepath = self.camera_storage / filename
+        # Never overwrite an existing segment file. The boundary timestamp can
+        # repeat — DST "fall back" replays an hour, and a restart can re-enter
+        # the same boundary — and the old code silently overwrote the prior
+        # segment (and its DB row via INSERT OR REPLACE). Uniquify instead.
+        if filepath.exists():
+            n = 1
+            while filepath.exists():
+                filepath = self.camera_storage / f"{timestamp}_{n}.{self.container}"
+                n += 1
         self.current_segment_path = filepath
 
         # Create video writer

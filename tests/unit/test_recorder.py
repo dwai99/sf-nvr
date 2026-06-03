@@ -833,3 +833,34 @@ class TestCleanupFinalizesSegment:
         rec._cleanup()  # must not raise
 
         rec.playback_db.update_segment_end.assert_not_called()
+
+
+@pytest.mark.unit
+class TestSegmentNoOverwrite:
+    """_start_new_segment must never overwrite an existing segment file
+    (DST fall-back repeats an hour; a restart can re-enter the same boundary)."""
+
+    def test_existing_segment_file_is_not_overwritten(self, temp_dir):
+        from unittest.mock import patch, MagicMock
+        from datetime import datetime as real_dt
+        import nvr.core.recorder as rec_mod
+
+        rec = RTSPRecorder(camera_name="Cam", rtsp_url="rtsp://x/s", storage_path=temp_dir)
+
+        fixed = real_dt(2026, 6, 2, 14, 32, 10)  # boundary -> 14:30:00
+        ts = "20260602_143000"
+        boundary_file = rec.camera_storage / f"{ts}.mp4"
+        boundary_file.write_bytes(b"PRIOR SEGMENT DATA")
+
+        mock_writer = MagicMock()
+        mock_writer.isOpened.return_value = True
+
+        with patch.object(rec_mod, 'datetime', wraps=real_dt) as mdt, \
+             patch('cv2.VideoWriter', return_value=mock_writer):
+            mdt.now.return_value = fixed
+            rec._start_new_segment(fps=15, width=640, height=480)
+
+        # New segment must use a uniquified name, leaving the prior file intact
+        assert rec.current_segment_path != boundary_file
+        assert rec.current_segment_path.name == f"{ts}_1.mp4"
+        assert boundary_file.read_bytes() == b"PRIOR SEGMENT DATA"

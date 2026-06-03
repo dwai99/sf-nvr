@@ -1772,6 +1772,20 @@
             const saveBtn = document.querySelector('.save-bar .btn-primary');
             if (saveBtn) saveBtn.disabled = true;
             try {
+                // Preserve existing storage config and only override the keys
+                // whose inputs are actually present. The Storage tab's inputs
+                // only exist after updateStorageStatus() renders them; without
+                // this, saving from any other tab reset cleanup thresholds and
+                // zeroed reserved_space_gb (disk could then fill with no reserve).
+                const storageCfg = Object.assign({}, config.storage || {});
+                if (document.getElementById('cleanup-threshold'))
+                    storageCfg.cleanup_threshold_percent = parseFloat(getElementValue('cleanup-threshold', '85'));
+                if (document.getElementById('target-percent'))
+                    storageCfg.target_percent = parseFloat(getElementValue('target-percent', '75'));
+                if (document.getElementById('reserved-space-gb'))
+                    storageCfg.reserved_space_gb = parseFloat(getElementValue('reserved-space-gb', '0'));
+                storageCfg.retention_days = parseInt(getElementValue('retention-days', (config.recording && config.recording.retention_days) || 7));
+
                 // Gather all settings with safe defaults
                 const updatedConfig = {
                     recording: {
@@ -1802,12 +1816,7 @@
                         auto_discover: isToggleOn('onvif-auto-discover'),
                         discovery_timeout: parseInt(getElementValue('onvif-timeout', '2'))
                     },
-                    storage: {
-                        cleanup_threshold_percent: parseFloat(getElementValue('cleanup-threshold', '85')),
-                        target_percent: parseFloat(getElementValue('target-percent', '75')),
-                        reserved_space_gb: parseFloat(getElementValue('reserved-space-gb', '0')),
-                        retention_days: parseInt(getElementValue('retention-days', '7'))
-                    },
+                    storage: storageCfg,
                     cameras: config.cameras || [] // Keep existing cameras
                 };
 

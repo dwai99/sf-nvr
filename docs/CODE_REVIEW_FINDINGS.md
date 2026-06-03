@@ -35,7 +35,7 @@ Severity: 🔴 Critical · 🟠 High · 🟡 Medium · ⚪ Low.
 - ✅ **Motion detection blocked the event loop.** `motion.py` ran `cv2.imdecode` + full contour detection synchronously on the asyncio loop, every frame × every camera, re-decoding the same cached frame every 10ms. **Fixed:** `monitor_recorder` now runs decode+detection in a worker thread (`asyncio.to_thread`), skips frames already processed (identity check on the cached buffer), and polls at 0.2s. The shared `MotionDetector` got a lock so the live-view overlay and the motion thread can call `process_frame` concurrently. Verified live: API ~2ms avg under load, live overlay still streams.
 
 ### 🟠 High
-- ⬜ **DST / clock-step corruption.** Naive `datetime.now()` subtraction (`recorder.py:402,432,622`) yields negative durations; wall-clock filenames collide and `INSERT OR REPLACE` (`playback_db.py`) overwrites the earlier segment's row *and* file. **Fix:** `time.monotonic()` for durations; uniquify filenames; clamp `duration >= 0`.
+- ✅ **DST / clock-step corruption.** **Fixed:** segment duration now uses `time.monotonic()` clamped to `>= 0` (immune to DST/NTP backward steps); `_start_new_segment` uniquifies the filename if it already exists, so a repeated boundary (DST fall-back or restart-within-boundary) no longer overwrites the prior segment's file or its DB row.
 - ✅ **Non-atomic transcode replace.** `transcoder.py` did `unlink()` then `rename()`; a crash/IO error between them destroyed the segment. **Fixed:** single atomic `os.replace(transcoded, source)`.
 - ⬜ **No transcode queue de-dup.** `transcoder.py:68-93` — same file can be queued twice and transcoded by two workers concurrently to the same path. **Fix:** track in-flight paths in a lock-guarded set.
 - ⬜ **In-place start/stop race.** `recorder.py:96-129` — streaming↔recording restart calls `stop()` (0.5s join) then `start()` while the old thread may still be in `capture.read()` (up to 60s RTSP timeout); `_cleanup()` releases `VideoCapture`/`VideoWriter` concurrently with the live thread. **Fix:** refuse start while prior thread alive; lower RTSP socket timeout; serialize cleanup.
@@ -75,7 +75,7 @@ Severity: 🔴 Critical · 🟠 High · 🟡 Medium · ⚪ Low.
 
 ### 🟡 Medium
 - ⬜ **Path-traversal check prefix-bypassable.** `playback_api.py:707` uses `str.startswith` on resolved paths → `/Volumes/Video Storage_backup/...` passes. **Fix:** `Path.is_relative_to` or compare with trailing `os.sep`; restrict to `.mp4`.
-- ⬜ **camera_id/camera_name fallback drops legacy rows.** `playback_db.py:420,503` queries by id, falls back to name *only if empty* → mixed-keying cameras silently lose rows. **Fix:** single `(camera_id = ? OR camera_name = ?)` query + dedupe.
+- ✅ **camera_id/camera_name fallback dropped legacy rows.** **Fixed:** `get_segments_in_range` and `get_motion_events_in_range` now use a single `(camera_id = ? OR camera_name = ?)` query, so mixed-keying cameras no longer silently lose recordings/motion events.
 - ⬜ **Inconsistent overlap operators** between single- vs all-camera range queries (`playback_db.py:422` vs `472`) → boundary segments differ between views.
 - ⬜ **Blocking file-iterator generators** (`playback_api.py:151`) block the loop on slow storage.
 - ⬜ **Redundant `exists()`/`stat()` per segment** (`playback_api.py:507-547`) — hundreds of syscalls on full-day requests.
@@ -193,7 +193,7 @@ Severity: 🔴 Critical · 🟠 High · 🟡 Medium · ⚪ Low.
 ### 🔴 Critical
 - ✅ **Recording badge ignored `actively_writing`/`write_failed`** — initial render (`createCameraCard`, `index.html:2183`) showed green "REC" on first paint for a failed camera. **Fixed:** initial render now uses the same REC / NO DISK / STOPPED logic as the poll path. *(Remaining ⬜: a connected-but-stalled writer still shows REC until the growth check trips; consider an explicit "ARMED" state for motion-only idle.)*
 - ✅ **Credentials shipped to browser** (`index.html:1881` consumed `rtsp_url` every 5s; `settings.html` round-tripped plaintext passwords). **Fixed:** `/api/cameras` no longer returns `rtsp_url`; `/api/config` masks passwords + RTSP creds (`SECRET_MASK`); `update_config` restores secrets from stored config on save (write-only), so editing other settings never wipes passwords. Verified: save round-trip preserves all 7 camera passwords.
-- ⬜ **Settings save clobbers cleanup config with defaults** (`settings.html:1805`) if the Storage tab wasn't rendered → can zero `reserved_space_gb`. **Fix:** only persist keys whose inputs exist / seed from loaded config.
+- ✅ **Settings save clobbered cleanup config with defaults** (`settings.html`) → could zero `reserved_space_gb`. **Fixed:** `saveSettings` preserves existing `config.storage` and only overrides keys whose inputs are actually present.
 - ⬜ **Stored XSS on Settings** (`settings.html:1162,1872,1443`) — no `escapeHtml`; a renamed camera or hostile ONVIF device name executes script on the admin page. **Fix:** escape all interpolated strings; use `dataset`+listeners.
 
 ### 🟠 High

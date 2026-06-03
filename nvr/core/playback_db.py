@@ -426,27 +426,17 @@ class PlaybackDatabase:
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            # Query by camera_id first (uses index), fallback to camera_name only if needed
+            # Match camera_id OR camera_name in a single query. The old
+            # "query by id, fall back to name only if empty" pattern silently
+            # dropped legacy name-keyed rows for any camera that has a mix of
+            # both (e.g. mid-migration), so playback omitted those recordings.
             cursor.execute("""
                 SELECT * FROM recording_segments
-                WHERE camera_id = ?
+                WHERE (camera_id = ? OR camera_name = ?)
                 AND start_time < ?
                 AND (end_time > ? OR end_time IS NULL)
                 ORDER BY start_time ASC
-            """, (camera_id, end_time, start_time))
-
-            rows = cursor.fetchall()
-            if rows:
-                return [dict(row) for row in rows]
-
-            # Fallback: try matching by camera_name (backward compatibility)
-            cursor.execute("""
-                SELECT * FROM recording_segments
-                WHERE camera_name = ?
-                AND start_time < ?
-                AND (end_time > ? OR end_time IS NULL)
-                ORDER BY start_time ASC
-            """, (camera_id, end_time, start_time))
+            """, (camera_id, camera_id, end_time, start_time))
 
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
@@ -509,25 +499,14 @@ class PlaybackDatabase:
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            # Query by camera_id first (uses index), fallback to camera_name
+            # Match camera_id OR camera_name in one query (the id-then-name
+            # fallback dropped legacy name-keyed rows for mixed-keying cameras).
             cursor.execute("""
                 SELECT * FROM motion_events
-                WHERE camera_id = ?
+                WHERE (camera_id = ? OR camera_name = ?)
                 AND event_time BETWEEN ? AND ?
                 ORDER BY event_time ASC
-            """, (camera_id, start_time, end_time))
-
-            rows = cursor.fetchall()
-            if rows:
-                return [dict(row) for row in rows]
-
-            # Fallback: try matching by camera_name
-            cursor.execute("""
-                SELECT * FROM motion_events
-                WHERE camera_name = ?
-                AND event_time BETWEEN ? AND ?
-                ORDER BY event_time ASC
-            """, (camera_id, start_time, end_time))
+            """, (camera_id, camera_id, start_time, end_time))
 
             rows = cursor.fetchall()
             return [dict(row) for row in rows]

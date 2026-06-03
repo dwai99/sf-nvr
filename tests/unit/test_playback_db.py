@@ -719,3 +719,25 @@ class TestDatabaseMaintenanceExtended:
             # Verify segment was removed from database
             segments = playback_db.get_all_segments("test_camera")
             assert len(segments) == 0
+
+
+@pytest.mark.unit
+class TestCameraIdNameMatching:
+    """get_*_in_range must match camera_id OR camera_name (not drop legacy rows)."""
+
+    def test_segments_match_id_and_name(self, playback_db):
+        from datetime import datetime, timedelta
+        base = datetime(2026, 6, 2, 12, 0, 0)
+        # Row A: keyed by camera_id == query value
+        playback_db.add_segment(camera_id='cam_new', camera_name='Patio',
+                                file_path='/x/a.mp4', start_time=base,
+                                end_time=base + timedelta(minutes=5))
+        # Row B: legacy — camera_id differs, but camera_name == query value
+        playback_db.add_segment(camera_id='legacy', camera_name='cam_new',
+                                file_path='/x/b.mp4', start_time=base + timedelta(minutes=5),
+                                end_time=base + timedelta(minutes=10))
+
+        rows = playback_db.get_segments_in_range('cam_new', base - timedelta(minutes=1),
+                                                 base + timedelta(minutes=11))
+        paths = sorted(r['file_path'] for r in rows)
+        assert paths == ['/x/a.mp4', '/x/b.mp4'], "must return both id- and name-matched rows"
