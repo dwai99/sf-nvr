@@ -70,7 +70,18 @@ echo ""
 # max_delay: 10 seconds buffer for network jitter
 export OPENCV_FFMPEG_CAPTURE_OPTIONS="rtsp_transport;tcp|timeout;60000000|stimeout;10000000|max_delay;10000000"
 
-python3 main.py > "$LOG_FILE" 2>&1 &
+# Use the project venv's interpreter explicitly. Relying on a bare `python3`
+# resolves against the caller's PATH, which intermittently picks the system
+# Python (missing uvicorn/av/etc.) and makes startup fail non-deterministically.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -x "$SCRIPT_DIR/venv/bin/python" ]; then
+    PYTHON="$SCRIPT_DIR/venv/bin/python"
+else
+    echo -e "${RED}✗ venv not found at $SCRIPT_DIR/venv — run: python3 -m venv venv && venv/bin/pip install -r requirements.txt${NC}"
+    exit 1
+fi
+
+"$PYTHON" main.py > "$LOG_FILE" 2>&1 &
 SERVER_PID=$!
 echo "$SERVER_PID" > "$PID_FILE"
 

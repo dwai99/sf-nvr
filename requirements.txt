@@ -34,5 +34,8 @@ python-dateutil>=2.8.2
 psutil>=5.9.0
 
 # WebRTC support for low-latency streaming
-aiortc>=1.6.0
-av>=10.0.0
+# aiortc 1.10+ requires av 13+, and av 14+ dropped Python 3.9 support (no wheels).
+# Cap to the last versions with Python 3.9 wheels so `pip install` doesn't fall
+# back to a source build of PyAV (which needs ffmpeg 7 + pkg-config + a compiler).
+aiortc>=1.6.0,<1.10.0
+av>=10.0.0,<13.0.0
