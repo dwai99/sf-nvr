@@ -1,7 +1,6 @@
 """Database maintenance tasks for NVR system"""
 
 import logging
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -17,10 +16,10 @@ def run_maintenance(playback_db):
         Dict with maintenance results
     """
     results = {
-        'orphaned_files_cleaned': 0,
-        'incomplete_segments_cleaned': 0,
-        'segments_repaired': 0,
-        'database_optimized': False
+        "orphaned_files_cleaned": 0,
+        "incomplete_segments_cleaned": 0,
+        "segments_repaired": 0,
+        "database_optimized": False,
     }
 
     logger.info("Starting database maintenance...")
@@ -28,7 +27,7 @@ def run_maintenance(playback_db):
     # 1. Repair segments with missing end_times (from crashes/restarts)
     try:
         repair_results = playback_db.repair_missing_end_times()
-        results['segments_repaired'] = repair_results.get('repaired', 0)
+        results["segments_repaired"] = repair_results.get("repaired", 0)
         logger.info(f"Repaired {results['segments_repaired']} segments with missing end_times")
     except Exception as e:
         logger.error(f"Error repairing segment end_times: {e}")
@@ -39,13 +38,16 @@ def run_maintenance(playback_db):
     # while the recordings are fine and simply offline.
     try:
         from nvr.core.config import config
+
         if not config.is_storage_writable():
-            logger.warning("Storage not writable/mounted - skipping orphaned-entry cleanup "
-                           "to avoid wiping segment metadata for offline recordings")
+            logger.warning(
+                "Storage not writable/mounted - skipping orphaned-entry cleanup "
+                "to avoid wiping segment metadata for offline recordings"
+            )
         else:
             storage_path = config.storage_path
             deleted = playback_db.cleanup_deleted_files(storage_path)
-            results['orphaned_files_cleaned'] = deleted
+            results["orphaned_files_cleaned"] = deleted
             logger.info(f"Cleaned up {deleted} orphaned database entries")
     except Exception as e:
         logger.error(f"Error cleaning up orphaned entries: {e}")
@@ -53,7 +55,7 @@ def run_maintenance(playback_db):
     # 2. Handle old incomplete segments (older than 24 hours)
     try:
         cleaned = playback_db.cleanup_old_incomplete_segments(hours_threshold=24)
-        results['incomplete_segments_cleaned'] = cleaned
+        results["incomplete_segments_cleaned"] = cleaned
         logger.info(f"Cleaned up {cleaned} old incomplete segments")
     except Exception as e:
         logger.error(f"Error cleaning up incomplete segments: {e}")
@@ -61,7 +63,7 @@ def run_maintenance(playback_db):
     # 3. Optimize database
     try:
         playback_db.optimize_database()
-        results['database_optimized'] = True
+        results["database_optimized"] = True
         logger.info("Database optimization completed")
     except Exception as e:
         logger.error(f"Error optimizing database: {e}")
@@ -103,25 +105,7 @@ def schedule_maintenance(playback_db, interval_hours: int = 24, run_on_startup: 
     # Start maintenance thread
     thread = threading.Thread(target=maintenance_loop, daemon=True, name="DBMaintenance")
     thread.start()
-    logger.info(f"Database maintenance scheduled every {interval_hours} hours (startup repair enabled: {run_on_startup})")
+    logger.info(
+        f"Database maintenance scheduled every {interval_hours} hours (startup repair enabled: {run_on_startup})"
+    )
     return thread
-
-
-def run_segment_repair(playback_db):
-    """
-    Run just the segment repair task (for manual trigger or more frequent runs).
-
-    Args:
-        playback_db: PlaybackDatabase instance
-
-    Returns:
-        Dict with repair results
-    """
-    logger.info("Running segment repair...")
-    try:
-        results = playback_db.repair_missing_end_times()
-        logger.info(f"Segment repair completed: {results}")
-        return results
-    except Exception as e:
-        logger.error(f"Error in segment repair: {e}")
-        return {'repaired': 0, 'failed': 0, 'missing': 0, 'error': str(e)}

@@ -3,7 +3,7 @@
 import logging
 from enum import Enum
 from datetime import datetime, time
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, List
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -11,15 +11,17 @@ logger = logging.getLogger(__name__)
 
 class RecordingMode(str, Enum):
     """Recording mode options"""
-    CONTINUOUS = "continuous"           # Always recording (24/7)
-    MOTION_ONLY = "motion_only"        # Only record when motion detected
-    SCHEDULED = "scheduled"            # Record during specific hours
+
+    CONTINUOUS = "continuous"  # Always recording (24/7)
+    MOTION_ONLY = "motion_only"  # Only record when motion detected
+    SCHEDULED = "scheduled"  # Record during specific hours
     MOTION_SCHEDULED = "motion_scheduled"  # Motion detection during specific hours
 
 
 @dataclass
 class TimeRange:
     """Represents a time range for scheduled recording"""
+
     start: time
     end: time
     days: List[int]  # 0=Monday, 6=Sunday
@@ -46,11 +48,12 @@ class TimeRange:
 @dataclass
 class RecordingConfig:
     """Configuration for a camera's recording behavior"""
+
     mode: RecordingMode = RecordingMode.CONTINUOUS
     schedules: List[TimeRange] = None  # Used for SCHEDULED and MOTION_SCHEDULED modes
-    pre_motion_seconds: int = 5        # Seconds to record before motion event
-    post_motion_seconds: int = 10      # Seconds to record after motion ends
-    motion_timeout: int = 5            # Seconds of no motion before stopping recording
+    pre_motion_seconds: int = 5  # Seconds to record before motion event
+    post_motion_seconds: int = 10  # Seconds to record after motion ends
+    motion_timeout: int = 5  # Seconds of no motion before stopping recording
 
     def __post_init__(self):
         if self.schedules is None:
@@ -118,7 +121,7 @@ class RecordingModeManager:
         schedules: Optional[List[TimeRange]] = None,
         pre_motion_seconds: int = 5,
         post_motion_seconds: int = 10,
-        motion_timeout: int = 5
+        motion_timeout: int = 5,
     ):
         """Set recording mode for a specific camera"""
         self.camera_configs[camera_name] = RecordingConfig(
@@ -126,7 +129,7 @@ class RecordingModeManager:
             schedules=schedules or [],
             pre_motion_seconds=pre_motion_seconds,
             post_motion_seconds=post_motion_seconds,
-            motion_timeout=motion_timeout
+            motion_timeout=motion_timeout,
         )
         logger.info(f"Set {camera_name} to {mode} mode")
 
@@ -134,12 +137,7 @@ class RecordingModeManager:
         """Get recording configuration for a camera"""
         return self.camera_configs.get(camera_name, self.default_config)
 
-    def should_record(
-        self,
-        camera_name: str,
-        has_motion: bool = False,
-        dt: Optional[datetime] = None
-    ) -> bool:
+    def should_record(self, camera_name: str, has_motion: bool = False, dt: Optional[datetime] = None) -> bool:
         """Check if camera should be recording right now"""
         config = self.get_camera_config(camera_name)
         return config.should_record_now(has_motion, dt)
@@ -157,102 +155,11 @@ class RecordingModeManager:
 
 # Helper functions for creating common schedules
 
-def create_business_hours(
-    start_hour: int = 9,
-    end_hour: int = 17,
-    weekdays_only: bool = True
-) -> TimeRange:
-    """
-    Create a business hours schedule
-
-    Args:
-        start_hour: Starting hour (24-hour format)
-        end_hour: Ending hour (24-hour format)
-        weekdays_only: If True, only Monday-Friday
-
-    Returns:
-        TimeRange for business hours
-    """
-    days = list(range(5)) if weekdays_only else list(range(7))  # 0-4 = Mon-Fri, 0-6 = Mon-Sun
-    return TimeRange(
-        start=time(hour=start_hour, minute=0),
-        end=time(hour=end_hour, minute=0),
-        days=days
-    )
-
-
-def create_night_hours(
-    start_hour: int = 22,
-    end_hour: int = 6,
-    all_days: bool = True
-) -> TimeRange:
-    """
-    Create a night hours schedule (handles overnight)
-
-    Args:
-        start_hour: Starting hour (24-hour format, e.g., 22 for 10 PM)
-        end_hour: Ending hour (24-hour format, e.g., 6 for 6 AM)
-        all_days: If True, applies to all days
-
-    Returns:
-        TimeRange for night hours
-    """
-    days = list(range(7)) if all_days else list(range(5))
-    return TimeRange(
-        start=time(hour=start_hour, minute=0),
-        end=time(hour=end_hour, minute=0),
-        days=days
-    )
-
 
 def create_weekend_schedule() -> TimeRange:
     """Create a weekend-only schedule (Saturday-Sunday, all day)"""
     return TimeRange(
         start=time(hour=0, minute=0),
         end=time(hour=23, minute=59, second=59),  # inclusive end — avoid a ~59s gap before midnight
-        days=[5, 6]  # Saturday, Sunday
+        days=[5, 6],  # Saturday, Sunday
     )
-
-
-def create_custom_schedule(
-    start_hour: int,
-    start_minute: int,
-    end_hour: int,
-    end_minute: int,
-    days: List[int]
-) -> TimeRange:
-    """
-    Create a custom time range
-
-    Args:
-        start_hour: Starting hour (0-23)
-        start_minute: Starting minute (0-59)
-        end_hour: Ending hour (0-23)
-        end_minute: Ending minute (0-59)
-        days: List of weekdays (0=Monday, 6=Sunday)
-
-    Returns:
-        TimeRange for the specified schedule
-    """
-    return TimeRange(
-        start=time(hour=start_hour, minute=start_minute),
-        end=time(hour=end_hour, minute=end_minute),
-        days=days
-    )
-
-
-# Example usage and presets
-
-def get_preset_schedules() -> Dict[str, List[TimeRange]]:
-    """Get common preset schedules"""
-    return {
-        "business_hours": [create_business_hours()],
-        "business_hours_extended": [create_business_hours(start_hour=8, end_hour=18)],
-        "after_hours": [create_night_hours()],
-        "weekends_only": [create_weekend_schedule()],
-        "24_7": [TimeRange(
-            start=time(hour=0, minute=0),
-            end=time(hour=23, minute=59, second=59),  # inclusive end — avoid a ~59s gap before midnight
-            days=list(range(7))
-        )]
-    }

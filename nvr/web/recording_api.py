@@ -3,7 +3,7 @@
 import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import Optional, List, Dict
+from typing import Optional, List
 from datetime import time
 
 logger = logging.getLogger(__name__)
@@ -13,6 +13,7 @@ router = APIRouter()
 
 class TimeRangeModel(BaseModel):
     """Time range for scheduled recording"""
+
     start_hour: int
     start_minute: int = 0
     end_hour: int
@@ -22,6 +23,7 @@ class TimeRangeModel(BaseModel):
 
 class RecordingModeConfig(BaseModel):
     """Recording mode configuration for a camera"""
+
     mode: str  # continuous, motion_only, scheduled, motion_scheduled
     schedules: Optional[List[TimeRangeModel]] = None
     pre_motion_seconds: int = 5
@@ -31,6 +33,7 @@ class RecordingModeConfig(BaseModel):
 
 class RecordingModeUpdate(BaseModel):
     """Update recording mode for a camera"""
+
     camera_name: str
     config: RecordingModeConfig
 
@@ -49,44 +52,48 @@ async def get_recording_modes():
             schedules = []
             if config.schedules:
                 for schedule in config.schedules:
-                    schedules.append({
-                        'start_hour': schedule.start.hour,
-                        'start_minute': schedule.start.minute,
-                        'end_hour': schedule.end.hour,
-                        'end_minute': schedule.end.minute,
-                        'days': schedule.days
-                    })
+                    schedules.append(
+                        {
+                            "start_hour": schedule.start.hour,
+                            "start_minute": schedule.start.minute,
+                            "end_hour": schedule.end.hour,
+                            "end_minute": schedule.end.minute,
+                            "days": schedule.days,
+                        }
+                    )
 
             modes[camera_name] = {
-                'mode': config.mode.value,
-                'schedules': schedules,
-                'pre_motion_seconds': config.pre_motion_seconds,
-                'post_motion_seconds': config.post_motion_seconds,
-                'motion_timeout': config.motion_timeout
+                "mode": config.mode.value,
+                "schedules": schedules,
+                "pre_motion_seconds": config.pre_motion_seconds,
+                "post_motion_seconds": config.post_motion_seconds,
+                "motion_timeout": config.motion_timeout,
             }
 
         # Add default config
         default_schedules = []
         if recording_mode_manager.default_config.schedules:
             for schedule in recording_mode_manager.default_config.schedules:
-                default_schedules.append({
-                    'start_hour': schedule.start.hour,
-                    'start_minute': schedule.start.minute,
-                    'end_hour': schedule.end.hour,
-                    'end_minute': schedule.end.minute,
-                    'days': schedule.days
-                })
+                default_schedules.append(
+                    {
+                        "start_hour": schedule.start.hour,
+                        "start_minute": schedule.start.minute,
+                        "end_hour": schedule.end.hour,
+                        "end_minute": schedule.end.minute,
+                        "days": schedule.days,
+                    }
+                )
 
         return {
-            'success': True,
-            'default_mode': {
-                'mode': recording_mode_manager.default_config.mode.value,
-                'schedules': default_schedules,
-                'pre_motion_seconds': recording_mode_manager.default_config.pre_motion_seconds,
-                'post_motion_seconds': recording_mode_manager.default_config.post_motion_seconds,
-                'motion_timeout': recording_mode_manager.default_config.motion_timeout
+            "success": True,
+            "default_mode": {
+                "mode": recording_mode_manager.default_config.mode.value,
+                "schedules": default_schedules,
+                "pre_motion_seconds": recording_mode_manager.default_config.pre_motion_seconds,
+                "post_motion_seconds": recording_mode_manager.default_config.post_motion_seconds,
+                "motion_timeout": recording_mode_manager.default_config.motion_timeout,
             },
-            'camera_modes': modes
+            "camera_modes": modes,
         }
     except Exception as e:
         logger.error(f"Error getting recording modes: {e}")
@@ -107,22 +114,24 @@ async def get_camera_recording_mode(camera_name: str):
         schedules = []
         if config.schedules:
             for schedule in config.schedules:
-                schedules.append({
-                    'start_hour': schedule.start.hour,
-                    'start_minute': schedule.start.minute,
-                    'end_hour': schedule.end.hour,
-                    'end_minute': schedule.end.minute,
-                    'days': schedule.days
-                })
+                schedules.append(
+                    {
+                        "start_hour": schedule.start.hour,
+                        "start_minute": schedule.start.minute,
+                        "end_hour": schedule.end.hour,
+                        "end_minute": schedule.end.minute,
+                        "days": schedule.days,
+                    }
+                )
 
         return {
-            'success': True,
-            'camera_name': camera_name,
-            'mode': config.mode.value,
-            'schedules': schedules,
-            'pre_motion_seconds': config.pre_motion_seconds,
-            'post_motion_seconds': config.post_motion_seconds,
-            'motion_timeout': config.motion_timeout
+            "success": True,
+            "camera_name": camera_name,
+            "mode": config.mode.value,
+            "schedules": schedules,
+            "pre_motion_seconds": config.pre_motion_seconds,
+            "post_motion_seconds": config.post_motion_seconds,
+            "motion_timeout": config.motion_timeout,
         }
     except Exception as e:
         logger.error(f"Error getting recording mode for {camera_name}: {e}")
@@ -150,11 +159,13 @@ async def set_camera_recording_mode(update: RecordingModeUpdate):
         if update.config.schedules:
             schedules = []
             for sched in update.config.schedules:
-                schedules.append(TimeRange(
-                    start=time(hour=sched.start_hour, minute=sched.start_minute),
-                    end=time(hour=sched.end_hour, minute=sched.end_minute),
-                    days=sched.days
-                ))
+                schedules.append(
+                    TimeRange(
+                        start=time(hour=sched.start_hour, minute=sched.start_minute),
+                        end=time(hour=sched.end_hour, minute=sched.end_minute),
+                        days=sched.days,
+                    )
+                )
 
         # Set camera mode
         recording_mode_manager.set_camera_mode(
@@ -163,16 +174,12 @@ async def set_camera_recording_mode(update: RecordingModeUpdate):
             schedules=schedules,
             pre_motion_seconds=update.config.pre_motion_seconds,
             post_motion_seconds=update.config.post_motion_seconds,
-            motion_timeout=update.config.motion_timeout
+            motion_timeout=update.config.motion_timeout,
         )
 
         logger.info(f"Updated recording mode for {update.camera_name}: {mode.value}")
 
-        return {
-            'success': True,
-            'message': f'Recording mode updated for {update.camera_name}',
-            'mode': mode.value
-        }
+        return {"success": True, "message": f"Recording mode updated for {update.camera_name}", "mode": mode.value}
     except HTTPException:
         raise
     except Exception as e:
@@ -193,15 +200,9 @@ async def reset_camera_recording_mode(camera_name: str):
             del recording_mode_manager.camera_configs[camera_name]
             logger.info(f"Reset recording mode for {camera_name} to default")
 
-            return {
-                'success': True,
-                'message': f'Recording mode reset to default for {camera_name}'
-            }
+            return {"success": True, "message": f"Recording mode reset to default for {camera_name}"}
         else:
-            return {
-                'success': True,
-                'message': f'{camera_name} was already using default mode'
-            }
+            return {"success": True, "message": f"{camera_name} was already using default mode"}
     except Exception as e:
         logger.error(f"Error resetting recording mode for {camera_name}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -225,25 +226,22 @@ async def get_recording_status():
             should_record = True
             if recording_mode_manager:
                 should_record = recording_mode_manager.should_record(
-                    camera_name,
-                    has_motion=recorder.has_motion,
-                    dt=datetime.now()
+                    camera_name, has_motion=recorder.has_motion, dt=datetime.now()
                 )
 
-            status.append({
-                'camera_name': camera_name,
-                'is_recording': recorder.is_recording,
-                'actively_writing': recorder.actively_writing,
-                'has_motion': recorder.has_motion,
-                'should_record': should_record,
-                'mode': config.mode.value if config else 'continuous',
-                'last_motion_time': recorder.last_motion_time.isoformat() if recorder.last_motion_time else None
-            })
+            status.append(
+                {
+                    "camera_name": camera_name,
+                    "is_recording": recorder.is_recording,
+                    "actively_writing": recorder.actively_writing,
+                    "has_motion": recorder.has_motion,
+                    "should_record": should_record,
+                    "mode": config.mode.value if config else "continuous",
+                    "last_motion_time": recorder.last_motion_time.isoformat() if recorder.last_motion_time else None,
+                }
+            )
 
-        return {
-            'success': True,
-            'cameras': status
-        }
+        return {"success": True, "cameras": status}
     except Exception as e:
         logger.error(f"Error getting recording status: {e}")
         raise HTTPException(status_code=500, detail=str(e))

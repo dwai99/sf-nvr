@@ -19,10 +19,27 @@ class AIObjectDetector:
 
     # COCO class labels for MobileNet-SSD
     CLASSES = [
-        "background", "aeroplane", "bicycle", "bird", "boat",
-        "bottle", "bus", "car", "cat", "chair", "cow", "diningtable",
-        "dog", "horse", "motorbike", "person", "pottedplant", "sheep",
-        "sofa", "train", "tvmonitor"
+        "background",
+        "aeroplane",
+        "bicycle",
+        "bird",
+        "boat",
+        "bottle",
+        "bus",
+        "car",
+        "cat",
+        "chair",
+        "cow",
+        "diningtable",
+        "dog",
+        "horse",
+        "motorbike",
+        "person",
+        "pottedplant",
+        "sheep",
+        "sofa",
+        "train",
+        "tvmonitor",
     ]
 
     # Classes we care about for bar security
@@ -35,7 +52,7 @@ class AIObjectDetector:
         config_path: Optional[Path] = None,
         confidence_threshold: float = 0.5,
         camera_name: str = "Unknown",
-        recorder=None
+        recorder=None,
     ):
         """
         Initialize AI object detector
@@ -66,11 +83,7 @@ class AIObjectDetector:
         self.net = self._load_model(model_path, config_path)
         logger.info(f"AI detector initialized for {camera_name}")
 
-    def _load_model(
-        self,
-        model_path: Optional[Path],
-        config_path: Optional[Path]
-    ) -> cv2.dnn.Net:
+    def _load_model(self, model_path: Optional[Path], config_path: Optional[Path]) -> cv2.dnn.Net:
         """Load or download the MobileNet-SSD model"""
         models_dir = Path("models")
         models_dir.mkdir(exist_ok=True)
@@ -88,10 +101,7 @@ class AIObjectDetector:
 
         # Load model
         try:
-            net = cv2.dnn.readNetFromCaffe(
-                str(config_path),
-                str(model_path)
-            )
+            net = cv2.dnn.readNetFromCaffe(str(config_path), str(model_path))
 
             # Use CPU by default (can add GPU support later)
             net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
@@ -133,10 +143,7 @@ class AIObjectDetector:
             logger.error(f"  Save to: {model_path.parent}/")
             raise
 
-    def detect_objects(
-        self,
-        frame: np.ndarray
-    ) -> Tuple[bool, bool, List[dict]]:
+    def detect_objects(self, frame: np.ndarray) -> Tuple[bool, bool, List[dict]]:
         """
         Detect people and vehicles in frame
 
@@ -151,10 +158,7 @@ class AIObjectDetector:
 
         # Prepare blob for network
         blob = cv2.dnn.blobFromImage(
-            frame,
-            0.007843,  # Scale factor (1/127.5)
-            (300, 300),  # Input size
-            127.5  # Mean subtraction
+            frame, 0.007843, (300, 300), 127.5  # Scale factor (1/127.5)  # Input size  # Mean subtraction
         )
 
         # Run detection
@@ -189,11 +193,9 @@ class AIObjectDetector:
                 box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
                 (startX, startY, endX, endY) = box.astype("int")
 
-                results.append({
-                    'class': class_name,
-                    'confidence': float(confidence),
-                    'bbox': (startX, startY, endX, endY)
-                })
+                results.append(
+                    {"class": class_name, "confidence": float(confidence), "bbox": (startX, startY, endX, endY)}
+                )
 
         # Update state and log events
         self._update_detection_state(person_found, vehicle_found)
@@ -266,7 +268,7 @@ class AIObjectDetector:
                 frame_count=self.event_frame_count,
                 intensity=intensity,
                 event_type=f"ai_{self.current_event_type}",  # "ai_person" or "ai_vehicle"
-                camera_name=self.camera_name
+                camera_name=self.camera_name,
             )
 
             logger.info(
@@ -278,50 +280,6 @@ class AIObjectDetector:
         self.current_event_type = None
         self.event_start_time = None
         self.event_frame_count = 0
-
-    def draw_detections(
-        self,
-        frame: np.ndarray,
-        detections: List[dict]
-    ) -> np.ndarray:
-        """
-        Draw bounding boxes around detected people and vehicles
-
-        Args:
-            frame: Original BGR frame
-            detections: List of detection dicts
-
-        Returns:
-            Frame with detections drawn
-        """
-        result = frame.copy()
-
-        for det in detections:
-            class_name = det['class']
-            confidence = det['confidence']
-            (startX, startY, endX, endY) = det['bbox']
-
-            # Color: Red for person, Blue for vehicle
-            color = (0, 0, 255) if class_name == "person" else (255, 0, 0)
-
-            # Draw box
-            cv2.rectangle(result, (startX, startY), (endX, endY), color, 2)
-
-            # Draw label
-            label = f"{class_name.upper()}: {confidence:.2f}"
-            y = startY - 10 if startY - 10 > 10 else startY + 10
-
-            cv2.putText(
-                result,
-                label,
-                (startX, y),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                color,
-                2
-            )
-
-        return result
 
     def reset(self):
         """Reset detector state"""
@@ -343,10 +301,7 @@ class AIDetectionMonitor:
         self.is_running = False
 
     def add_camera(
-        self,
-        camera_name: str,
-        recorder=None,
-        confidence_threshold: Optional[float] = None
+        self, camera_name: str, recorder=None, confidence_threshold: Optional[float] = None
     ) -> AIObjectDetector:
         """Add a camera to AI monitoring"""
         if camera_name in self.detectors:
@@ -355,11 +310,7 @@ class AIDetectionMonitor:
 
         threshold = confidence_threshold or self.confidence_threshold
 
-        detector = AIObjectDetector(
-            confidence_threshold=threshold,
-            camera_name=camera_name,
-            recorder=recorder
-        )
+        detector = AIObjectDetector(confidence_threshold=threshold, camera_name=camera_name, recorder=recorder)
 
         self.detectors[camera_name] = detector
         logger.info(f"Added AI detector for {camera_name}")
@@ -381,10 +332,7 @@ class AIDetectionMonitor:
         return self.detectors.get(camera_name)
 
     async def monitor_recorder(
-        self,
-        camera_name: str,
-        recorder,
-        check_interval: int = 30  # Check every 30 frames (about 1 second at 30fps)
+        self, camera_name: str, recorder, check_interval: int = 30  # Check every 30 frames (about 1 second at 30fps)
     ):
         """
         Monitor AI detection from a recorder's frame queue
@@ -424,8 +372,7 @@ class AIDetectionMonitor:
                                 types.append("VEHICLE")
 
                             logger.debug(
-                                f"AI: {camera_name} - Detected: {', '.join(types)} "
-                                f"({len(detections)} object(s))"
+                                f"AI: {camera_name} - Detected: {', '.join(types)} " f"({len(detections)} object(s))"
                             )
 
                 await asyncio.sleep(0.01)  # Small delay to prevent busy loop
@@ -443,9 +390,7 @@ class AIDetectionMonitor:
         tasks = []
         for camera_name, recorder in recorder_manager.recorders.items():
             if camera_name in self.detectors:
-                task = asyncio.create_task(
-                    self.monitor_recorder(camera_name, recorder)
-                )
+                task = asyncio.create_task(self.monitor_recorder(camera_name, recorder))
                 tasks.append(task)
 
         if tasks:

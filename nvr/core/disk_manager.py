@@ -1,10 +1,10 @@
 """
 Disk space management to prevent drive from filling up completely
 """
+
 import errno
 import logging
 import os
-import shutil
 from pathlib import Path
 from datetime import datetime, timedelta
 import psutil
@@ -14,11 +14,11 @@ logger = logging.getLogger(__name__)
 
 class DiskManager:
     """Manages disk space and automatically cleans up old recordings"""
-    
+
     def __init__(self, storage_path: str, min_free_gb: float = 5.0, warning_threshold_percent: float = 90.0):
         """
         Initialize disk manager
-        
+
         Args:
             storage_path: Path to recordings directory
             min_free_gb: Minimum free space to maintain (GB)
@@ -27,32 +27,32 @@ class DiskManager:
         self.storage_path = Path(storage_path)
         self.min_free_bytes = int(min_free_gb * 1024**3)  # Convert GB to bytes
         self.warning_threshold = warning_threshold_percent
-        
+
     def get_disk_usage(self):
         """Get current disk usage statistics"""
         try:
             usage = psutil.disk_usage(str(self.storage_path))
             return {
-                'total_gb': round(usage.total / (1024**3), 2),
-                'used_gb': round(usage.used / (1024**3), 2),
-                'free_gb': round(usage.free / (1024**3), 2),
-                'percent': usage.percent
+                "total_gb": round(usage.total / (1024**3), 2),
+                "used_gb": round(usage.used / (1024**3), 2),
+                "free_gb": round(usage.free / (1024**3), 2),
+                "percent": usage.percent,
             }
         except Exception as e:
             logger.error(f"Error getting disk usage: {e}")
             return None
-    
+
     def needs_cleanup(self):
         """Check if cleanup is needed"""
         usage = self.get_disk_usage()
         if not usage:
             return False
-        
+
         # Need cleanup if:
         # 1. Disk usage is above warning threshold
         # 2. Free space is below minimum
-        return usage['percent'] >= self.warning_threshold or usage['free_gb'] < (self.min_free_bytes / (1024**3))
-    
+        return usage["percent"] >= self.warning_threshold or usage["free_gb"] < (self.min_free_bytes / (1024**3))
+
     def get_oldest_recordings(self, limit=None, retention_cutoff=None, protected_paths=None):
         """Get recording files sorted oldest-first.
 
@@ -66,7 +66,7 @@ class DiskManager:
             files = []
             for root, dirs, filenames in os.walk(self.storage_path):
                 for filename in filenames:
-                    if not filename.endswith('.mp4'):
+                    if not filename.endswith(".mp4"):
                         continue
                     filepath = Path(root) / filename
                     try:
@@ -90,7 +90,7 @@ class DiskManager:
         except Exception as e:
             logger.error(f"Error getting oldest recordings: {e}")
             return []
-    
+
     def cleanup_old_recordings(self, target_free_gb=None, retention_days=None, protected_paths=None):
         """
         Delete oldest recordings until we have enough free space.
@@ -113,7 +113,7 @@ class DiskManager:
         if not usage:
             return 0, 0
 
-        current_free_bytes = int(usage['free_gb'] * 1024**3)
+        current_free_bytes = int(usage["free_gb"] * 1024**3)
 
         if current_free_bytes >= target_free_bytes:
             logger.info(f"No cleanup needed. Free space: {usage['free_gb']} GB")
@@ -176,7 +176,7 @@ class DiskManager:
         latter would break the recorder's next segment open.
         """
         protected_dirs = set()
-        for p in (protected_paths or set()):
+        for p in protected_paths or set():
             try:
                 protected_dirs.add(Path(p).parent.resolve())
             except OSError:
@@ -185,7 +185,7 @@ class DiskManager:
             for item in self.storage_path.iterdir():
                 if not item.is_dir():
                     continue
-                if item.name.startswith('.'):
+                if item.name.startswith("."):
                     continue  # cache dirs
                 try:
                     if item.resolve() in protected_dirs:

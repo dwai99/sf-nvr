@@ -1,10 +1,7 @@
 """Ultra-fast RTSP proxy - streams H.264 directly to browser with ZERO processing"""
 
-import asyncio
 import logging
 from typing import Dict
-from fastapi import Response
-from fastapi.responses import StreamingResponse
 import subprocess
 
 logger = logging.getLogger(__name__)
@@ -31,21 +28,33 @@ class RTSPProxy:
         # FFmpeg command for ULTRA-LOW latency streaming
         # Outputs raw H.264 to stdout which we stream directly to browser
         ffmpeg_cmd = [
-            'ffmpeg',
-            '-rtsp_transport', 'tcp',           # TCP for reliability
-            '-fflags', 'nobuffer',               # No buffering
-            '-flags', 'low_delay',               # Low delay mode
-            '-analyzeduration', '0',             # Don't analyze stream
-            '-probesize', '32',                  # Minimal probe
-            '-max_delay', '0',                   # No delay
-            '-reorder_queue_size', '0',          # No reordering
-            '-i', rtsp_url,                      # Input RTSP
-            '-c:v', 'copy',                      # COPY codec - no re-encoding!
-            '-an',                               # No audio
-            '-f', 'mpegts',                      # MPEG-TS container (streamable)
-            '-tune', 'zerolatency',              # Zero latency tuning
-            '-preset', 'ultrafast',              # Fastest preset
-            'pipe:1'                             # Output to stdout
+            "ffmpeg",
+            "-rtsp_transport",
+            "tcp",  # TCP for reliability
+            "-fflags",
+            "nobuffer",  # No buffering
+            "-flags",
+            "low_delay",  # Low delay mode
+            "-analyzeduration",
+            "0",  # Don't analyze stream
+            "-probesize",
+            "32",  # Minimal probe
+            "-max_delay",
+            "0",  # No delay
+            "-reorder_queue_size",
+            "0",  # No reordering
+            "-i",
+            rtsp_url,  # Input RTSP
+            "-c:v",
+            "copy",  # COPY codec - no re-encoding!
+            "-an",  # No audio
+            "-f",
+            "mpegts",  # MPEG-TS container (streamable)
+            "-tune",
+            "zerolatency",  # Zero latency tuning
+            "-preset",
+            "ultrafast",  # Fastest preset
+            "pipe:1",  # Output to stdout
         ]
 
         logger.info(f"Starting RTSP proxy for {camera_name}: {rtsp_url}")
@@ -55,7 +64,7 @@ class RTSPProxy:
             ffmpeg_cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,  # Suppress FFmpeg logs
-            bufsize=0  # No buffering
+            bufsize=0,  # No buffering
         )
 
         self.active_streams[camera_name] = process
@@ -107,27 +116,32 @@ class MSEStreamProxy:
         Browser's native decoder handles everything
         """
         ffmpeg_cmd = [
-            'ffmpeg',
-            '-rtsp_transport', 'tcp',
-            '-fflags', 'nobuffer+fastseek',
-            '-flags', 'low_delay',
-            '-analyzeduration', '0',
-            '-probesize', '32',
-            '-i', rtsp_url,
-            '-c:v', 'copy',                      # No re-encoding
-            '-an',
-            '-f', 'mp4',                         # Fragmented MP4
-            '-movflags', 'frag_keyframe+empty_moov+default_base_moof+faststart',
-            '-reset_timestamps', '1',
-            'pipe:1'
+            "ffmpeg",
+            "-rtsp_transport",
+            "tcp",
+            "-fflags",
+            "nobuffer+fastseek",
+            "-flags",
+            "low_delay",
+            "-analyzeduration",
+            "0",
+            "-probesize",
+            "32",
+            "-i",
+            rtsp_url,
+            "-c:v",
+            "copy",  # No re-encoding
+            "-an",
+            "-f",
+            "mp4",  # Fragmented MP4
+            "-movflags",
+            "frag_keyframe+empty_moov+default_base_moof+faststart",
+            "-reset_timestamps",
+            "1",
+            "pipe:1",
         ]
 
-        process = subprocess.Popen(
-            ffmpeg_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            bufsize=0
-        )
+        process = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
 
         try:
             while True:

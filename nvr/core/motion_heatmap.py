@@ -6,7 +6,6 @@ import cv2
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional
-import json
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +49,7 @@ class MotionHeatmap:
         # Create temporary motion mask
         motion_mask = np.zeros((self.height, self.width), dtype=np.float32)
 
-        for (x, y, w, h) in motion_boxes:
+        for x, y, w, h in motion_boxes:
             # Scale coordinates to heatmap size
             hm_x1 = int(x * scale_x)
             hm_y1 = int(y * scale_y)
@@ -128,11 +127,7 @@ class MotionHeatmap:
         heatmap = self.generate_heatmap_image()
 
         # Resize heatmap to match frame size
-        heatmap_resized = cv2.resize(
-            heatmap,
-            (frame.shape[1], frame.shape[0]),
-            interpolation=cv2.INTER_LINEAR
-        )
+        heatmap_resized = cv2.resize(heatmap, (frame.shape[1], frame.shape[0]), interpolation=cv2.INTER_LINEAR)
 
         # Convert heatmap RGB to BGR for OpenCV
         heatmap_bgr = cv2.cvtColor(heatmap_resized, cv2.COLOR_RGB2BGR)
@@ -156,10 +151,10 @@ class MotionHeatmap:
     def to_dict(self) -> Dict:
         """Export heatmap data as dictionary"""
         return {
-            'width': self.width,
-            'height': self.height,
-            'sample_count': self.sample_count,
-            'heatmap': self.get_normalized_heatmap().tolist()
+            "width": self.width,
+            "height": self.height,
+            "sample_count": self.sample_count,
+            "heatmap": self.get_normalized_heatmap().tolist(),
         }
 
 
@@ -180,11 +175,7 @@ class MotionHeatmapManager:
         return self.heatmaps[camera_name]
 
     def generate_heatmap_for_timerange(
-        self,
-        camera_name: str,
-        start_time: datetime,
-        end_time: datetime,
-        sample_rate: int = 30
+        self, camera_name: str, start_time: datetime, end_time: datetime, sample_rate: int = 30
     ) -> Optional[MotionHeatmap]:
         """
         Generate heatmap from motion events in database
@@ -204,11 +195,7 @@ class MotionHeatmapManager:
 
         try:
             # Get motion events from database
-            events = self.playback_db.get_motion_events_in_range(
-                camera_name,
-                start_time,
-                end_time
-            )
+            events = self.playback_db.get_motion_events_in_range(camera_name, start_time, end_time)
 
             if not events:
                 logger.info(f"No motion events found for {camera_name} in specified range")
@@ -234,12 +221,7 @@ class MotionHeatmapManager:
 
                 # Generate a small region in center (placeholder)
                 # This should be replaced with actual motion region data
-                center_box = (
-                    source_width // 2 - 100,
-                    source_height // 2 - 100,
-                    200,
-                    200
-                )
+                center_box = (source_width // 2 - 100, source_height // 2 - 100, 200, 200)
                 heatmap.add_motion_regions([center_box], source_width, source_height)
 
             return heatmap
@@ -248,12 +230,7 @@ class MotionHeatmapManager:
             logger.error(f"Error generating heatmap: {e}")
             return None
 
-    def generate_and_save_heatmap(
-        self,
-        camera_name: str,
-        start_time: datetime,
-        end_time: datetime
-    ) -> Optional[Path]:
+    def generate_and_save_heatmap(self, camera_name: str, start_time: datetime, end_time: datetime) -> Optional[Path]:
         """
         Generate heatmap and save to file
 

@@ -2,15 +2,15 @@
 
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, List, Callable, Optional
+from typing import Dict, List, Optional
 from enum import Enum
-import asyncio
 
 logger = logging.getLogger(__name__)
 
 
 class AlertLevel(Enum):
     """Alert severity levels"""
+
     INFO = "info"
     WARNING = "warning"
     ERROR = "error"
@@ -19,6 +19,7 @@ class AlertLevel(Enum):
 
 class AlertType(Enum):
     """Types of alerts"""
+
     CAMERA_OFFLINE = "camera_offline"
     CAMERA_DEGRADED = "camera_degraded"
     CAMERA_RECOVERED = "camera_recovered"
@@ -39,7 +40,7 @@ class Alert:
         level: AlertLevel,
         message: str,
         camera_name: Optional[str] = None,
-        details: Optional[Dict] = None
+        details: Optional[Dict] = None,
     ):
         self.alert_type = alert_type
         self.level = level
@@ -52,13 +53,13 @@ class Alert:
     def to_dict(self) -> Dict:
         """Convert alert to dictionary"""
         return {
-            'id': self.id,
-            'type': self.alert_type.value,
-            'level': self.level.value,
-            'message': self.message,
-            'camera_name': self.camera_name,
-            'details': self.details,
-            'timestamp': self.timestamp.isoformat()
+            "id": self.id,
+            "type": self.alert_type.value,
+            "level": self.level.value,
+            "message": self.message,
+            "camera_name": self.camera_name,
+            "details": self.details,
+            "timestamp": self.timestamp.isoformat(),
         }
 
 
@@ -95,11 +96,10 @@ class WebhookAlertHandler(AlertHandler):
     async def handle(self, alert: Alert):
         try:
             import aiohttp
+
             async with aiohttp.ClientSession() as session:
                 async with session.post(
-                    self.webhook_url,
-                    json=alert.to_dict(),
-                    timeout=aiohttp.ClientTimeout(total=5)
+                    self.webhook_url, json=alert.to_dict(), timeout=aiohttp.ClientTimeout(total=5)
                 ) as response:
                     if response.status != 200:
                         logger.warning(f"Webhook returned status {response.status}")
@@ -166,7 +166,7 @@ class AlertSystem:
 
     async def check_camera_health(self, camera_name: str, health_data: Dict):
         """Check camera health and send alerts if needed"""
-        status = health_data.get('status', 'unknown')
+        status = health_data.get("status", "unknown")
         previous_status = self.camera_states.get(camera_name)
 
         # Track state change
@@ -177,72 +177,84 @@ class AlertSystem:
             return
 
         # Alert on status changes
-        if status == 'write_failed' and previous_status != 'write_failed':
-            await self.send_alert(Alert(
-                alert_type=AlertType.CAMERA_WRITE_FAILED,
-                level=AlertLevel.CRITICAL,
-                message=f"Camera {camera_name} is NOT writing to disk - recordings are being lost",
-                camera_name=camera_name,
-                details={'previous_status': previous_status}
-            ))
+        if status == "write_failed" and previous_status != "write_failed":
+            await self.send_alert(
+                Alert(
+                    alert_type=AlertType.CAMERA_WRITE_FAILED,
+                    level=AlertLevel.CRITICAL,
+                    message=f"Camera {camera_name} is NOT writing to disk - recordings are being lost",
+                    camera_name=camera_name,
+                    details={"previous_status": previous_status},
+                )
+            )
 
-        elif status == 'stopped' and previous_status != 'stopped':
-            await self.send_alert(Alert(
-                alert_type=AlertType.CAMERA_OFFLINE,
-                level=AlertLevel.ERROR,
-                message=f"Camera {camera_name} is offline",
-                camera_name=camera_name,
-                details={'previous_status': previous_status}
-            ))
+        elif status == "stopped" and previous_status != "stopped":
+            await self.send_alert(
+                Alert(
+                    alert_type=AlertType.CAMERA_OFFLINE,
+                    level=AlertLevel.ERROR,
+                    message=f"Camera {camera_name} is offline",
+                    camera_name=camera_name,
+                    details={"previous_status": previous_status},
+                )
+            )
 
-        elif status == 'degraded' and previous_status == 'healthy':
-            await self.send_alert(Alert(
-                alert_type=AlertType.CAMERA_DEGRADED,
-                level=AlertLevel.WARNING,
-                message=f"Camera {camera_name} is experiencing connection issues",
-                camera_name=camera_name,
-                details={
-                    'consecutive_failures': health_data.get('consecutive_failures'),
-                    'total_reconnects': health_data.get('total_reconnects')
-                }
-            ))
+        elif status == "degraded" and previous_status == "healthy":
+            await self.send_alert(
+                Alert(
+                    alert_type=AlertType.CAMERA_DEGRADED,
+                    level=AlertLevel.WARNING,
+                    message=f"Camera {camera_name} is experiencing connection issues",
+                    camera_name=camera_name,
+                    details={
+                        "consecutive_failures": health_data.get("consecutive_failures"),
+                        "total_reconnects": health_data.get("total_reconnects"),
+                    },
+                )
+            )
 
-        elif status == 'stale' and previous_status in ['healthy', 'degraded']:
-            await self.send_alert(Alert(
-                alert_type=AlertType.CAMERA_DEGRADED,
-                level=AlertLevel.WARNING,
-                message=f"Camera {camera_name} has not received frames recently",
-                camera_name=camera_name,
-                details={
-                    'time_since_last_frame': health_data.get('time_since_last_frame_seconds')
-                }
-            ))
+        elif status == "stale" and previous_status in ["healthy", "degraded"]:
+            await self.send_alert(
+                Alert(
+                    alert_type=AlertType.CAMERA_DEGRADED,
+                    level=AlertLevel.WARNING,
+                    message=f"Camera {camera_name} has not received frames recently",
+                    camera_name=camera_name,
+                    details={"time_since_last_frame": health_data.get("time_since_last_frame_seconds")},
+                )
+            )
 
-        elif status == 'healthy' and previous_status in ['stopped', 'degraded', 'stale', 'write_failed']:
-            await self.send_alert(Alert(
-                alert_type=AlertType.CAMERA_RECOVERED,
-                level=AlertLevel.INFO,
-                message=f"Camera {camera_name} has recovered",
-                camera_name=camera_name,
-                details={'previous_status': previous_status}
-            ))
+        elif status == "healthy" and previous_status in ["stopped", "degraded", "stale", "write_failed"]:
+            await self.send_alert(
+                Alert(
+                    alert_type=AlertType.CAMERA_RECOVERED,
+                    level=AlertLevel.INFO,
+                    message=f"Camera {camera_name} has recovered",
+                    camera_name=camera_name,
+                    details={"previous_status": previous_status},
+                )
+            )
 
     async def check_storage(self, disk_percent: float, free_gb: float):
         """Check storage and send alerts if needed"""
         if disk_percent >= 95:
-            await self.send_alert(Alert(
-                alert_type=AlertType.STORAGE_CRITICAL,
-                level=AlertLevel.CRITICAL,
-                message=f"Storage critically low: {disk_percent:.1f}% used, {free_gb:.1f} GB free",
-                details={'disk_percent': disk_percent, 'free_gb': free_gb}
-            ))
+            await self.send_alert(
+                Alert(
+                    alert_type=AlertType.STORAGE_CRITICAL,
+                    level=AlertLevel.CRITICAL,
+                    message=f"Storage critically low: {disk_percent:.1f}% used, {free_gb:.1f} GB free",
+                    details={"disk_percent": disk_percent, "free_gb": free_gb},
+                )
+            )
         elif disk_percent >= 85:
-            await self.send_alert(Alert(
-                alert_type=AlertType.STORAGE_LOW,
-                level=AlertLevel.WARNING,
-                message=f"Storage running low: {disk_percent:.1f}% used, {free_gb:.1f} GB free",
-                details={'disk_percent': disk_percent, 'free_gb': free_gb}
-            ))
+            await self.send_alert(
+                Alert(
+                    alert_type=AlertType.STORAGE_LOW,
+                    level=AlertLevel.WARNING,
+                    message=f"Storage running low: {disk_percent:.1f}% used, {free_gb:.1f} GB free",
+                    details={"disk_percent": disk_percent, "free_gb": free_gb},
+                )
+            )
 
     async def check_storage_writable(self, writable: bool):
         """Alert when the storage volume can't actually be written to.
@@ -255,19 +267,23 @@ class AlertSystem:
         self.storage_writable = writable
 
         if not writable and was_writable is not False:
-            await self.send_alert(Alert(
-                alert_type=AlertType.STORAGE_UNWRITABLE,
-                level=AlertLevel.CRITICAL,
-                message="Storage volume is NOT writable - recordings cannot be saved",
-                details={'writable': False}
-            ))
+            await self.send_alert(
+                Alert(
+                    alert_type=AlertType.STORAGE_UNWRITABLE,
+                    level=AlertLevel.CRITICAL,
+                    message="Storage volume is NOT writable - recordings cannot be saved",
+                    details={"writable": False},
+                )
+            )
         elif writable and was_writable is False:
-            await self.send_alert(Alert(
-                alert_type=AlertType.SYSTEM_ERROR,
-                level=AlertLevel.INFO,
-                message="Storage volume is writable again",
-                details={'writable': True}
-            ))
+            await self.send_alert(
+                Alert(
+                    alert_type=AlertType.SYSTEM_ERROR,
+                    level=AlertLevel.INFO,
+                    message="Storage volume is writable again",
+                    details={"writable": True},
+                )
+            )
 
 
 # Global alert system instance

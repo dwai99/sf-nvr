@@ -1,10 +1,8 @@
 """WebRTC H.264 passthrough for zero-latency streaming"""
 
-import asyncio
 import logging
 import uuid
 from typing import Dict
-import av
 from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
 from aiortc.contrib.media import MediaPlayer
 
@@ -26,13 +24,16 @@ class H264StreamTrack(VideoStreamTrack):
         if self.player is None:
             # Create media player to read directly from RTSP
             # This bypasses OpenCV entirely for maximum performance
-            self.player = MediaPlayer(self.rtsp_url, options={
-                'rtsp_transport': 'tcp',
-                'fflags': 'nobuffer',
-                'flags': 'low_delay',
-                'probesize': '32',
-                'analyzeduration': '0'
-            })
+            self.player = MediaPlayer(
+                self.rtsp_url,
+                options={
+                    "rtsp_transport": "tcp",
+                    "fflags": "nobuffer",
+                    "flags": "low_delay",
+                    "probesize": "32",
+                    "analyzeduration": "0",
+                },
+            )
             logger.info(f"Started H.264 passthrough for {self.camera_name}")
 
         # Get frame directly from media player
@@ -66,13 +67,13 @@ class WebRTCPassthroughManager:
             SDP answer dictionary
         """
         # Find camera config
-        cameras = self.config.get('cameras', [])
-        camera_config = next((c for c in cameras if c['name'] == camera_name), None)
+        cameras = self.config.get("cameras", [])
+        camera_config = next((c for c in cameras if c["name"] == camera_name), None)
 
         if not camera_config:
             raise ValueError(f"Camera {camera_name} not found")
 
-        rtsp_url = camera_config['rtsp_url']
+        rtsp_url = camera_config["rtsp_url"]
 
         # Create peer connection
         pc = RTCPeerConnection()
@@ -102,10 +103,7 @@ class WebRTCPassthroughManager:
         pc.addTrack(video_track)
 
         # Set remote description (client's offer)
-        await pc.setRemoteDescription(RTCSessionDescription(
-            sdp=offer_sdp["sdp"],
-            type=offer_sdp["type"]
-        ))
+        await pc.setRemoteDescription(RTCSessionDescription(sdp=offer_sdp["sdp"], type=offer_sdp["type"]))
 
         # Create answer
         answer = await pc.createAnswer()
@@ -113,11 +111,7 @@ class WebRTCPassthroughManager:
 
         logger.info(f"H.264 passthrough connection established for {camera_name}")
 
-        return {
-            "sdp": pc.localDescription.sdp,
-            "type": pc.localDescription.type,
-            "pc_id": pc_id
-        }
+        return {"sdp": pc.localDescription.sdp, "type": pc.localDescription.type, "pc_id": pc_id}
 
     async def close_connection(self, pc_id: str):
         """Close a WebRTC peer connection"""

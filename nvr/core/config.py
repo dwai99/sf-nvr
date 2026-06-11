@@ -26,6 +26,7 @@ class Config:
     def load(self) -> None:
         """Load configuration from YAML file"""
         import logging
+
         logger = logging.getLogger(__name__)
         with self._lock:
             if not self.config_path.exists():
@@ -34,7 +35,7 @@ class Config:
                 return
 
             try:
-                with open(self.config_path, 'r') as f:
+                with open(self.config_path, "r") as f:
                     loaded = yaml.safe_load(f)
             except (yaml.YAMLError, OSError) as e:
                 # Don't crash the whole app on a malformed/locked config — keep
@@ -53,10 +54,11 @@ class Config:
     def save(self) -> None:
         """Save current configuration to YAML file (atomic)."""
         import logging
+
         logger = logging.getLogger(__name__)
         with self._lock:
-            cameras = self._config.get('cameras', [])
-            camera_names = [c.get('name', 'unknown') for c in cameras]
+            cameras = self._config.get("cameras", [])
+            camera_names = [c.get("name", "unknown") for c in cameras]
             logger.info(f"Saving config to {self.config_path} (cameras: {camera_names})")
 
             # Write to a temp file in the same directory, then atomically replace.
@@ -64,9 +66,9 @@ class Config:
             # config.yaml, and the dump happens under the lock so a concurrent
             # set()/add_camera() can't mutate the dict mid-serialization.
             self.config_path.parent.mkdir(parents=True, exist_ok=True)
-            fd, tmp = tempfile.mkstemp(suffix='.yaml', dir=str(self.config_path.parent))
+            fd, tmp = tempfile.mkstemp(suffix=".yaml", dir=str(self.config_path.parent))
             try:
-                with os.fdopen(fd, 'w') as f:
+                with os.fdopen(fd, "w") as f:
                     yaml.dump(self._config, f, default_flow_style=False)
                 os.replace(tmp, str(self.config_path))
             except Exception:
@@ -79,7 +81,7 @@ class Config:
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get config value by dot-notation key (e.g., 'recording.storage_path')"""
-        keys = key.split('.')
+        keys = key.split(".")
         value = self._config
 
         for k in keys:
@@ -93,7 +95,7 @@ class Config:
     def set(self, key: str, value: Any) -> None:
         """Set config value by dot-notation key"""
         with self._lock:
-            keys = key.split('.')
+            keys = key.split(".")
             config = self._config
 
             for k in keys[:-1]:
@@ -113,7 +115,7 @@ class Config:
         and hide the failure. After first init, callers see the real (possibly
         now-missing) path and writes fail loudly instead.
         """
-        path = Path(self.get('recording.storage_path', './recordings'))
+        path = Path(self.get("recording.storage_path", "./recordings"))
         if not self._storage_initialized:
             path.mkdir(parents=True, exist_ok=True)
             self._storage_initialized = True
@@ -126,10 +128,10 @@ class Config:
         numbers but the volume is read-only / permission-revoked / unmounted, so
         recordings silently stop. Used by the health monitor to raise an alert.
         """
-        path = Path(self.get('recording.storage_path', './recordings'))
-        probe = path / '.nvr_write_test'
+        path = Path(self.get("recording.storage_path", "./recordings"))
+        probe = path / ".nvr_write_test"
         try:
-            probe.write_text('ok')
+            probe.write_text("ok")
             probe.unlink()
             return True
         except OSError:
@@ -138,38 +140,38 @@ class Config:
     @property
     def cameras(self) -> List[Dict[str, Any]]:
         """Get list of configured cameras"""
-        return self.get('cameras', [])
+        return self.get("cameras", [])
 
     @property
     def database_url(self) -> str:
         """Get database URL from environment or default"""
-        return os.getenv('DATABASE_URL', 'sqlite+aiosqlite:///./nvr.db')
+        return os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./nvr.db")
 
     @property
     def default_camera_username(self) -> str:
         """Get default camera username for ONVIF discovery"""
-        return os.getenv('DEFAULT_CAMERA_USERNAME', 'admin')
+        return os.getenv("DEFAULT_CAMERA_USERNAME", "admin")
 
     @property
     def default_camera_password(self) -> str:
         """Get default camera password for ONVIF discovery"""
-        return os.getenv('DEFAULT_CAMERA_PASSWORD', 'admin')
+        return os.getenv("DEFAULT_CAMERA_PASSWORD", "admin")
 
     def add_camera(self, camera: Dict[str, Any]) -> None:
         """Add a new camera to configuration"""
         cameras = self.cameras
         cameras.append(camera)
-        self.set('cameras', cameras)
+        self.set("cameras", cameras)
         self.save()
 
     def remove_camera(self, name: str) -> bool:
         """Remove a camera by name"""
         cameras = self.cameras
         initial_len = len(cameras)
-        cameras = [c for c in cameras if c.get('name') != name]
+        cameras = [c for c in cameras if c.get("name") != name]
 
         if len(cameras) < initial_len:
-            self.set('cameras', cameras)
+            self.set("cameras", cameras)
             self.save()
             return True
         return False
@@ -180,16 +182,16 @@ class Config:
         needs_save = False
 
         for camera in cameras:
-            current_id = camera.get('id', '')
+            current_id = camera.get("id", "")
             # Regenerate if missing, empty, looks like a camera name, or uses IP-based ID
             # Valid IDs: cam_<serial>, cam_<mac>, cam_<hwid>, cam_<uuid>
             # Invalid IDs: camera names, cam_ip_* (IP-based)
-            if not current_id or not current_id.startswith('cam_') or current_id.startswith('cam_ip_'):
-                camera['id'] = self._generate_camera_id(camera)
+            if not current_id or not current_id.startswith("cam_") or current_id.startswith("cam_ip_"):
+                camera["id"] = self._generate_camera_id(camera)
                 needs_save = True
 
         if needs_save:
-            self.set('cameras', cameras)
+            self.set("cameras", cameras)
             self.save()
 
     def _generate_camera_id(self, camera: Dict[str, Any]) -> str:
@@ -202,26 +204,26 @@ class Config:
         3. Hardware ID (if available from ONVIF)
         4. UUID as last resort (stable once generated)
         """
-        device_info = camera.get('device_info', {})
+        device_info = camera.get("device_info", {})
 
         # Try serial number first (best option - physically tied to camera)
-        serial = device_info.get('serial') or device_info.get('SerialNumber')
-        if serial and serial not in ('Unknown', '', None):
+        serial = device_info.get("serial") or device_info.get("SerialNumber")
+        if serial and serial not in ("Unknown", "", None):
             # Sanitize serial number for filesystem safety
-            safe_serial = "".join(c if c.isalnum() or c in ('-', '_') else '_' for c in serial)
+            safe_serial = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in serial)
             return f"cam_{safe_serial}"
 
         # Try MAC address (permanent hardware identifier)
-        mac = device_info.get('mac_address') or device_info.get('MACAddress')
-        if mac and mac not in ('Unknown', '', None):
+        mac = device_info.get("mac_address") or device_info.get("MACAddress")
+        if mac and mac not in ("Unknown", "", None):
             # Convert MAC to safe format (aa:bb:cc:dd:ee:ff -> aabbccddeeff)
-            safe_mac = mac.replace(':', '').replace('-', '').lower()
+            safe_mac = mac.replace(":", "").replace("-", "").lower()
             return f"cam_{safe_mac}"
 
         # Try hardware ID
-        hw_id = device_info.get('hardware_id') or device_info.get('HardwareId')
-        if hw_id and hw_id not in ('Unknown', '', None):
-            safe_hw = "".join(c if c.isalnum() or c in ('-', '_') else '_' for c in hw_id)
+        hw_id = device_info.get("hardware_id") or device_info.get("HardwareId")
+        if hw_id and hw_id not in ("Unknown", "", None):
+            safe_hw = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in hw_id)
             return f"cam_{safe_hw}"
 
         # Last resort: generate UUID-based ID (stable once generated)
@@ -230,14 +232,14 @@ class Config:
     def get_camera_by_id(self, camera_id: str) -> Optional[Dict[str, Any]]:
         """Get camera configuration by ID"""
         for camera in self.cameras:
-            if camera.get('id') == camera_id:
+            if camera.get("id") == camera_id:
                 return camera
         return None
 
     def get_camera_by_name(self, name: str) -> Optional[Dict[str, Any]]:
         """Get camera configuration by name"""
         for camera in self.cameras:
-            if camera.get('name') == name:
+            if camera.get("name") == name:
                 return camera
         return None
 
@@ -245,9 +247,9 @@ class Config:
         """Update camera name while preserving ID"""
         cameras = self.cameras
         for camera in cameras:
-            if camera.get('id') == camera_id:
-                camera['name'] = new_name
-                self.set('cameras', cameras)
+            if camera.get("id") == camera_id:
+                camera["name"] = new_name
+                self.set("cameras", cameras)
                 self.save()
                 return True
         return False

@@ -20,7 +20,7 @@ class MotionDetector:
         min_area: int = 500,
         blur_size: int = 21,
         camera_name: str = "Unknown",
-        recorder=None
+        recorder=None,
     ):
         """
         Initialize motion detector
@@ -99,11 +99,7 @@ class MotionDetector:
         threshold = cv2.dilate(threshold, None, iterations=2)
 
         # Find contours
-        contours, _ = cv2.findContours(
-            threshold.copy(),
-            cv2.RETR_EXTERNAL,
-            cv2.CHAIN_APPROX_SIMPLE
-        )
+        contours, _ = cv2.findContours(threshold.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         # Filter contours by area
         motion_boxes = []
@@ -149,7 +145,7 @@ class MotionDetector:
             self.recorder.log_motion_event()
 
         # Update recorder's motion state for recording mode decisions
-        if self.recorder and hasattr(self.recorder, 'update_motion_state'):
+        if self.recorder and hasattr(self.recorder, "update_motion_state"):
             self.recorder.update_motion_state(self.motion_detected)
 
         return has_motion, motion_boxes
@@ -182,11 +178,7 @@ class MotionDetector:
             except Exception as e:
                 logger.error(f"Error in motion end callback: {e}")
 
-    def draw_motion(
-        self,
-        frame: np.ndarray,
-        motion_boxes: List[Tuple[int, int, int, int]]
-    ) -> np.ndarray:
+    def draw_motion(self, frame: np.ndarray, motion_boxes: List[Tuple[int, int, int, int]]) -> np.ndarray:
         """
         Draw bounding boxes around motion areas
 
@@ -199,20 +191,12 @@ class MotionDetector:
         """
         result = frame.copy()
 
-        for (x, y, w, h) in motion_boxes:
+        for x, y, w, h in motion_boxes:
             cv2.rectangle(result, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
         # Add motion indicator text
         if motion_boxes:
-            cv2.putText(
-                result,
-                "MOTION DETECTED",
-                (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                1,
-                (0, 0, 255),
-                2
-            )
+            cv2.putText(result, "MOTION DETECTED", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
         return result
 
@@ -229,23 +213,14 @@ class MotionMonitor:
         self.detectors: dict[str, MotionDetector] = {}
         self.is_running = False
 
-    def add_camera(
-        self,
-        camera_name: str,
-        sensitivity: int = 25,
-        min_area: int = 500,
-        recorder=None
-    ) -> MotionDetector:
+    def add_camera(self, camera_name: str, sensitivity: int = 25, min_area: int = 500, recorder=None) -> MotionDetector:
         """Add a camera to motion monitoring"""
         if camera_name in self.detectors:
             logger.warning(f"Motion detector for {camera_name} already exists")
             return self.detectors[camera_name]
 
         detector = MotionDetector(
-            sensitivity=sensitivity,
-            min_area=min_area,
-            camera_name=camera_name,
-            recorder=recorder
+            sensitivity=sensitivity, min_area=min_area, camera_name=camera_name, recorder=recorder
         )
 
         self.detectors[camera_name] = detector
@@ -310,9 +285,7 @@ class MotionMonitor:
                     if result:
                         has_motion, boxes = result
                         if has_motion:
-                            logger.debug(
-                                f"Motion on {camera_name}: {len(boxes)} area(s) detected"
-                            )
+                            logger.debug(f"Motion on {camera_name}: {len(boxes)} area(s) detected")
 
                 await asyncio.sleep(self.POLL_INTERVAL_SECONDS)
 
@@ -327,9 +300,7 @@ class MotionMonitor:
         tasks = []
         for camera_name, recorder in recorder_manager.recorders.items():
             if camera_name in self.detectors:
-                task = asyncio.create_task(
-                    self.monitor_recorder(camera_name, recorder)
-                )
+                task = asyncio.create_task(self.monitor_recorder(camera_name, recorder))
                 tasks.append(task)
 
         if tasks:

@@ -4,7 +4,6 @@ import threading
 import logging
 import time
 from pathlib import Path
-from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -33,13 +32,11 @@ class CacheCleaner:
             return
 
         self.running = True
-        self.worker_thread = threading.Thread(
-            target=self._cleanup_loop,
-            name="CacheCleaner",
-            daemon=True
-        )
+        self.worker_thread = threading.Thread(target=self._cleanup_loop, name="CacheCleaner", daemon=True)
         self.worker_thread.start()
-        logger.info(f"Cache cleaner started (max age: {self.max_age_seconds // 60} minutes, check interval: {self.check_interval_seconds // 60} minutes)")
+        logger.info(
+            f"Cache cleaner started (max age: {self.max_age_seconds // 60} minutes, check interval: {self.check_interval_seconds // 60} minutes)"
+        )
 
     def stop(self):
         """Stop the background cache cleaner"""
@@ -105,10 +102,11 @@ def get_cache_cleaner() -> CacheCleaner:
     global _cache_cleaner
     if _cache_cleaner is None:
         from nvr.core.config import config
+
         _cache_cleaner = CacheCleaner(
             cache_dir=str(config.storage_path / ".transcoded"),
-            max_age_minutes=60,      # Delete files older than 60 minutes
-            check_interval_minutes=10  # Check every 10 minutes
+            max_age_minutes=60,  # Delete files older than 60 minutes
+            check_interval_minutes=10,  # Check every 10 minutes
         )
         _cache_cleaner.start()
     return _cache_cleaner

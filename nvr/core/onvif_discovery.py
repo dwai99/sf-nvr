@@ -6,11 +6,10 @@ from nvr.core import compat  # noqa
 import asyncio
 import logging
 from typing import List, Dict, Optional, Any
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from onvif import ONVIFCamera
 from zeep.exceptions import Fault
 import socket
-import os
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -20,8 +19,9 @@ def get_wsdl_dir() -> str:
     """Find the WSDL directory for onvif-zeep"""
     try:
         import onvif
+
         onvif_path = Path(onvif.__file__).parent
-        wsdl_path = onvif_path / 'wsdl'
+        wsdl_path = onvif_path / "wsdl"
         if wsdl_path.exists():
             return str(wsdl_path)
     except Exception:
@@ -29,9 +29,9 @@ def get_wsdl_dir() -> str:
 
     # Fallback to common locations
     possible_paths = [
-        '/usr/local/lib/python3.11/site-packages/wsdl',
-        '/usr/lib/python3/dist-packages/wsdl',
-        str(Path.home() / '.local/lib/python3.11/site-packages/wsdl'),
+        "/usr/local/lib/python3.11/site-packages/wsdl",
+        "/usr/lib/python3/dist-packages/wsdl",
+        str(Path.home() / ".local/lib/python3.11/site-packages/wsdl"),
     ]
 
     for path in possible_paths:
@@ -45,13 +45,7 @@ def get_wsdl_dir() -> str:
 class ONVIFDevice:
     """Represents a discovered ONVIF camera"""
 
-    def __init__(
-        self,
-        host: str,
-        port: int = 80,
-        username: str = 'admin',
-        password: str = 'admin'
-    ):
+    def __init__(self, host: str, port: int = 80, username: str = "admin", password: str = "admin"):
         self.host = host
         self.port = port
         self.username = username
@@ -66,21 +60,10 @@ class ONVIFDevice:
             # Create ONVIF camera instance
             wsdl_dir = get_wsdl_dir()
             if wsdl_dir:
-                self.camera = ONVIFCamera(
-                    self.host,
-                    self.port,
-                    self.username,
-                    self.password,
-                    wsdl_dir=wsdl_dir
-                )
+                self.camera = ONVIFCamera(self.host, self.port, self.username, self.password, wsdl_dir=wsdl_dir)
             else:
                 # Let library find WSDL automatically
-                self.camera = ONVIFCamera(
-                    self.host,
-                    self.port,
-                    self.username,
-                    self.password
-                )
+                self.camera = ONVIFCamera(self.host, self.port, self.username, self.password)
 
             # Get device information
             device_mgmt = await asyncio.to_thread(self.camera.create_devicemgmt_service)
@@ -88,11 +71,11 @@ class ONVIFDevice:
 
             # Convert to dict
             self.device_info = {
-                'Manufacturer': getattr(device_info_obj, 'Manufacturer', 'Unknown'),
-                'Model': getattr(device_info_obj, 'Model', 'Unknown'),
-                'FirmwareVersion': getattr(device_info_obj, 'FirmwareVersion', 'Unknown'),
-                'SerialNumber': getattr(device_info_obj, 'SerialNumber', 'Unknown'),
-                'HardwareId': getattr(device_info_obj, 'HardwareId', 'Unknown')
+                "Manufacturer": getattr(device_info_obj, "Manufacturer", "Unknown"),
+                "Model": getattr(device_info_obj, "Model", "Unknown"),
+                "FirmwareVersion": getattr(device_info_obj, "FirmwareVersion", "Unknown"),
+                "SerialNumber": getattr(device_info_obj, "SerialNumber", "Unknown"),
+                "HardwareId": getattr(device_info_obj, "HardwareId", "Unknown"),
             }
 
             # Get network interfaces (for MAC address)
@@ -102,8 +85,10 @@ class ONVIFDevice:
             await self._get_rtsp_urls()
 
             logger.info(f"Connected to ONVIF camera at {self.host}:{self.port}")
-            logger.info(f"Device: {self.device_info.get('Manufacturer', 'Unknown')} "
-                       f"{self.device_info.get('Model', 'Unknown')}")
+            logger.info(
+                f"Device: {self.device_info.get('Manufacturer', 'Unknown')} "
+                f"{self.device_info.get('Model', 'Unknown')}"
+            )
 
             return True
 
@@ -121,19 +106,19 @@ class ONVIFDevice:
 
             for interface in network_interfaces:
                 # Get MAC address from HwAddress
-                hw_address = getattr(interface, 'Info', None)
+                hw_address = getattr(interface, "Info", None)
                 if hw_address:
-                    mac = getattr(hw_address, 'HwAddress', None)
-                    if mac and mac != 'Unknown':
-                        self.device_info['MACAddress'] = mac
+                    mac = getattr(hw_address, "HwAddress", None)
+                    if mac and mac != "Unknown":
+                        self.device_info["MACAddress"] = mac
                         logger.info(f"Found MAC address: {mac}")
                         break
 
                 # Alternative location for MAC address
-                if hasattr(interface, 'HwAddress'):
+                if hasattr(interface, "HwAddress"):
                     mac = interface.HwAddress
-                    if mac and mac != 'Unknown':
-                        self.device_info['MACAddress'] = mac
+                    if mac and mac != "Unknown":
+                        self.device_info["MACAddress"] = mac
                         logger.info(f"Found MAC address: {mac}")
                         break
 
@@ -151,8 +136,10 @@ class ONVIFDevice:
                 try:
                     stream_uri = await asyncio.to_thread(
                         media_service.GetStreamUri,
-                        {'StreamSetup': {'Stream': 'RTP-Unicast', 'Transport': {'Protocol': 'RTSP'}},
-                         'ProfileToken': profile.token}
+                        {
+                            "StreamSetup": {"Stream": "RTP-Unicast", "Transport": {"Protocol": "RTSP"}},
+                            "ProfileToken": profile.token,
+                        },
                     )
                     self.rtsp_urls.append(stream_uri.Uri)
                 except Exception as e:
@@ -165,34 +152,34 @@ class ONVIFDevice:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert device to dictionary for configuration"""
-        manufacturer = self.device_info.get('Manufacturer', 'Unknown')
-        model = self.device_info.get('Model', 'Unknown')
-        serial = self.device_info.get('SerialNumber', 'Unknown')
+        manufacturer = self.device_info.get("Manufacturer", "Unknown")
+        model = self.device_info.get("Model", "Unknown")
+        serial = self.device_info.get("SerialNumber", "Unknown")
 
         # Use serial number for camera name (permanent ID that survives DHCP changes)
         # Fallback to IP if serial not available
-        if serial and serial != 'Unknown':
+        if serial and serial != "Unknown":
             camera_name = f"{manufacturer} {model} [{serial[-8:]}]"  # Last 8 chars of serial
         else:
             camera_name = f"{manufacturer} {model} ({self.host})"
 
         return {
-            'name': camera_name,
-            'rtsp_url': self.rtsp_urls[0] if self.rtsp_urls else f"rtsp://{self.host}:554/stream1",
-            'onvif_host': self.host,
-            'onvif_port': self.port,
-            'username': self.username,
-            'password': self.password,
-            'enabled': True,
-            'device_info': {
-                'manufacturer': manufacturer,
-                'model': model,
-                'firmware': self.device_info.get('FirmwareVersion', 'Unknown'),
-                'serial': serial,
-                'hardware_id': self.device_info.get('HardwareId', 'Unknown'),
-                'mac_address': self.device_info.get('MACAddress', 'Unknown'),
-                'supports_profile_g': self.device_info.get('supports_profile_g', False)
-            }
+            "name": camera_name,
+            "rtsp_url": self.rtsp_urls[0] if self.rtsp_urls else f"rtsp://{self.host}:554/stream1",
+            "onvif_host": self.host,
+            "onvif_port": self.port,
+            "username": self.username,
+            "password": self.password,
+            "enabled": True,
+            "device_info": {
+                "manufacturer": manufacturer,
+                "model": model,
+                "firmware": self.device_info.get("FirmwareVersion", "Unknown"),
+                "serial": serial,
+                "hardware_id": self.device_info.get("HardwareId", "Unknown"),
+                "mac_address": self.device_info.get("MACAddress", "Unknown"),
+                "supports_profile_g": self.device_info.get("supports_profile_g", False),
+            },
         }
 
     async def check_profile_g_support(self) -> bool:
@@ -210,34 +197,28 @@ class ONVIFDevice:
 
         try:
             # Try to create recording search service - only available with Profile G
-            search_service = await asyncio.to_thread(
-                self.camera.create_recording_service
-            )
+            search_service = await asyncio.to_thread(self.camera.create_recording_service)
 
             if search_service:
                 # Try to get recordings to verify service works
                 try:
                     await asyncio.to_thread(search_service.GetRecordings)
-                    self.device_info['supports_profile_g'] = True
+                    self.device_info["supports_profile_g"] = True
                     logger.info(f"Profile G supported on {self.host}")
                     return True
                 except Exception as e:
                     logger.debug(f"GetRecordings failed on {self.host}: {e}")
-                    self.device_info['supports_profile_g'] = False
+                    self.device_info["supports_profile_g"] = False
                     return False
 
         except Exception as e:
             logger.debug(f"Profile G not supported on {self.host}: {e}")
-            self.device_info['supports_profile_g'] = False
+            self.device_info["supports_profile_g"] = False
             return False
 
         return False
 
-    async def get_sd_recordings(
-        self,
-        start_time: datetime,
-        end_time: datetime
-    ) -> List[Dict[str, Any]]:
+    async def get_sd_recordings(self, start_time: datetime, end_time: datetime) -> List[Dict[str, Any]]:
         """
         Get list of recordings from camera's SD card within a time range.
 
@@ -254,14 +235,12 @@ class ONVIFDevice:
             logger.warning(f"Camera not connected: {self.host}")
             return []
 
-        if not self.device_info.get('supports_profile_g', False):
+        if not self.device_info.get("supports_profile_g", False):
             logger.warning(f"Profile G not supported on {self.host}")
             return []
 
         try:
-            search_service = await asyncio.to_thread(
-                self.camera.create_search_service
-            )
+            search_service = await asyncio.to_thread(self.camera.create_search_service)
 
             # Ensure times are UTC for ONVIF
             if start_time.tzinfo is None:
@@ -276,26 +255,21 @@ class ONVIFDevice:
 
             # Create search scope
             scope = {
-                'IncludedSources': None,  # All sources
-                'IncludedRecordings': None,  # All recordings
-                'RecordingInformationFilter': None,
-                'Extension': None
+                "IncludedSources": None,  # All sources
+                "IncludedRecordings": None,  # All recordings
+                "RecordingInformationFilter": None,
+                "Extension": None,
             }
 
             # Start recording search
-            search_request = {
-                'Scope': scope,
-                'MaxMatches': 100,
-                'KeepAliveTime': 'PT60S'  # 60 seconds
-            }
+            search_request = {"Scope": scope, "MaxMatches": 100, "KeepAliveTime": "PT60S"}  # 60 seconds
 
             # FindRecordings returns a SearchToken
             search_result = await asyncio.wait_for(
-                asyncio.to_thread(search_service.FindRecordings, search_request),
-                timeout=30.0
+                asyncio.to_thread(search_service.FindRecordings, search_request), timeout=30.0
             )
 
-            if not search_result or not hasattr(search_result, 'SearchToken'):
+            if not search_result or not hasattr(search_result, "SearchToken"):
                 logger.warning(f"No search token returned from {self.host}")
                 return []
 
@@ -305,32 +279,36 @@ class ONVIFDevice:
             results = await asyncio.wait_for(
                 asyncio.to_thread(
                     search_service.GetRecordingSearchResults,
-                    {'SearchToken': search_token, 'MinResults': 1, 'MaxResults': 100, 'WaitTime': 'PT10S'}
+                    {"SearchToken": search_token, "MinResults": 1, "MaxResults": 100, "WaitTime": "PT10S"},
                 ),
-                timeout=30.0
+                timeout=30.0,
             )
 
             recordings = []
 
-            if results and hasattr(results, 'ResultList') and results.ResultList:
+            if results and hasattr(results, "ResultList") and results.ResultList:
                 for result in results.ResultList.RecordingInformation:
-                    rec_token = getattr(result, 'RecordingToken', None)
-                    rec_start = getattr(result, 'EarliestRecording', None)
-                    rec_end = getattr(result, 'LatestRecording', None)
+                    rec_token = getattr(result, "RecordingToken", None)
+                    rec_start = getattr(result, "EarliestRecording", None)
+                    rec_end = getattr(result, "LatestRecording", None)
 
                     if rec_token and rec_start and rec_end:
                         # Filter by requested time range
                         if rec_end >= start_time_utc and rec_start <= end_time_utc:
-                            recordings.append({
-                                'recording_token': rec_token,
-                                'start_time': rec_start.isoformat() if hasattr(rec_start, 'isoformat') else str(rec_start),
-                                'end_time': rec_end.isoformat() if hasattr(rec_end, 'isoformat') else str(rec_end),
-                                'source': 'sd_card'
-                            })
+                            recordings.append(
+                                {
+                                    "recording_token": rec_token,
+                                    "start_time": (
+                                        rec_start.isoformat() if hasattr(rec_start, "isoformat") else str(rec_start)
+                                    ),
+                                    "end_time": rec_end.isoformat() if hasattr(rec_end, "isoformat") else str(rec_end),
+                                    "source": "sd_card",
+                                }
+                            )
 
             # End the search session
             try:
-                await asyncio.to_thread(search_service.EndSearch, {'SearchToken': search_token})
+                await asyncio.to_thread(search_service.EndSearch, {"SearchToken": search_token})
             except Exception:
                 pass  # Ignore errors ending search
 
@@ -358,34 +336,28 @@ class ONVIFDevice:
             logger.warning(f"Camera not connected: {self.host}")
             return None
 
-        if not self.device_info.get('supports_profile_g', False):
+        if not self.device_info.get("supports_profile_g", False):
             logger.warning(f"Profile G not supported on {self.host}")
             return None
 
         try:
-            replay_service = await asyncio.to_thread(
-                self.camera.create_replay_service
-            )
+            replay_service = await asyncio.to_thread(self.camera.create_replay_service)
 
             # Request replay URI
-            stream_setup = {
-                'Stream': 'RTP-Unicast',
-                'Transport': {'Protocol': 'RTSP'}
-            }
+            stream_setup = {"Stream": "RTP-Unicast", "Transport": {"Protocol": "RTSP"}}
 
             replay_uri = await asyncio.wait_for(
                 asyncio.to_thread(
-                    replay_service.GetReplayUri,
-                    {'StreamSetup': stream_setup, 'RecordingToken': recording_token}
+                    replay_service.GetReplayUri, {"StreamSetup": stream_setup, "RecordingToken": recording_token}
                 ),
-                timeout=10.0
+                timeout=10.0,
             )
 
-            if replay_uri and hasattr(replay_uri, 'Uri'):
+            if replay_uri and hasattr(replay_uri, "Uri"):
                 uri = replay_uri.Uri
                 # Add authentication to URI if not present
-                if '@' not in uri and self.username and self.password:
-                    uri = uri.replace('rtsp://', f'rtsp://{self.username}:{self.password}@')
+                if "@" not in uri and self.username and self.password:
+                    uri = uri.replace("rtsp://", f"rtsp://{self.username}:{self.password}@")
                 logger.info(f"Got replay URI for {recording_token} on {self.host}")
                 return uri
 
@@ -402,15 +374,11 @@ class ONVIFDevice:
 class ONVIFDiscovery:
     """Discovers ONVIF cameras on the local network"""
 
-    def __init__(self, username: str = 'admin', password: str = 'admin'):
+    def __init__(self, username: str = "admin", password: str = "admin"):
         self.username = username
         self.password = password
 
-    async def discover_cameras(
-        self,
-        timeout: int = 5,
-        scan_range: Optional[str] = None
-    ) -> List[ONVIFDevice]:
+    async def discover_cameras(self, timeout: int = 5, scan_range: Optional[str] = None) -> List[ONVIFDevice]:
         """
         Discover ONVIF cameras on network
 
@@ -435,7 +403,7 @@ class ONVIFDiscovery:
         # For now, fall back to scanning common subnet
         local_ip = self._get_local_ip()
         if local_ip:
-            subnet = '.'.join(local_ip.split('.')[:-1]) + '.0/24'
+            subnet = ".".join(local_ip.split(".")[:-1]) + ".0/24"
             return await self._scan_ip_range(subnet, timeout)
         return []
 
@@ -444,14 +412,14 @@ class ONVIFDiscovery:
         logger.info(f"Scanning {ip_range} for ONVIF cameras...")
 
         # Parse CIDR notation
-        base_ip, prefix = ip_range.split('/')
+        base_ip, prefix = ip_range.split("/")
         prefix = int(prefix)
 
         if prefix != 24:
             logger.warning("Only /24 subnets currently supported")
             return []
 
-        base = '.'.join(base_ip.split('.')[:-1])
+        base = ".".join(base_ip.split(".")[:-1])
 
         # Try common ONVIF ports
         devices = []
@@ -476,10 +444,7 @@ class ONVIFDiscovery:
             logger.info(f"Testing {ip}:{port} ({idx}/{len(responsive_targets)})...")
             try:
                 device = ONVIFDevice(ip, port, self.username, self.password)
-                connected = await asyncio.wait_for(
-                    device.connect(),
-                    timeout=onvif_timeout
-                )
+                connected = await asyncio.wait_for(device.connect(), timeout=onvif_timeout)
                 if connected:
                     devices.append(device)
                     logger.info(f"✓ Found ONVIF camera at {ip}:{port}")
@@ -549,13 +514,12 @@ class ONVIFDiscovery:
 
         return None
 
-
     async def _try_rtsp_fallback(self, ip: str, onvif_port: int) -> Optional[ONVIFDevice]:
         """Try RTSP connection as fallback when ONVIF fails"""
         # Common RTSP URLs for various camera brands
         rtsp_patterns = [
             f"rtsp://{self.username}:{self.password}@{ip}:554/ch0_0.264",  # Night Owl, generic
-            f"rtsp://{self.username}:{self.password}@{ip}:554/stream1",    # Generic
+            f"rtsp://{self.username}:{self.password}@{ip}:554/stream1",  # Generic
             f"rtsp://{self.username}:{self.password}@{ip}:554/Streaming/Channels/101",  # Hikvision
             f"rtsp://{self.username}:{self.password}@{ip}:554/cam/realmonitor?channel=1&subtype=0",  # Dahua
         ]
@@ -570,10 +534,10 @@ class ONVIFDiscovery:
             # RTSP port is open - create a basic device
             device = ONVIFDevice(ip, onvif_port, self.username, self.password)
             device.device_info = {
-                'Manufacturer': 'Unknown',
-                'Model': 'Camera',
-                'FirmwareVersion': 'Unknown',
-                'SerialNumber': 'Unknown'
+                "Manufacturer": "Unknown",
+                "Model": "Camera",
+                "FirmwareVersion": "Unknown",
+                "SerialNumber": "Unknown",
             }
             # Use the most common RTSP URL pattern
             device.rtsp_urls = [rtsp_patterns[0]]

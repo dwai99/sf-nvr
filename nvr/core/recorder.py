@@ -1,10 +1,8 @@
 """RTSP stream recording and management"""
 
-import asyncio
 import logging
 import os
 import cv2
-import numpy as np
 from pathlib import Path
 from typing import Optional, Callable
 from datetime import datetime, timedelta
@@ -14,7 +12,7 @@ import time
 
 # Set OpenCV FFmpeg options for TCP RTSP transport BEFORE any OpenCV usage
 # This MUST be set before cv2.VideoCapture is called
-os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = 'rtsp_transport;tcp|timeout;60000000|stimeout;10000000|max_delay;10000000'
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|timeout;60000000|stimeout;10000000|max_delay;10000000"
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +26,11 @@ class RTSPRecorder:
         rtsp_url: str,
         storage_path: Path,
         segment_duration: int = 300,
-        codec: str = 'h264',
-        container: str = 'mp4',
+        codec: str = "h264",
+        container: str = "mp4",
         playback_db=None,
         camera_id: Optional[str] = None,
-        recording_mode_manager=None
+        recording_mode_manager=None,
     ):
         self.camera_name = camera_name
         self.camera_id = camera_id or self._sanitize_name(camera_name)  # Fallback to name if no ID
@@ -74,11 +72,11 @@ class RTSPRecorder:
         # Frame counters let us tell a disk failure (frames written but bytes
         # not landing) from a camera/network stall (no frames arriving) — the
         # latter must NOT be reported as a disk failure.
-        self._last_size_check = 0.0          # monotonic time of last size check
-        self._last_size_check_path = None    # segment the baseline size belongs to
-        self._last_segment_size = -1         # bytes at last check (-1 = no baseline)
-        self._frames_written_total = 0       # monotonic count of frames written
-        self._frames_at_last_check = 0       # frame count at last size sample
+        self._last_size_check = 0.0  # monotonic time of last size check
+        self._last_size_check_path = None  # segment the baseline size belongs to
+        self._last_segment_size = -1  # bytes at last check (-1 = no baseline)
+        self._frames_written_total = 0  # monotonic count of frames written
+        self._frames_at_last_check = 0  # frame count at last size sample
         # Monotonic clock at segment start — used for duration so DST/NTP steps
         # can't produce negative or wrong durations (wall-clock subtraction does)
         self._segment_start_monotonic = 0.0
@@ -103,7 +101,7 @@ class RTSPRecorder:
 
     def _sanitize_name(self, name: str) -> str:
         """Sanitize camera name for filesystem"""
-        return "".join(c if c.isalnum() or c in (' ', '-', '_') else '_' for c in name)
+        return "".join(c if c.isalnum() or c in (" ", "-", "_") else "_" for c in name)
 
     async def start(self, streaming_only: bool = False) -> bool:
         """Start recording stream
@@ -120,7 +118,7 @@ class RTSPRecorder:
         # timeout — starting a second thread would run two capture loops against
         # one recorder and let _cleanup() race the live thread on the
         # VideoCapture/VideoWriter (OpenCV use-after-free).
-        prior_thread = getattr(self, 'record_thread', None)
+        prior_thread = getattr(self, "record_thread", None)
         if prior_thread and prior_thread.is_alive():
             logger.warning(f"Previous capture thread for {self.camera_name} still alive; waiting before restart")
             prior_thread.join(timeout=2.0)
@@ -184,7 +182,9 @@ class RTSPRecorder:
 
                     # Log less frequently for persistent failures
                     if consecutive_failures <= 3 or consecutive_failures % 10 == 0:
-                        logger.error(f"Failed to open RTSP stream for {self.camera_name} (attempt {consecutive_failures})")
+                        logger.error(
+                            f"Failed to open RTSP stream for {self.camera_name} (attempt {consecutive_failures})"
+                        )
 
                     # Exponential backoff: 5s → 10s → 20s → 40s → 80s → 160s → 300s (5min)
                     self._sleep_if_recording(retry_delay)
@@ -219,7 +219,9 @@ class RTSPRecorder:
 
                 # Log less frequently for persistent failures
                 if consecutive_failures <= 3 or consecutive_failures % 10 == 0:
-                    logger.error(f"Error in recording loop for {self.camera_name}: {e} (attempt {consecutive_failures})")
+                    logger.error(
+                        f"Error in recording loop for {self.camera_name}: {e} (attempt {consecutive_failures})"
+                    )
 
                 self._sleep_if_recording(retry_delay)
                 retry_delay = min(retry_delay * 2, max_retry_delay)
@@ -237,23 +239,18 @@ class RTSPRecorder:
         from nvr.core.config import config
 
         # Look up this camera's resolution setting
-        cameras = config.get('cameras', [])
+        cameras = config.get("cameras", [])
         camera_resolution = None
         for cam in cameras:
-            if cam.get('id') == self.camera_id or cam.get('name') == self.camera_name:
-                camera_resolution = cam.get('resolution')
+            if cam.get("id") == self.camera_id or cam.get("name") == self.camera_name:
+                camera_resolution = cam.get("resolution")
                 break
 
         # Fall back to global max_resolution if no per-camera setting
-        max_resolution = camera_resolution or config.get('recording.max_resolution', 720)
+        max_resolution = camera_resolution or config.get("recording.max_resolution", 720)
 
         # Map resolution setting to width
-        resolution_map = {
-            1080: 1920,
-            720: 1280,
-            480: 854,
-            360: 640
-        }
+        resolution_map = {1080: 1920, 720: 1280, 480: 854, 360: 640}
         max_width = resolution_map.get(max_resolution, 1280)
 
         # Downscale if source exceeds configured max resolution
@@ -264,7 +261,9 @@ class RTSPRecorder:
             recording_width = max_width
             recording_height = int(height * scale)
 
-        logger.info(f"Recording dimensions: {recording_width}x{recording_height} (source: {width}x{height}, max: {max_resolution}p)")
+        logger.info(
+            f"Recording dimensions: {recording_width}x{recording_height} (source: {width}x{height}, max: {max_resolution}p)"
+        )
 
         # Track when the next segment should start (aligned to clock intervals)
         next_segment_time = self._get_next_segment_boundary()
@@ -276,7 +275,9 @@ class RTSPRecorder:
             if not ret:
                 consecutive_failures += 1
                 if consecutive_failures >= max_consecutive_failures:
-                    logger.warning(f"Failed to read frame from {self.camera_name} ({consecutive_failures} consecutive failures)")
+                    logger.warning(
+                        f"Failed to read frame from {self.camera_name} ({consecutive_failures} consecutive failures)"
+                    )
                     break
                 # Brief sleep to avoid tight loop on temporary network issues
                 time.sleep(0.1)
@@ -331,7 +332,7 @@ class RTSPRecorder:
 
                 # Compress frame to JPEG for live viewing (saves memory)
                 # Quality 85 is good balance between size and quality
-                success, jpeg_bytes = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                success, jpeg_bytes = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
 
                 if success and jpeg_bytes is not None:
                     # Make an immutable copy of the bytes immediately
@@ -339,9 +340,7 @@ class RTSPRecorder:
 
                     # Validate JPEG structure before queuing
                     # Must start with FFD8 (SOI) and end with FFD9 (EOI)
-                    if (len(jpeg_data) > 1000 and
-                        jpeg_data[0:2] == b'\xff\xd8' and
-                        jpeg_data[-2:] == b'\xff\xd9'):
+                    if len(jpeg_data) > 1000 and jpeg_data[0:2] == b"\xff\xd8" and jpeg_data[-2:] == b"\xff\xd9":
 
                         # Put compressed frame in queue for live viewing
                         with self.frame_lock:
@@ -360,9 +359,11 @@ class RTSPRecorder:
                 # A single bad/corrupt frame (common on weak-signal cameras)
                 # must not tear down the capture session and force a full
                 # RTSP reconnect. Log sparingly and skip just this frame.
-                self._frame_error_count = getattr(self, '_frame_error_count', 0) + 1
+                self._frame_error_count = getattr(self, "_frame_error_count", 0) + 1
                 if self._frame_error_count <= 3 or self._frame_error_count % 100 == 0:
-                    logger.warning(f"Error processing frame for {self.camera_name}: {_frame_err} (count={self._frame_error_count})")
+                    logger.warning(
+                        f"Error processing frame for {self.camera_name}: {_frame_err} (count={self._frame_error_count})"
+                    )
                 continue
 
     def _get_next_segment_boundary(self) -> datetime:
@@ -408,11 +409,7 @@ class RTSPRecorder:
             return True
 
         # Check if mode allows recording
-        should_record = self.recording_mode_manager.should_record(
-            self.camera_name,
-            has_motion=self.has_motion,
-            dt=now
-        )
+        should_record = self.recording_mode_manager.should_record(self.camera_name, has_motion=self.has_motion, dt=now)
 
         # Handle post-motion timeout for motion-only mode
         if should_record and self.has_motion:
@@ -449,22 +446,21 @@ class RTSPRecorder:
 
             # Update database with segment info
             self.playback_db.update_segment_end(
-                self.camera_id,
-                str(self.current_segment_path),
-                end_time,
-                duration,
-                file_size
+                self.camera_id, str(self.current_segment_path), end_time, duration, file_size
             )
 
             # Queue segment for background transcoding for instant playback
             try:
                 from nvr.core.transcoder import get_transcoder
+
                 transcoder = get_transcoder()
                 transcoder.queue_transcode(self.current_segment_path)
             except Exception as e:
                 logger.warning(f"Failed to queue transcode for {self.current_segment_path}: {e}")
 
-            logger.info(f"Closed segment for {self.camera_name}: {self.current_segment_path.name} ({duration}s, {file_size / (1024*1024):.1f}MB)")
+            logger.info(
+                f"Closed segment for {self.camera_name}: {self.current_segment_path.name} ({duration}s, {file_size / (1024*1024):.1f}MB)"
+            )
 
     def _check_segment_growth(self) -> None:
         """Detect a silently-failing writer by verifying the segment grows on disk.
@@ -510,9 +506,7 @@ class RTSPRecorder:
         except OSError:
             # File gone (volume unmounted / deleted under us) = write failure
             if not self.write_failed:
-                logger.error(
-                    f"Segment file missing for {self.camera_name}: {self.current_segment_path}"
-                )
+                logger.error(f"Segment file missing for {self.camera_name}: {self.current_segment_path}")
             self.write_failed = True
             self.actively_writing = False
             return
@@ -554,16 +548,13 @@ class RTSPRecorder:
 
             # Update database with segment info
             self.playback_db.update_segment_end(
-                self.camera_id,
-                str(self.current_segment_path),
-                end_time,
-                duration,
-                file_size
+                self.camera_id, str(self.current_segment_path), end_time, duration, file_size
             )
 
             # Queue segment for background transcoding for instant playback
             try:
                 from nvr.core.transcoder import get_transcoder
+
                 transcoder = get_transcoder()
                 transcoder.queue_transcode(self.current_segment_path)
             except Exception as e:
@@ -600,18 +591,14 @@ class RTSPRecorder:
         # IMPORTANT: Use mp4v codec on macOS to avoid FFmpeg write errors
         # H264 codec has issues with VideoWriter on some systems
         import platform
-        if platform.system() == 'Darwin':  # macOS
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            logger.info(f"Using mp4v codec for macOS compatibility")
+
+        if platform.system() == "Darwin":  # macOS
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            logger.info("Using mp4v codec for macOS compatibility")
 
         logger.info(f"Creating VideoWriter: {filepath}, fps={fps}, dimensions={width}x{height}, fourcc={fourcc}")
 
-        self.writer = cv2.VideoWriter(
-            str(filepath),
-            fourcc,
-            fps,
-            (width, height)
-        )
+        self.writer = cv2.VideoWriter(str(filepath), fourcc, fps, (width, height))
 
         logger.info(f"VideoWriter created, isOpened={self.writer.isOpened()}")
 
@@ -621,13 +608,8 @@ class RTSPRecorder:
             logger.error(f"Attempted codec: {fourcc}, fps: {fps}, dimensions: {width}x{height}")
             # Try fallback to mjpeg
             logger.info("Trying fallback to MJPG codec...")
-            fourcc = cv2.VideoWriter_fourcc(*'MJPG')
-            self.writer = cv2.VideoWriter(
-                str(filepath),
-                fourcc,
-                fps,
-                (width, height)
-            )
+            fourcc = cv2.VideoWriter_fourcc(*"MJPG")
+            self.writer = cv2.VideoWriter(str(filepath), fourcc, fps, (width, height))
             if not self.writer.isOpened():
                 logger.error("VideoWriter failed to open with MJPG fallback!")
                 self.writer = None
@@ -642,20 +624,15 @@ class RTSPRecorder:
                 start_time=self.current_segment_start,
                 fps=fps,
                 width=width,
-                height=height
+                height=height,
             )
 
         logger.info(f"Started new segment: {filepath}")
 
     def _get_fourcc(self) -> str:
         """Get FourCC code for codec"""
-        codec_map = {
-            'h264': 'H264',
-            'h265': 'HEVC',
-            'mjpeg': 'MJPG',
-            'mpeg4': 'MP4V'
-        }
-        return codec_map.get(self.codec.lower(), 'H264')
+        codec_map = {"h264": "H264", "h265": "HEVC", "mjpeg": "MJPG", "mpeg4": "MP4V"}
+        return codec_map.get(self.codec.lower(), "H264")
 
     def _cleanup(self) -> None:
         """Clean up resources.
@@ -738,12 +715,11 @@ class RTSPRecorder:
                 event_time=self.motion_event_start,
                 duration_seconds=duration,
                 frame_count=self.motion_frame_count,
-                camera_name=self.camera_name
+                camera_name=self.camera_name,
             )
 
             logger.debug(
-                f"Motion event logged for {self.camera_name}: "
-                f"{duration:.1f}s, {self.motion_frame_count} frames"
+                f"Motion event logged for {self.camera_name}: " f"{duration:.1f}s, {self.motion_frame_count} frames"
             )
         else:
             logger.debug(
@@ -772,7 +748,7 @@ class RecorderManager:
         rtsp_url: str,
         camera_id: Optional[str] = None,
         auto_start: bool = True,
-        streaming_only: bool = False
+        streaming_only: bool = False,
     ) -> RTSPRecorder:
         """Add a camera recorder
 
@@ -794,7 +770,7 @@ class RecorderManager:
             segment_duration=self.segment_duration,
             playback_db=self.playback_db,
             camera_id=camera_id,
-            recording_mode_manager=self.recording_mode_manager
+            recording_mode_manager=self.recording_mode_manager,
         )
 
         self.recorders[camera_name] = recorder
@@ -824,7 +800,7 @@ class RecorderManager:
         """
         paths = set()
         for rec in self.recorders.values():
-            seg = getattr(rec, 'current_segment_path', None)
+            seg = getattr(rec, "current_segment_path", None)
             if seg is None:
                 continue
             try:

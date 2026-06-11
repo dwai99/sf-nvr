@@ -1,6 +1,6 @@
 """Playback API endpoints for video archive access"""
 
-from fastapi import APIRouter, HTTPException, Query, Response, BackgroundTasks, Request
+from fastapi import APIRouter, HTTPException, Query, BackgroundTasks, Request
 from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 from typing import Optional, List, Dict
@@ -35,6 +35,7 @@ def _cache_is_fresh(cached: Path, source: Path) -> bool:
         return cached.exists() and cached.stat().st_mtime >= source.stat().st_mtime
     except OSError:
         return False
+
 
 # Cache directory for speed-processed videos
 SPEED_CACHE_DIR = nvr_config.storage_path / ".speed_cache"
@@ -92,25 +93,27 @@ def get_speed_processed_video(source_file: Path, speed: float) -> Optional[Path]
             video_filter += ",scale='min(1280,iw)':'min(720,ih)':force_original_aspect_ratio=decrease"
 
         ffmpeg_cmd = [
-            'ffmpeg',
-            '-i', str(source_file),
-            '-vf', video_filter,
-            '-an',  # Remove audio (doesn't make sense at high speeds)
-            '-c:v', 'libx264',
-            '-preset', 'fast',
-            '-crf', '28',  # Slightly lower quality for speed cache (smaller files)
-            '-movflags', '+faststart',
-            '-y',  # Overwrite existing
-            str(cached_file)
+            "ffmpeg",
+            "-i",
+            str(source_file),
+            "-vf",
+            video_filter,
+            "-an",  # Remove audio (doesn't make sense at high speeds)
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "28",  # Slightly lower quality for speed cache (smaller files)
+            "-movflags",
+            "+faststart",
+            "-y",  # Overwrite existing
+            str(cached_file),
         ]
 
         logger.debug(f"FFmpeg command: {' '.join(ffmpeg_cmd)}")
 
-        result = subprocess.run(
-            ffmpeg_cmd,
-            capture_output=True,
-            timeout=120  # 2 minute timeout
-        )
+        result = subprocess.run(ffmpeg_cmd, capture_output=True, timeout=120)  # 2 minute timeout
 
         if result.returncode != 0:
             logger.error(f"FFmpeg speed processing failed: {result.stderr.decode()}")
@@ -132,10 +135,7 @@ def get_speed_processed_video(source_file: Path, speed: float) -> Optional[Path]
 
 
 def range_requests_response(
-    file_path: Path,
-    request: Request,
-    content_type: str = "video/mp4",
-    extra_headers: Optional[Dict[str, str]] = None
+    file_path: Path, request: Request, content_type: str = "video/mp4", extra_headers: Optional[Dict[str, str]] = None
 ):
     """
     Returns a StreamingResponse that supports HTTP Range requests for video seeking.
@@ -183,10 +183,7 @@ def range_requests_response(
                     yield chunk
 
         return StreamingResponse(
-            file_iterator(),
-            status_code=206,  # Partial Content
-            headers=headers,
-            media_type=content_type
+            file_iterator(), status_code=206, headers=headers, media_type=content_type  # Partial Content
         )
 
     else:
@@ -202,29 +199,19 @@ def range_requests_response(
                         break
                     yield chunk
 
-        return StreamingResponse(
-            file_iterator(),
-            status_code=200,
-            headers=headers,
-            media_type=content_type
-        )
+        return StreamingResponse(file_iterator(), status_code=200, headers=headers, media_type=content_type)
+
 
 router = APIRouter()
 
 
 class PlaybackRequest(BaseModel):
     """Request model for playback"""
+
     camera_id: str  # Camera ID
     start_time: str  # ISO format datetime
     end_time: Optional[str] = None  # ISO format datetime
     speed: float = 1.0
-
-
-class TimeRangeRequest(BaseModel):
-    """Request for time range query"""
-    start_time: str
-    end_time: str
-    cameras: Optional[List[str]] = None
 
 
 @router.get("/api/playback/recordings/{camera_id}")
@@ -233,7 +220,7 @@ async def get_camera_recordings(
     date: Optional[str] = Query(None, description="Date in YYYY-MM-DD format"),
     start_time: Optional[str] = Query(None, description="ISO format datetime"),
     end_time: Optional[str] = Query(None, description="ISO format datetime"),
-    include_sd_card: bool = Query(False, description="Include recordings from camera SD card")
+    include_sd_card: bool = Query(False, description="Include recordings from camera SD card"),
 ):
     """Get list of recording segments for a camera"""
     from nvr.web.api import playback_db, sd_card_manager
@@ -256,9 +243,9 @@ async def get_camera_recordings(
         segments = playback_db.get_segments_in_range(camera_id, start_dt, end_dt)
 
         # Check if we should query SD card
-        sd_card_config = config.get('sd_card_fallback', {})
-        sd_card_enabled = sd_card_config.get('enabled', True)
-        auto_fallback = sd_card_config.get('auto_fallback', True)
+        sd_card_config = config.get("sd_card_fallback", {})
+        sd_card_enabled = sd_card_config.get("enabled", True)
+        auto_fallback = sd_card_config.get("auto_fallback", True)
 
         sd_segments = []
         sd_card_available = False
@@ -269,9 +256,7 @@ async def get_camera_recordings(
 
             if should_query_sd:
                 try:
-                    sd_segments = await sd_card_manager.get_camera_sd_recordings(
-                        camera_id, start_dt, end_dt
-                    )
+                    sd_segments = await sd_card_manager.get_camera_sd_recordings(camera_id, start_dt, end_dt)
                     sd_card_available = len(sd_segments) > 0
 
                     if sd_segments:
@@ -283,13 +268,13 @@ async def get_camera_recordings(
                     logger.warning(f"Failed to query SD card for {camera_id}: {e}")
 
         return {
-            'camera_id': camera_id,
-            'start_time': start_dt.isoformat(),
-            'end_time': end_dt.isoformat(),
-            'segment_count': len(segments),
-            'segments': segments,
-            'sd_card_available': sd_card_available,
-            'sd_card_segments': len(sd_segments) if sd_segments else 0
+            "camera_id": camera_id,
+            "start_time": start_dt.isoformat(),
+            "end_time": end_dt.isoformat(),
+            "segment_count": len(segments),
+            "segments": segments,
+            "sd_card_available": sd_card_available,
+            "sd_card_segments": len(sd_segments) if sd_segments else 0,
         }
 
     except Exception as e:
@@ -302,7 +287,7 @@ async def get_all_recordings(
     date: Optional[str] = Query(None, description="Date in YYYY-MM-DD format"),
     start_time: Optional[str] = Query(None, description="ISO format datetime"),
     end_time: Optional[str] = Query(None, description="ISO format datetime"),
-    include_sd_card: bool = Query(False, description="Include recordings from camera SD cards")
+    include_sd_card: bool = Query(False, description="Include recordings from camera SD cards"),
 ):
     """Get recording segments for all cameras"""
     from nvr.web.api import playback_db, sd_card_manager
@@ -316,7 +301,9 @@ async def get_all_recordings(
         elif start_time and end_time:
             start_dt = datetime.fromisoformat(start_time)
             end_dt = datetime.fromisoformat(end_time)
-            logger.info(f"Parsed time range - start_time param: {start_time} -> {start_dt}, end_time param: {end_time} -> {end_dt}")
+            logger.info(
+                f"Parsed time range - start_time param: {start_time} -> {start_dt}, end_time param: {end_time} -> {end_dt}"
+            )
         else:
             end_dt = datetime.now()
             start_dt = end_dt - timedelta(days=1)
@@ -328,9 +315,9 @@ async def get_all_recordings(
         for camera_id in list(segments.keys()):
             filtered = []
             for seg in segments[camera_id]:
-                if seg.get('end_time') is None:
+                if seg.get("end_time") is None:
                     # Incomplete segment - check if it has enough data
-                    seg_path = Path(seg['file_path'])
+                    seg_path = Path(seg["file_path"])
                     if seg_path.exists():
                         seg_size = seg_path.stat().st_size
                         if seg_size >= MIN_PLAYABLE_SIZE:
@@ -343,9 +330,9 @@ async def get_all_recordings(
             segments[camera_id] = filtered
 
         # Check if we should query SD cards
-        sd_card_config = config.get('sd_card_fallback', {})
-        sd_card_enabled = sd_card_config.get('enabled', True)
-        auto_fallback = sd_card_config.get('auto_fallback', True)
+        sd_card_config = config.get("sd_card_fallback", {})
+        sd_card_enabled = sd_card_config.get("enabled", True)
+        auto_fallback = sd_card_config.get("auto_fallback", True)
 
         sd_card_info = {}
 
@@ -360,16 +347,14 @@ async def get_all_recordings(
                 # Only query SD card for cameras with no local recordings
                 all_cameras = config.cameras
                 for cam in all_cameras:
-                    cam_id = cam.get('id')
+                    cam_id = cam.get("id")
                     if cam_id and cam_id not in segments:
                         cameras_needing_fallback.append(cam_id)
 
             # Query SD cards for cameras that need it
             for camera_id in cameras_needing_fallback:
                 try:
-                    sd_segments = await sd_card_manager.get_camera_sd_recordings(
-                        camera_id, start_dt, end_dt
-                    )
+                    sd_segments = await sd_card_manager.get_camera_sd_recordings(camera_id, start_dt, end_dt)
                     if sd_segments:
                         # Merge with existing segments for this camera
                         local_segs = segments.get(camera_id, [])
@@ -381,10 +366,10 @@ async def get_all_recordings(
                     logger.warning(f"Failed to query SD card for {camera_id}: {e}")
 
         return {
-            'start_time': start_dt.isoformat(),
-            'end_time': end_dt.isoformat(),
-            'cameras': segments,
-            'sd_card_segments': sd_card_info if sd_card_info else None
+            "start_time": start_dt.isoformat(),
+            "end_time": end_dt.isoformat(),
+            "cameras": segments,
+            "sd_card_segments": sd_card_info if sd_card_info else None,
         }
 
     except Exception as e:
@@ -396,7 +381,7 @@ async def get_all_recordings(
 async def get_camera_motion_events(
     camera_id: str,
     start_time: str = Query(..., description="ISO format datetime"),
-    end_time: str = Query(..., description="ISO format datetime")
+    end_time: str = Query(..., description="ISO format datetime"),
 ):
     """Get motion events for a camera in time range"""
     from nvr.web.api import playback_db
@@ -408,11 +393,11 @@ async def get_camera_motion_events(
         events = playback_db.get_motion_events_in_range(camera_id, start_dt, end_dt)
 
         return {
-            'camera_id': camera_id,
-            'start_time': start_time,
-            'end_time': end_time,
-            'event_count': len(events),
-            'events': events
+            "camera_id": camera_id,
+            "start_time": start_time,
+            "end_time": end_time,
+            "event_count": len(events),
+            "events": events,
         }
 
     except Exception as e:
@@ -424,7 +409,9 @@ async def get_camera_motion_events(
 async def get_all_motion_events(
     start_time: str = Query(..., description="ISO format datetime"),
     end_time: str = Query(..., description="ISO format datetime"),
-    aggregate: bool = Query(False, description="Return aggregated counts per 5-min bucket instead of individual events")
+    aggregate: bool = Query(
+        False, description="Return aggregated counts per 5-min bucket instead of individual events"
+    ),
 ):
     """Get motion events for all cameras in time range"""
     from nvr.web.api import playback_db
@@ -437,19 +424,15 @@ async def get_all_motion_events(
             # Return aggregated counts per 5-minute bucket (much faster for timeline overview)
             buckets = playback_db.get_motion_event_counts(start_dt, end_dt, bucket_minutes=5)
             return {
-                'start_time': start_time,
-                'end_time': end_time,
-                'aggregated': True,
-                'bucket_minutes': 5,
-                'cameras': buckets
+                "start_time": start_time,
+                "end_time": end_time,
+                "aggregated": True,
+                "bucket_minutes": 5,
+                "cameras": buckets,
             }
         else:
             events = playback_db.get_all_motion_events_in_range(start_dt, end_dt)
-            return {
-                'start_time': start_time,
-                'end_time': end_time,
-                'cameras': events
-            }
+            return {"start_time": start_time, "end_time": end_time, "cameras": events}
 
     except Exception as e:
         logger.error(f"Error getting motion events: {e}")
@@ -471,7 +454,7 @@ async def stream_video_segment(
     by using FFmpeg's setpts filter, which is much more efficient than relying
     on browser playbackRate for high speeds.
     """
-    from nvr.web.api import playback_db, recorder_manager
+    from nvr.web.api import playback_db
 
     try:
         start_dt = datetime.fromisoformat(start_time)
@@ -482,7 +465,9 @@ async def stream_video_segment(
             # Default to 5 minutes
             end_dt = start_dt + timedelta(minutes=5)
 
-        logger.info(f"VIDEO REQUEST - Camera: {camera_id}, start_time param: '{start_time}' -> {start_dt}, end_time param: '{end_time}' -> {end_dt}")
+        logger.info(
+            f"VIDEO REQUEST - Camera: {camera_id}, start_time param: '{start_time}' -> {start_dt}, end_time param: '{end_time}' -> {end_dt}"
+        )
 
         # Get segments in range
         segments = playback_db.get_segments_in_range(camera_id, start_dt, end_dt)
@@ -497,16 +482,13 @@ async def stream_video_segment(
             all_segments = playback_db.get_all_segments(camera_id)
 
             # Filter to segments that start at or after the requested start time
-            future_segments = [
-                s for s in all_segments
-                if datetime.fromisoformat(s['start_time']) >= start_dt
-            ]
+            future_segments = [s for s in all_segments if datetime.fromisoformat(s["start_time"]) >= start_dt]
 
             if future_segments:
                 # Sort by start time and get the earliest
-                future_segments.sort(key=lambda s: s['start_time'])
+                future_segments.sort(key=lambda s: s["start_time"])
                 closest_segment = future_segments[0]
-                closest_start = datetime.fromisoformat(closest_segment['start_time'])
+                closest_start = datetime.fromisoformat(closest_segment["start_time"])
 
                 # Calculate duration that was requested
                 requested_duration = (end_dt - start_dt).total_seconds()
@@ -516,16 +498,22 @@ async def stream_video_segment(
                 segments = playback_db.get_segments_in_range(camera_id, closest_start, adjusted_end_dt)
 
                 if segments:
-                    logger.info(f"Adjusted time range to {closest_start} - {adjusted_end_dt}, found {len(segments)} segment(s)")
+                    logger.info(
+                        f"Adjusted time range to {closest_start} - {adjusted_end_dt}, found {len(segments)} segment(s)"
+                    )
                 else:
-                    raise HTTPException(status_code=404, detail=f"No recordings found for {camera_id} at or after {start_dt}")
+                    raise HTTPException(
+                        status_code=404, detail=f"No recordings found for {camera_id} at or after {start_dt}"
+                    )
             else:
-                raise HTTPException(status_code=404, detail=f"No recordings found for {camera_id} at or after {start_dt}")
+                raise HTTPException(
+                    status_code=404, detail=f"No recordings found for {camera_id} at or after {start_dt}"
+                )
 
         logger.info(f"Found {len(segments)} segment(s) for {camera_id}")
 
         # Filter out segments whose files don't exist (deleted by retention policy)
-        existing_segments = [s for s in segments if Path(s['file_path']).exists()]
+        existing_segments = [s for s in segments if Path(s["file_path"]).exists()]
 
         # Filter out incomplete segments (NULL end_time) that don't plausibly overlap with the request
         # An incomplete segment only makes sense if it started recently (within 10 minutes of request start)
@@ -533,9 +521,13 @@ async def stream_video_segment(
         MIN_PLAYABLE_SIZE = 100 * 1024  # 100KB minimum for a playable segment
         filtered_segments = []
         for seg in existing_segments:
-            if seg['end_time'] is None:
-                seg_start = datetime.fromisoformat(seg['start_time']) if isinstance(seg['start_time'], str) else seg['start_time']
-                seg_path = Path(seg['file_path'])
+            if seg["end_time"] is None:
+                seg_start = (
+                    datetime.fromisoformat(seg["start_time"])
+                    if isinstance(seg["start_time"], str)
+                    else seg["start_time"]
+                )
+                seg_path = Path(seg["file_path"])
                 seg_size = seg_path.stat().st_size if seg_path.exists() else 0
 
                 # Incomplete segments must have enough data to be playable
@@ -551,7 +543,9 @@ async def stream_video_segment(
                     filtered_segments.append(seg)
                 elif start_dt > now:
                     # Request is for a future time - incomplete segments can't match
-                    logger.debug(f"Excluding incomplete segment {seg['file_path']} - request is for future time {start_dt}")
+                    logger.debug(
+                        f"Excluding incomplete segment {seg['file_path']} - request is for future time {start_dt}"
+                    )
                 else:
                     filtered_segments.append(seg)
             else:
@@ -563,18 +557,22 @@ async def stream_video_segment(
         if not existing_segments:
             # Check if there are incomplete segments that were filtered out due to size
             incomplete_small_segments = [
-                s for s in segments
-                if s['end_time'] is None and Path(s['file_path']).exists()
-                and Path(s['file_path']).stat().st_size < MIN_PLAYABLE_SIZE
+                s
+                for s in segments
+                if s["end_time"] is None
+                and Path(s["file_path"]).exists()
+                and Path(s["file_path"]).stat().st_size < MIN_PLAYABLE_SIZE
             ]
             if incomplete_small_segments:
                 logger.info(f"Recording in progress for {camera_id} but not enough data yet")
                 raise HTTPException(
                     status_code=202,  # Accepted - recording in progress
-                    detail=f"Recording in progress for {camera_id}. Please wait a few seconds and try again."
+                    detail=f"Recording in progress for {camera_id}. Please wait a few seconds and try again.",
                 )
             logger.warning(f"Database had {len(segments)} segments but none match the requested time range")
-            raise HTTPException(status_code=404, detail=f"No recordings found for {camera_id} in the requested time range")
+            raise HTTPException(
+                status_code=404, detail=f"No recordings found for {camera_id} in the requested time range"
+            )
 
         logger.info(f"{len(existing_segments)} segment(s) exist on disk and match time range")
 
@@ -587,11 +585,11 @@ async def stream_video_segment(
 
             # First pass: look for completed segments only
             for seg in existing_segments:
-                if not seg['end_time']:
+                if not seg["end_time"]:
                     continue  # Skip incomplete segments in first pass
 
-                seg_start = datetime.fromisoformat(seg['start_time'])
-                seg_end = datetime.fromisoformat(seg['end_time'])
+                seg_start = datetime.fromisoformat(seg["start_time"])
+                seg_end = datetime.fromisoformat(seg["end_time"])
 
                 # If requested start is within this segment, use it
                 if seg_start <= start_dt <= seg_end:
@@ -605,7 +603,7 @@ async def stream_video_segment(
             # Second pass: if no completed segment found, consider incomplete ones
             if not best_segment:
                 for seg in existing_segments:
-                    seg_start = datetime.fromisoformat(seg['start_time'])
+                    seg_start = datetime.fromisoformat(seg["start_time"])
 
                     # For incomplete segments, check if start_time matches
                     if seg_start <= start_dt:
@@ -622,12 +620,14 @@ async def stream_video_segment(
                 best_segment = existing_segments[-1]
 
             segment_to_serve = best_segment
-            file_path = Path(segment_to_serve['file_path'])
+            file_path = Path(segment_to_serve["file_path"])
 
             if len(existing_segments) == 1:
                 logger.info(f"Serving single segment: {file_path}")
             else:
-                logger.info(f"Serving best matching segment (of {len(existing_segments)}): {file_path} (start: {segment_to_serve['start_time']})")
+                logger.info(
+                    f"Serving best matching segment (of {len(existing_segments)}): {file_path} (start: {segment_to_serve['start_time']})"
+                )
 
             # Check if file needs transcoding (mp4v -> H.264 for browser compatibility).
             # ffprobe runs off the event loop with a timeout so a hung probe can't
@@ -635,17 +635,28 @@ async def stream_video_segment(
             try:
                 probe_result = await asyncio.to_thread(
                     subprocess.run,
-                    ['ffprobe', '-v', 'error', '-select_streams', 'v:0',
-                     '-show_entries', 'stream=codec_name', '-of', 'default=noprint_wrappers=1:nokey=1',
-                     str(file_path)],
-                    capture_output=True, text=True, timeout=15,
+                    [
+                        "ffprobe",
+                        "-v",
+                        "error",
+                        "-select_streams",
+                        "v:0",
+                        "-show_entries",
+                        "stream=codec_name",
+                        "-of",
+                        "default=noprint_wrappers=1:nokey=1",
+                        str(file_path),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
                 )
                 codec = probe_result.stdout.strip()
             except subprocess.TimeoutExpired:
                 logger.error(f"ffprobe timed out for {file_path}; serving original")
-                codec = ''
+                codec = ""
 
-            if codec == 'mpeg4':
+            if codec == "mpeg4":
                 # Transcode mp4v to H.264 for browser compatibility
                 logger.info(f"Transcoding {file_path.name} from mp4v to H.264 for browser")
 
@@ -668,26 +679,44 @@ async def stream_video_segment(
                         logger.info(f"Creating transcoded file: {transcoded_file.name}")
                         # Write to a temp file then atomically publish, so a
                         # concurrent/aborted request never serves a partial file.
-                        tmp_fd, tmp_path = tempfile.mkstemp(suffix='.mp4', dir=str(transcode_dir))
+                        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".mp4", dir=str(transcode_dir))
                         os.close(tmp_fd)
                         transcode_cmd = [
-                            'ffmpeg', '-i', str(file_path),
-                            '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
-                            '-c:a', 'aac', '-movflags', '+faststart',
-                            '-y', tmp_path,
+                            "ffmpeg",
+                            "-i",
+                            str(file_path),
+                            "-c:v",
+                            "libx264",
+                            "-preset",
+                            "fast",
+                            "-crf",
+                            "23",
+                            "-c:a",
+                            "aac",
+                            "-movflags",
+                            "+faststart",
+                            "-y",
+                            tmp_path,
                         ]
                         try:
                             result = await asyncio.to_thread(
-                                subprocess.run, transcode_cmd, capture_output=True, timeout=180,
+                                subprocess.run,
+                                transcode_cmd,
+                                capture_output=True,
+                                timeout=180,
                             )
                         except subprocess.TimeoutExpired:
-                            try: os.unlink(tmp_path)
-                            except OSError: pass
+                            try:
+                                os.unlink(tmp_path)
+                            except OSError:
+                                pass
                             logger.error(f"On-demand transcode timed out: {file_path.name}")
                             raise HTTPException(status_code=504, detail="Video transcode timed out")
                         if result.returncode != 0:
-                            try: os.unlink(tmp_path)
-                            except OSError: pass
+                            try:
+                                os.unlink(tmp_path)
+                            except OSError:
+                                pass
                             logger.error(f"Transcode failed: {result.stderr.decode(errors='ignore')[-500:]}")
                             raise HTTPException(status_code=500, detail="Video transcode failed")
                         os.replace(tmp_path, str(transcoded_file))
@@ -708,7 +737,7 @@ async def stream_video_segment(
                     logger.info(f"Serving {speed}x speed-processed video: {speed_file.name}")
                     return range_requests_response(speed_file, request, content_type="video/mp4")
                 else:
-                    logger.warning(f"Speed processing failed, serving original at browser playbackRate")
+                    logger.warning("Speed processing failed, serving original at browser playbackRate")
 
             # Serve the file (original or transcoded)
             return range_requests_response(file_to_serve, request, content_type="video/mp4")
@@ -735,6 +764,7 @@ async def serve_recording_file(file_path: str = Query(..., description="Absolute
         # Security check - ensure file is in recordings directory
         from nvr.web.api import recorder_manager
         from nvr.core.config import config as nvr_config
+
         storage_path = Path(recorder_manager.storage_path) if recorder_manager else nvr_config.storage_path
 
         try:
@@ -751,11 +781,7 @@ async def serve_recording_file(file_path: str = Query(..., description="Absolute
         if not path.exists():
             raise HTTPException(status_code=404, detail="Recording file not found")
 
-        return FileResponse(
-            path,
-            media_type="video/mp4",
-            filename=path.name
-        )
+        return FileResponse(path, media_type="video/mp4", filename=path.name)
 
     except HTTPException:
         raise
@@ -769,7 +795,7 @@ async def stream_sd_card_recording(
     camera_id: str,
     background_tasks: BackgroundTasks,
     recording_token: str = Query(..., description="Recording token from SD card query"),
-    start_time: Optional[str] = Query(None, description="Start time for playback (ISO format)")
+    start_time: Optional[str] = Query(None, description="Start time for playback (ISO format)"),
 ):
     """
     Stream a recording from camera's SD card via ONVIF replay.
@@ -782,8 +808,8 @@ async def stream_sd_card_recording(
 
     try:
         # Check if SD card fallback is enabled
-        sd_card_config = config.get('sd_card_fallback', {})
-        if not sd_card_config.get('enabled', True):
+        sd_card_config = config.get("sd_card_fallback", {})
+        if not sd_card_config.get("enabled", True):
             raise HTTPException(status_code=503, detail="SD card fallback is disabled")
 
         if not sd_card_manager:
@@ -793,56 +819,68 @@ async def stream_sd_card_recording(
         replay_uri = await sd_card_manager.get_replay_uri(camera_id, recording_token)
 
         if not replay_uri:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Could not get replay URI for recording {recording_token}"
-            )
+            raise HTTPException(status_code=404, detail=f"Could not get replay URI for recording {recording_token}")
 
         logger.info(f"Streaming SD card recording from {camera_id}: {recording_token}")
 
         # Build FFmpeg command to proxy RTSP to HTTP
         ffmpeg_cmd = [
-            'ffmpeg',
-            '-rtsp_transport', 'tcp',
-            '-i', replay_uri,
-            '-c:v', 'libx264',
-            '-preset', 'ultrafast',
-            '-tune', 'zerolatency',
-            '-crf', '23',
-            '-c:a', 'aac',
-            '-movflags', 'frag_keyframe+empty_moov',
-            '-f', 'mp4',
-            'pipe:1'
+            "ffmpeg",
+            "-rtsp_transport",
+            "tcp",
+            "-i",
+            replay_uri,
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-tune",
+            "zerolatency",
+            "-crf",
+            "23",
+            "-c:a",
+            "aac",
+            "-movflags",
+            "frag_keyframe+empty_moov",
+            "-f",
+            "mp4",
+            "pipe:1",
         ]
 
         # If start_time specified, add seek option
         if start_time:
             try:
-                start_dt = datetime.fromisoformat(start_time)
+                datetime.fromisoformat(start_time)  # validate format; raises on bad input
                 # Calculate offset - would need recording start time
                 # For now, just use the start_time as-is
                 ffmpeg_cmd = [
-                    'ffmpeg',
-                    '-rtsp_transport', 'tcp',
-                    '-i', replay_uri,
-                    '-c:v', 'libx264',
-                    '-preset', 'ultrafast',
-                    '-tune', 'zerolatency',
-                    '-crf', '23',
-                    '-c:a', 'aac',
-                    '-movflags', 'frag_keyframe+empty_moov',
-                    '-f', 'mp4',
-                    'pipe:1'
+                    "ffmpeg",
+                    "-rtsp_transport",
+                    "tcp",
+                    "-i",
+                    replay_uri,
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "ultrafast",
+                    "-tune",
+                    "zerolatency",
+                    "-crf",
+                    "23",
+                    "-c:a",
+                    "aac",
+                    "-movflags",
+                    "frag_keyframe+empty_moov",
+                    "-f",
+                    "mp4",
+                    "pipe:1",
                 ]
             except ValueError:
                 pass  # Ignore invalid start_time
 
         # Start FFmpeg process
         process = subprocess.Popen(
-            ffmpeg_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            bufsize=10485760  # 10MB buffer
+            ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=10485760  # 10MB buffer
         )
 
         # Register cleanup
@@ -889,9 +927,7 @@ async def stream_sd_card_recording(
         return StreamingResponse(
             stream_sd_card(),
             media_type="video/mp4",
-            headers={
-                "Content-Disposition": f'inline; filename="{camera_id}_sd_card.mp4"'
-            }
+            headers={"Content-Disposition": f'inline; filename="{camera_id}_sd_card.mp4"'},
         )
 
     except HTTPException:
@@ -908,26 +944,26 @@ async def get_sd_card_status():
     from nvr.core.config import config
 
     try:
-        sd_card_config = config.get('sd_card_fallback', {})
-        enabled = sd_card_config.get('enabled', True)
+        sd_card_config = config.get("sd_card_fallback", {})
+        enabled = sd_card_config.get("enabled", True)
 
         if not sd_card_manager:
             return {
-                'enabled': enabled,
-                'initialized': False,
-                'supported_cameras': [],
-                'message': 'SD card manager not initialized'
+                "enabled": enabled,
+                "initialized": False,
+                "supported_cameras": [],
+                "message": "SD card manager not initialized",
             }
 
         supported = sd_card_manager.get_supported_cameras()
 
         return {
-            'enabled': enabled,
-            'initialized': True,
-            'auto_fallback': sd_card_config.get('auto_fallback', True),
-            'cache_duration_seconds': sd_card_config.get('cache_duration_seconds', 300),
-            'supported_cameras': supported,
-            'message': f'{len(supported)} camera(s) support SD card fallback'
+            "enabled": enabled,
+            "initialized": True,
+            "auto_fallback": sd_card_config.get("auto_fallback", True),
+            "cache_duration_seconds": sd_card_config.get("cache_duration_seconds", 300),
+            "supported_cameras": supported,
+            "message": f"{len(supported)} camera(s) support SD card fallback",
         }
 
     except Exception as e:
@@ -942,10 +978,7 @@ async def get_available_dates(camera_id: str):
 
     try:
         dates = playback_db.get_recording_days(camera_id)
-        return {
-            'camera_id': camera_id,
-            'dates': dates
-        }
+        return {"camera_id": camera_id, "dates": dates}
 
     except Exception as e:
         logger.error(f"Error getting available dates: {e}")
@@ -1000,17 +1033,22 @@ async def generate_timelapse(
         # Get segments in range
         segments = playback_db.get_segments_in_range(camera_id, start_dt, end_dt)
         if not segments:
-            raise HTTPException(status_code=404, detail=f"No recordings found for {camera_id} on {date} between {start_time} and {end_time}")
+            raise HTTPException(
+                status_code=404,
+                detail=f"No recordings found for {camera_id} on {date} between {start_time} and {end_time}",
+            )
 
         # Filter to existing files
-        existing_segments = [s for s in segments if Path(s['file_path']).exists()]
+        existing_segments = [s for s in segments if Path(s["file_path"]).exists()]
         if not existing_segments:
             raise HTTPException(status_code=404, detail="Recording files not found on disk")
 
-        logger.info(f"Timelapse request: {camera_id} {date} {start_time}-{end_time} at {speed}x ({len(existing_segments)} segments)")
+        logger.info(
+            f"Timelapse request: {camera_id} {date} {start_time}-{end_time} at {speed}x ({len(existing_segments)} segments)"
+        )
 
         # Get first segment start time for timestamp overlay in frontend
-        first_seg_start = existing_segments[0]['start_time']
+        first_seg_start = existing_segments[0]["start_time"]
         if isinstance(first_seg_start, datetime):
             first_seg_start = first_seg_start.isoformat()
         timelapse_headers = {
@@ -1026,35 +1064,43 @@ async def generate_timelapse(
         if cached_file.exists():
             # Verify cache is newer than the newest source segment
             cache_mtime = cached_file.stat().st_mtime
-            newest_segment_mtime = max(
-                Path(s['file_path']).stat().st_mtime for s in existing_segments
-            )
+            newest_segment_mtime = max(Path(s["file_path"]).stat().st_mtime for s in existing_segments)
             if cache_mtime >= newest_segment_mtime:
                 logger.info(f"Serving cached timelapse: {cached_file.name}")
-                return range_requests_response(cached_file, request, content_type="video/mp4", extra_headers=timelapse_headers)
+                return range_requests_response(
+                    cached_file, request, content_type="video/mp4", extra_headers=timelapse_headers
+                )
 
         # Build concat list file
         list_file = None
         try:
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
                 list_file = f.name
                 for seg in existing_segments:
                     f.write(f"file '{Path(seg['file_path']).absolute()}'\n")
 
             # FFmpeg: concat -> speed up -> scale to 720p -> encode
             ffmpeg_cmd = [
-                'ffmpeg',
-                '-f', 'concat',
-                '-safe', '0',
-                '-i', list_file,
-                '-vf', f"setpts=PTS/{speed},scale='min(1280,iw)':'min(720,ih)':force_original_aspect_ratio=decrease",
-                '-c:v', 'libx264',
-                '-preset', 'fast',
-                '-crf', '26',
-                '-an',
-                '-movflags', '+faststart',
-                '-y',
-                str(cached_file)
+                "ffmpeg",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                list_file,
+                "-vf",
+                f"setpts=PTS/{speed},scale='min(1280,iw)':'min(720,ih)':force_original_aspect_ratio=decrease",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "fast",
+                "-crf",
+                "26",
+                "-an",
+                "-movflags",
+                "+faststart",
+                "-y",
+                str(cached_file),
             ]
 
             logger.info(f"Starting timelapse generation: {' '.join(ffmpeg_cmd)}")
@@ -1063,7 +1109,7 @@ async def generate_timelapse(
                 ffmpeg_cmd,
                 stderr=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
-                timeout=600  # 10 minute timeout for full-day processing
+                timeout=600,  # 10 minute timeout for full-day processing
             )
 
             if result.returncode != 0:
@@ -1115,11 +1161,7 @@ async def export_clip(request: PlaybackRequest, req: Request, background_tasks: 
             end_dt = start_dt + timedelta(minutes=5)
 
         # Get segments
-        segments = playback_db.get_segments_in_range(
-            request.camera_id,
-            start_dt,
-            end_dt
-        )
+        segments = playback_db.get_segments_in_range(request.camera_id, start_dt, end_dt)
 
         if not segments:
             raise HTTPException(status_code=404, detail="No recordings found")
@@ -1144,12 +1186,13 @@ async def export_clip(request: PlaybackRequest, req: Request, background_tasks: 
 
 # ===== Bookmark Endpoints =====
 
+
 class BookmarkCreate(BaseModel):
     camera_id: str
     timestamp: datetime
     label: Optional[str] = None
     notes: Optional[str] = None
-    color: str = '#ff9500'
+    color: str = "#ff9500"
 
 
 class BookmarkUpdate(BaseModel):
@@ -1172,14 +1215,10 @@ async def create_bookmark(bookmark: BookmarkCreate):
             timestamp=bookmark.timestamp,
             label=bookmark.label,
             notes=bookmark.notes,
-            color=bookmark.color
+            color=bookmark.color,
         )
 
-        return {
-            "success": True,
-            "bookmark_id": bookmark_id,
-            "message": "Bookmark created"
-        }
+        return {"success": True, "bookmark_id": bookmark_id, "message": "Bookmark created"}
 
     except Exception as e:
         logger.error(f"Error creating bookmark: {e}")
@@ -1190,7 +1229,7 @@ async def create_bookmark(bookmark: BookmarkCreate):
 async def get_bookmarks(
     camera_id: Optional[str] = Query(None),
     start_time: Optional[datetime] = Query(None),
-    end_time: Optional[datetime] = Query(None)
+    end_time: Optional[datetime] = Query(None),
 ):
     """Get bookmarks for a camera or all cameras in a time range"""
     try:
@@ -1207,15 +1246,10 @@ async def get_bookmarks(
 
         if camera_id:
             bookmarks = playback_db.get_bookmarks_in_range(
-                camera_id=camera_id,
-                start_time=start_time,
-                end_time=end_time
+                camera_id=camera_id, start_time=start_time, end_time=end_time
             )
         else:
-            bookmarks = playback_db.get_all_bookmarks_in_range(
-                start_time=start_time,
-                end_time=end_time
-            )
+            bookmarks = playback_db.get_all_bookmarks_in_range(start_time=start_time, end_time=end_time)
 
         return {"bookmarks": bookmarks}
 
@@ -1234,19 +1268,13 @@ async def update_bookmark(bookmark_id: int, update: BookmarkUpdate):
             raise HTTPException(status_code=503, detail="Database not initialized")
 
         success = playback_db.update_bookmark(
-            bookmark_id=bookmark_id,
-            label=update.label,
-            notes=update.notes,
-            color=update.color
+            bookmark_id=bookmark_id, label=update.label, notes=update.notes, color=update.color
         )
 
         if not success:
             raise HTTPException(status_code=404, detail="Bookmark not found")
 
-        return {
-            "success": True,
-            "message": "Bookmark updated"
-        }
+        return {"success": True, "message": "Bookmark updated"}
 
     except HTTPException:
         raise
@@ -1269,10 +1297,7 @@ async def delete_bookmark(bookmark_id: int):
         if not success:
             raise HTTPException(status_code=404, detail="Bookmark not found")
 
-        return {
-            "success": True,
-            "message": "Bookmark deleted"
-        }
+        return {"success": True, "message": "Bookmark deleted"}
 
     except HTTPException:
         raise
@@ -1285,11 +1310,12 @@ async def delete_bookmark(bookmark_id: int):
 # SD Card Recording Access (ONVIF Profile G)
 # ============================================================================
 
+
 @router.get("/api/playback/sd-card/check/{camera_id}")
 async def check_sd_card_recordings(
     camera_id: str,
     start_time: str = Query(..., description="ISO format datetime"),
-    end_time: str = Query(..., description="ISO format datetime")
+    end_time: str = Query(..., description="ISO format datetime"),
 ):
     """
     Check if camera's SD card has recordings for the specified time range.
@@ -1304,7 +1330,7 @@ async def check_sd_card_recordings(
         # Find camera config
         camera_config = None
         for cam in config.cameras:
-            if cam.get('id') == camera_id or cam.get('name') == camera_id:
+            if cam.get("id") == camera_id or cam.get("name") == camera_id:
                 camera_config = cam
                 break
 
@@ -1312,18 +1338,18 @@ async def check_sd_card_recordings(
             raise HTTPException(status_code=404, detail=f"Camera not found: {camera_id}")
 
         # Check if camera has ONVIF config
-        onvif_host = camera_config.get('onvif_host')
+        onvif_host = camera_config.get("onvif_host")
         if not onvif_host:
             return {
                 "success": False,
                 "error": "Camera does not have ONVIF configuration",
                 "supports_sd_card": False,
-                "recordings": []
+                "recordings": [],
             }
 
-        onvif_port = camera_config.get('onvif_port', 8089)
-        username = camera_config.get('username', 'admin')
-        password = camera_config.get('password', 'admin')
+        onvif_port = camera_config.get("onvif_port", 8089)
+        username = camera_config.get("username", "admin")
+        password = camera_config.get("password", "admin")
 
         # Parse time range
         start_dt = datetime.fromisoformat(start_time)
@@ -1338,7 +1364,7 @@ async def check_sd_card_recordings(
                 "success": False,
                 "error": "Could not connect to camera via ONVIF",
                 "supports_sd_card": False,
-                "recordings": []
+                "recordings": [],
             }
 
         # Check Profile G support
@@ -1348,36 +1374,26 @@ async def check_sd_card_recordings(
                 "success": True,
                 "supports_sd_card": False,
                 "message": "Camera does not support SD card access (Profile G)",
-                "recordings": []
+                "recordings": [],
             }
 
         # Get SD card recordings
         recordings = await device.get_sd_recordings(start_dt, end_dt)
 
-        return {
-            "success": True,
-            "supports_sd_card": True,
-            "camera_id": camera_id,
-            "recordings": recordings
-        }
+        return {"success": True, "supports_sd_card": True, "camera_id": camera_id, "recordings": recordings}
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error checking SD card for {camera_id}: {e}", exc_info=True)
-        return {
-            "success": False,
-            "error": str(e),
-            "supports_sd_card": False,
-            "recordings": []
-        }
+        return {"success": False, "error": str(e), "supports_sd_card": False, "recordings": []}
 
 
 @router.get("/api/playback/sd-card-gaps")
 async def check_sd_card_for_gaps(
     start_time: str = Query(..., description="ISO format datetime"),
     end_time: str = Query(..., description="ISO format datetime"),
-    cameras: str = Query(None, description="Comma-separated camera IDs (optional, checks all if not specified)")
+    cameras: str = Query(None, description="Comma-separated camera IDs (optional, checks all if not specified)"),
 ):
     """
     Check SD cards for recordings that could fill gaps in local storage.
@@ -1392,7 +1408,7 @@ async def check_sd_card_for_gaps(
         end_dt = datetime.fromisoformat(end_time)
 
         # Determine which cameras to check
-        camera_list = cameras.split(',') if cameras else [c.get('id') or c['name'] for c in config.cameras]
+        camera_list = cameras.split(",") if cameras else [c.get("id") or c["name"] for c in config.cameras]
 
         results = {}
 
@@ -1402,7 +1418,7 @@ async def check_sd_card_for_gaps(
             # Find camera config
             camera_config = None
             for cam in config.cameras:
-                if cam.get('id') == camera_id or cam.get('name') == camera_id:
+                if cam.get("id") == camera_id or cam.get("name") == camera_id:
                     camera_config = cam
                     break
 
@@ -1417,22 +1433,18 @@ async def check_sd_card_for_gaps(
             gaps = find_gaps_in_segments(local_segments, start_dt, end_dt)
 
             if not gaps:
-                results[camera_id] = {
-                    "has_gaps": False,
-                    "gap_count": 0,
-                    "sd_recordings": []
-                }
+                results[camera_id] = {"has_gaps": False, "gap_count": 0, "sd_recordings": []}
                 continue
 
             # Check if camera has ONVIF config
-            onvif_host = camera_config.get('onvif_host')
+            onvif_host = camera_config.get("onvif_host")
             if not onvif_host:
                 results[camera_id] = {
                     "has_gaps": True,
                     "gap_count": len(gaps),
                     "gaps": gaps,
                     "sd_recordings": [],
-                    "error": "No ONVIF configuration"
+                    "error": "No ONVIF configuration",
                 }
                 continue
 
@@ -1440,9 +1452,9 @@ async def check_sd_card_for_gaps(
             try:
                 device = ONVIFDevice(
                     onvif_host,
-                    camera_config.get('onvif_port', 8089),
-                    camera_config.get('username', 'admin'),
-                    camera_config.get('password', 'admin')
+                    camera_config.get("onvif_port", 8089),
+                    camera_config.get("username", "admin"),
+                    camera_config.get("password", "admin"),
                 )
 
                 connected = await device.connect()
@@ -1452,7 +1464,7 @@ async def check_sd_card_for_gaps(
                         "gap_count": len(gaps),
                         "gaps": gaps,
                         "sd_recordings": [],
-                        "error": "Could not connect via ONVIF"
+                        "error": "Could not connect via ONVIF",
                     }
                     continue
 
@@ -1463,7 +1475,7 @@ async def check_sd_card_for_gaps(
                         "gap_count": len(gaps),
                         "gaps": gaps,
                         "sd_recordings": [],
-                        "supports_sd_card": False
+                        "supports_sd_card": False,
                     }
                     continue
 
@@ -1473,22 +1485,18 @@ async def check_sd_card_for_gaps(
                 # Filter SD recordings to only those that fill gaps
                 gap_filling_recordings = []
                 for sd_rec in sd_recordings:
-                    sd_start = datetime.fromisoformat(sd_rec['start_time'].replace('Z', '+00:00'))
-                    sd_end = datetime.fromisoformat(sd_rec['end_time'].replace('Z', '+00:00'))
+                    sd_start = datetime.fromisoformat(sd_rec["start_time"].replace("Z", "+00:00"))
+                    sd_end = datetime.fromisoformat(sd_rec["end_time"].replace("Z", "+00:00"))
 
                     for gap in gaps:
-                        gap_start = datetime.fromisoformat(gap['start_time'])
-                        gap_end = datetime.fromisoformat(gap['end_time'])
+                        gap_start = datetime.fromisoformat(gap["start_time"])
+                        gap_end = datetime.fromisoformat(gap["end_time"])
 
                         # Check if SD recording overlaps with gap
                         if sd_start < gap_end and sd_end > gap_start:
-                            gap_filling_recordings.append({
-                                **sd_rec,
-                                'fills_gap': {
-                                    'start': gap['start_time'],
-                                    'end': gap['end_time']
-                                }
-                            })
+                            gap_filling_recordings.append(
+                                {**sd_rec, "fills_gap": {"start": gap["start_time"], "end": gap["end_time"]}}
+                            )
                             break
 
                 results[camera_id] = {
@@ -1496,7 +1504,7 @@ async def check_sd_card_for_gaps(
                     "gap_count": len(gaps),
                     "gaps": gaps,
                     "sd_recordings": gap_filling_recordings,
-                    "supports_sd_card": True
+                    "supports_sd_card": True,
                 }
 
             except Exception as e:
@@ -1506,15 +1514,10 @@ async def check_sd_card_for_gaps(
                     "gap_count": len(gaps),
                     "gaps": gaps,
                     "sd_recordings": [],
-                    "error": str(e)
+                    "error": str(e),
                 }
 
-        return {
-            "success": True,
-            "start_time": start_time,
-            "end_time": end_time,
-            "cameras": results
-        }
+        return {"success": True, "start_time": start_time, "end_time": end_time, "cameras": results}
 
     except Exception as e:
         logger.error(f"Error checking SD cards for gaps: {e}", exc_info=True)
@@ -1525,11 +1528,13 @@ def find_gaps_in_segments(segments: List[Dict], start_dt: datetime, end_dt: date
     """Find gaps in a list of recording segments within a time range."""
     if not segments:
         # Entire range is a gap
-        return [{
-            "start_time": start_dt.isoformat(),
-            "end_time": end_dt.isoformat(),
-            "duration_seconds": (end_dt - start_dt).total_seconds()
-        }]
+        return [
+            {
+                "start_time": start_dt.isoformat(),
+                "end_time": end_dt.isoformat(),
+                "duration_seconds": (end_dt - start_dt).total_seconds(),
+            }
+        ]
 
     def parse_time(value, default: datetime = None) -> Optional[datetime]:
         """Parse time value - handles strings, datetime objects, and None"""
@@ -1538,66 +1543,70 @@ def find_gaps_in_segments(segments: List[Dict], start_dt: datetime, end_dt: date
         if isinstance(value, datetime):
             return value
         value_str = str(value)
-        if value_str == 'None' or not value_str:
+        if value_str == "None" or not value_str:
             return default
         return datetime.fromisoformat(value_str)
 
     # Filter segments to only those with valid start and end times
     valid_segments = []
     for seg in segments:
-        start = parse_time(seg.get('start_time'))
-        end = parse_time(seg.get('end_time'))
+        start = parse_time(seg.get("start_time"))
+        end = parse_time(seg.get("end_time"))
         if start is not None and end is not None:
             valid_segments.append(seg)
 
     if not valid_segments:
-        return [{
-            "start_time": start_dt.isoformat(),
-            "end_time": end_dt.isoformat(),
-            "duration_seconds": (end_dt - start_dt).total_seconds()
-        }]
+        return [
+            {
+                "start_time": start_dt.isoformat(),
+                "end_time": end_dt.isoformat(),
+                "duration_seconds": (end_dt - start_dt).total_seconds(),
+            }
+        ]
 
     segments = valid_segments
 
     gaps = []
 
     # Sort segments by start time
-    sorted_segments = sorted(segments, key=lambda s: parse_time(s['start_time']))
+    sorted_segments = sorted(segments, key=lambda s: parse_time(s["start_time"]))
 
     # Check for gap at the beginning
-    first_start = parse_time(sorted_segments[0]['start_time'])
+    first_start = parse_time(sorted_segments[0]["start_time"])
     if first_start > start_dt:
         gap_duration = (first_start - start_dt).total_seconds()
         if gap_duration > 60:  # Only count gaps > 1 minute
-            gaps.append({
-                "start_time": start_dt.isoformat(),
-                "end_time": first_start.isoformat(),
-                "duration_seconds": gap_duration
-            })
+            gaps.append(
+                {
+                    "start_time": start_dt.isoformat(),
+                    "end_time": first_start.isoformat(),
+                    "duration_seconds": gap_duration,
+                }
+            )
 
     # Check for gaps between segments
     for i in range(len(sorted_segments) - 1):
-        current_end = parse_time(sorted_segments[i]['end_time'])
-        next_start = parse_time(sorted_segments[i + 1]['start_time'])
+        current_end = parse_time(sorted_segments[i]["end_time"])
+        next_start = parse_time(sorted_segments[i + 1]["start_time"])
 
         if next_start > current_end:
             gap_duration = (next_start - current_end).total_seconds()
             if gap_duration > 60:  # Only count gaps > 1 minute
-                gaps.append({
-                    "start_time": current_end.isoformat(),
-                    "end_time": next_start.isoformat(),
-                    "duration_seconds": gap_duration
-                })
+                gaps.append(
+                    {
+                        "start_time": current_end.isoformat(),
+                        "end_time": next_start.isoformat(),
+                        "duration_seconds": gap_duration,
+                    }
+                )
 
     # Check for gap at the end
-    last_end = parse_time(sorted_segments[-1]['end_time'])
+    last_end = parse_time(sorted_segments[-1]["end_time"])
     if last_end < end_dt:
         gap_duration = (end_dt - last_end).total_seconds()
         if gap_duration > 60:  # Only count gaps > 1 minute
-            gaps.append({
-                "start_time": last_end.isoformat(),
-                "end_time": end_dt.isoformat(),
-                "duration_seconds": gap_duration
-            })
+            gaps.append(
+                {"start_time": last_end.isoformat(), "end_time": end_dt.isoformat(), "duration_seconds": gap_duration}
+            )
 
     return gaps

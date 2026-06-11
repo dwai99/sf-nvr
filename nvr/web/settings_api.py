@@ -32,12 +32,12 @@ def _redact_cameras(cameras: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     redacted = []
     for cam in cameras:
         c = dict(cam)
-        if c.get('password'):
-            c['password'] = SECRET_MASK
-        url = c.get('rtsp_url')
+        if c.get("password"):
+            c["password"] = SECRET_MASK
+        url = c.get("rtsp_url")
         if url:
             # Replace the password portion of rtsp://user:pass@host/... with the mask
-            c['rtsp_url'] = re.sub(r'(://[^:/@]*:)[^@/]*(@)', rf'\g<1>{SECRET_MASK}\g<2>', url)
+            c["rtsp_url"] = re.sub(r"(://[^:/@]*:)[^@/]*(@)", rf"\g<1>{SECRET_MASK}\g<2>", url)
         redacted.append(c)
     return redacted
 
@@ -45,11 +45,11 @@ def _redact_cameras(cameras: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 def _reapply_rtsp_credentials(incoming_url: str, username: str, password: str, old_url: str) -> str:
     """Rebuild an RTSP URL's credentials when the client sent a masked/stripped one."""
     if not incoming_url:
-        return old_url or ''
+        return old_url or ""
     # Client typed a real new password -> trust the incoming URL as-is
-    if '@' in incoming_url and SECRET_MASK not in incoming_url:
+    if "@" in incoming_url and SECRET_MASK not in incoming_url:
         return incoming_url
-    m = re.match(r'^(\w+)://(?:[^@/]*@)?(.*)$', incoming_url)
+    m = re.match(r"^(\w+)://(?:[^@/]*@)?(.*)$", incoming_url)
     if not m:
         return old_url or incoming_url
     scheme, hostpart = m.group(1), m.group(2)
@@ -58,30 +58,29 @@ def _reapply_rtsp_credentials(incoming_url: str, username: str, password: str, o
     return f"{scheme}://{hostpart}"
 
 
-def _restore_camera_secrets(incoming: List[Dict[str, Any]],
-                            existing: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _restore_camera_secrets(incoming: List[Dict[str, Any]], existing: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Restore masked secrets from stored config so a save doesn't wipe passwords.
 
     Matches incoming cameras to existing ones by id; when the client sends the
     SECRET_MASK (or a blank password), the stored password and RTSP credentials
     are carried over instead of being overwritten with the mask.
     """
-    by_id = {c.get('id'): c for c in (existing or []) if c.get('id')}
+    by_id = {c.get("id"): c for c in (existing or []) if c.get("id")}
     for cam in incoming:
-        old = by_id.get(cam.get('id'))
+        old = by_id.get(cam.get("id"))
         if not old:
             continue  # brand-new camera: keep whatever the client supplied
-        if not cam.get('password') or cam.get('password') == SECRET_MASK:
-            cam['password'] = old.get('password', '')
-        cam['rtsp_url'] = _reapply_rtsp_credentials(
-            cam.get('rtsp_url', ''), cam.get('username'), cam.get('password'),
-            old.get('rtsp_url', '')
+        if not cam.get("password") or cam.get("password") == SECRET_MASK:
+            cam["password"] = old.get("password", "")
+        cam["rtsp_url"] = _reapply_rtsp_credentials(
+            cam.get("rtsp_url", ""), cam.get("username"), cam.get("password"), old.get("rtsp_url", "")
         )
     return incoming
 
 
 class ConfigUpdate(BaseModel):
     """Model for configuration updates"""
+
     recording: Dict[str, Any] = None
     motion_detection: Dict[str, Any] = None
     ai_detection: Dict[str, Any] = None
@@ -95,13 +94,13 @@ class ConfigUpdate(BaseModel):
 async def get_config():
     """Get current configuration"""
     return {
-        "recording": config.get('recording', {}),
-        "motion_detection": config.get('motion_detection', {}),
-        "ai_detection": config.get('ai_detection', {}),
-        "web": config.get('web', {}),
-        "onvif": config.get('onvif', {}),
-        "storage": config.get('storage', {}),
-        "cameras": _redact_cameras(config.cameras or [])
+        "recording": config.get("recording", {}),
+        "motion_detection": config.get("motion_detection", {}),
+        "ai_detection": config.get("ai_detection", {}),
+        "web": config.get("web", {}),
+        "onvif": config.get("onvif", {}),
+        "storage": config.get("storage", {}),
+        "cameras": _redact_cameras(config.cameras or []),
     }
 
 
@@ -111,33 +110,33 @@ async def update_config(updates: ConfigUpdate):
     try:
         # Update recording settings
         if updates.recording:
-            config.set('recording', updates.recording)
+            config.set("recording", updates.recording)
 
         # Update motion detection settings
         if updates.motion_detection:
-            config.set('motion_detection', updates.motion_detection)
+            config.set("motion_detection", updates.motion_detection)
 
         # Update AI detection settings
         if updates.ai_detection:
-            config.set('ai_detection', updates.ai_detection)
+            config.set("ai_detection", updates.ai_detection)
 
         # Update web settings
         if updates.web:
-            config.set('web', updates.web)
+            config.set("web", updates.web)
 
         # Update ONVIF settings
         if updates.onvif:
-            config.set('onvif', updates.onvif)
+            config.set("onvif", updates.onvif)
 
         # Update storage settings
         if updates.storage:
-            config.set('storage', updates.storage)
+            config.set("storage", updates.storage)
 
         # Update cameras list. Restore any masked passwords/RTSP creds from the
         # stored config so a settings save doesn't overwrite secrets with the mask.
         if updates.cameras is not None:
             restored = _restore_camera_secrets(updates.cameras, config.cameras)
-            config.set('cameras', restored)
+            config.set("cameras", restored)
 
         # Save configuration to file
         config.save()
@@ -167,7 +166,7 @@ async def get_storage_info():
             "percent": usage.percent,
             "total_gb": round(usage.total / (1024**3), 2),
             "used_gb": round(usage.used / (1024**3), 2),
-            "free_gb": round(usage.free / (1024**3), 2)
+            "free_gb": round(usage.free / (1024**3), 2),
         }
 
     except Exception as e:
@@ -186,7 +185,7 @@ async def get_system_info():
             "cpu_percent": cpu_percent,
             "memory_percent": memory.percent,
             "memory_used_gb": round(memory.used / (1024**3), 2),
-            "memory_total_gb": round(memory.total / (1024**3), 2)
+            "memory_total_gb": round(memory.total / (1024**3), 2),
         }
 
     except Exception as e:
@@ -196,12 +195,14 @@ async def get_system_info():
 
 class MotionSettings(BaseModel):
     """Model for per-camera motion detection settings"""
+
     sensitivity: int
     min_area: int
 
 
 class CameraRecordingSettings(BaseModel):
     """Model for per-camera recording settings"""
+
     resolution: int = None  # 360, 480, 720, or 1080
     recording_mode: str = None  # continuous, motion_only, scheduled, motion_scheduled
 
@@ -211,12 +212,12 @@ async def get_camera_recording_settings(camera_id: str):
     """Get recording settings for a specific camera"""
     try:
         for camera in config.cameras:
-            if camera.get('id') == camera_id or camera['name'] == camera_id:
+            if camera.get("id") == camera_id or camera["name"] == camera_id:
                 return {
-                    'camera_id': camera.get('id'),
-                    'camera_name': camera['name'],
-                    'resolution': camera.get('resolution', config.get('recording.max_resolution', 720)),
-                    'recording_mode': camera.get('recording_mode', 'continuous')
+                    "camera_id": camera.get("id"),
+                    "camera_name": camera["name"],
+                    "resolution": camera.get("resolution", config.get("recording.max_resolution", 720)),
+                    "recording_mode": camera.get("recording_mode", "continuous"),
                 }
 
         raise HTTPException(status_code=404, detail="Camera not found")
@@ -240,7 +241,7 @@ async def update_camera_recording_settings(camera_id: str, settings: CameraRecor
             raise HTTPException(status_code=400, detail="Invalid resolution. Must be 360, 480, 720, or 1080")
 
         # Validate recording mode
-        valid_modes = ['continuous', 'motion_only', 'scheduled', 'motion_scheduled']
+        valid_modes = ["continuous", "motion_only", "scheduled", "motion_scheduled"]
         if settings.recording_mode is not None and settings.recording_mode not in valid_modes:
             raise HTTPException(status_code=400, detail=f"Invalid recording mode. Must be one of: {valid_modes}")
 
@@ -248,12 +249,12 @@ async def update_camera_recording_settings(camera_id: str, settings: CameraRecor
         camera_found = False
         camera_name = camera_id
         for camera in config.cameras:
-            if camera.get('id') == camera_id or camera['name'] == camera_id:
+            if camera.get("id") == camera_id or camera["name"] == camera_id:
                 if settings.resolution is not None:
-                    camera['resolution'] = settings.resolution
+                    camera["resolution"] = settings.resolution
                 if settings.recording_mode is not None:
-                    camera['recording_mode'] = settings.recording_mode
-                camera_name = camera['name']
+                    camera["recording_mode"] = settings.recording_mode
+                camera_name = camera["name"]
                 camera_found = True
                 break
 
@@ -268,6 +269,7 @@ async def update_camera_recording_settings(camera_id: str, settings: CameraRecor
             try:
                 from nvr.web.api import recording_mode_manager
                 from nvr.core.recording_modes import RecordingMode
+
                 if recording_mode_manager:
                     mode = RecordingMode(settings.recording_mode)
                     recording_mode_manager.set_camera_mode(camera_name, mode)
@@ -275,12 +277,14 @@ async def update_camera_recording_settings(camera_id: str, settings: CameraRecor
             except Exception as e:
                 logger.warning(f"Could not update recording mode manager: {e}")
 
-        logger.info(f"Updated recording settings for {camera_name}: resolution={settings.resolution}, mode={settings.recording_mode}")
+        logger.info(
+            f"Updated recording settings for {camera_name}: resolution={settings.resolution}, mode={settings.recording_mode}"
+        )
 
         return {
-            'success': True,
-            'message': f'Recording settings updated for {camera_name}',
-            'requires_restart': settings.resolution is not None  # Resolution changes need restart
+            "success": True,
+            "message": f"Recording settings updated for {camera_name}",
+            "requires_restart": settings.resolution is not None,  # Resolution changes need restart
         }
 
     except HTTPException:
@@ -294,22 +298,21 @@ async def update_camera_recording_settings(camera_id: str, settings: CameraRecor
 async def get_all_camera_recording_settings():
     """Get recording settings for all cameras"""
     try:
-        default_resolution = config.get('recording.max_resolution', 720)
+        default_resolution = config.get("recording.max_resolution", 720)
         results = []
 
         for camera in config.cameras:
-            results.append({
-                'camera_id': camera.get('id'),
-                'camera_name': camera['name'],
-                'resolution': camera.get('resolution', default_resolution),
-                'recording_mode': camera.get('recording_mode', 'continuous'),
-                'enabled': camera.get('enabled', True)
-            })
+            results.append(
+                {
+                    "camera_id": camera.get("id"),
+                    "camera_name": camera["name"],
+                    "resolution": camera.get("resolution", default_resolution),
+                    "recording_mode": camera.get("recording_mode", "continuous"),
+                    "enabled": camera.get("enabled", True),
+                }
+            )
 
-        return {
-            'cameras': results,
-            'default_resolution': default_resolution
-        }
+        return {"cameras": results, "default_resolution": default_resolution}
 
     except Exception as e:
         logger.error(f"Error getting all recording settings: {e}")
@@ -324,10 +327,10 @@ async def update_camera_motion_settings(camera_id: str, settings: MotionSettings
         camera_found = False
         camera_name = camera_id
         for camera in config.cameras:
-            if camera.get('id') == camera_id or camera['name'] == camera_id:
-                camera['motion_sensitivity'] = settings.sensitivity
-                camera['motion_min_area'] = settings.min_area
-                camera_name = camera['name']
+            if camera.get("id") == camera_id or camera["name"] == camera_id:
+                camera["motion_sensitivity"] = settings.sensitivity
+                camera["motion_min_area"] = settings.min_area
+                camera_name = camera["name"]
                 camera_found = True
                 break
 
@@ -337,12 +340,11 @@ async def update_camera_motion_settings(camera_id: str, settings: MotionSettings
         # Save updated config to file
         config.save()
 
-        logger.info(f"Updated motion settings for {camera_name}: sensitivity={settings.sensitivity}, min_area={settings.min_area}")
+        logger.info(
+            f"Updated motion settings for {camera_name}: sensitivity={settings.sensitivity}, min_area={settings.min_area}"
+        )
 
-        return {
-            'success': True,
-            'message': f'Motion settings updated for {camera_name}'
-        }
+        return {"success": True, "message": f"Motion settings updated for {camera_name}"}
 
     except HTTPException:
         raise

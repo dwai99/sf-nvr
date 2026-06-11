@@ -1,10 +1,8 @@
 """WebRTC server implementation for low-latency video streaming"""
 
-import asyncio
 import logging
 import uuid
-from typing import Dict, Optional
-import av
+from typing import Dict
 import cv2
 import numpy as np
 from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
@@ -53,7 +51,7 @@ class CameraVideoTrack(VideoStreamTrack):
                 frame_rgb = self.last_rgb_frame
 
         # Create VideoFrame from numpy array
-        video_frame = VideoFrame.from_ndarray(frame_rgb, format='rgb24')
+        video_frame = VideoFrame.from_ndarray(frame_rgb, format="rgb24")
         video_frame.pts = pts
         video_frame.time_base = time_base
 
@@ -117,10 +115,7 @@ class WebRTCManager:
         pc.addTrack(self.relay.subscribe(video_track))
 
         # Set remote description (client's offer)
-        await pc.setRemoteDescription(RTCSessionDescription(
-            sdp=offer_sdp["sdp"],
-            type=offer_sdp["type"]
-        ))
+        await pc.setRemoteDescription(RTCSessionDescription(sdp=offer_sdp["sdp"], type=offer_sdp["type"]))
 
         # Create answer
         answer = await pc.createAnswer()
@@ -128,11 +123,7 @@ class WebRTCManager:
 
         logger.info(f"WebRTC connection established for {camera_name}")
 
-        return {
-            "sdp": pc.localDescription.sdp,
-            "type": pc.localDescription.type,
-            "pc_id": pc_id
-        }
+        return {"sdp": pc.localDescription.sdp, "type": pc.localDescription.type, "pc_id": pc_id}
 
     async def close_connection(self, pc_id: str):
         """Close a WebRTC peer connection"""

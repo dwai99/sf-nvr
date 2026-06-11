@@ -13,12 +13,14 @@ router = APIRouter()
 
 class CameraRename(BaseModel):
     """Request model for renaming a camera"""
+
     old_name: str
     new_name: str
 
 
 class CameraUpdate(BaseModel):
     """Request model for updating camera properties"""
+
     name: Optional[str] = None
     enabled: Optional[bool] = None
     rtsp_url: Optional[str] = None
@@ -42,19 +44,18 @@ async def rename_camera(camera_id: str, rename: CameraRename):
         # Find camera in config by id (or name for backward compatibility)
         cameras = config.cameras
         camera_found = False
-        target_camera = None
 
         logger.debug(f"Searching for camera with id '{camera_id}' in {len(cameras)} cameras")
 
         # Check for duplicate name (another camera already has this name)
         for camera in cameras:
-            if camera['name'] == new_name and camera.get('id') != camera_id:
+            if camera["name"] == new_name and camera.get("id") != camera_id:
                 raise HTTPException(status_code=400, detail=f"Another camera already has the name '{new_name}'")
 
         for camera in cameras:
-            if camera.get('id') == camera_id or camera['name'] == camera_id:
+            if camera.get("id") == camera_id or camera["name"] == camera_id:
                 logger.info(f"Found camera '{camera['name']}' (id: {camera.get('id')}), renaming to '{new_name}'")
-                camera['name'] = new_name
+                camera["name"] = new_name
                 camera_found = True
                 break
 
@@ -80,11 +81,7 @@ async def rename_camera(camera_id: str, rename: CameraRename):
 
         logger.info(f"Renamed camera: {old_name} → {new_name}")
 
-        return {
-            'success': True,
-            'message': f'Renamed to {new_name}',
-            'new_name': new_name
-        }
+        return {"success": True, "message": f"Renamed to {new_name}", "new_name": new_name}
 
     except HTTPException:
         raise
@@ -104,13 +101,13 @@ async def update_camera(camera_id: str, update: CameraUpdate):
         camera_found = False
 
         for camera in cameras:
-            if camera.get('id') == camera_id or camera['name'] == camera_id:
+            if camera.get("id") == camera_id or camera["name"] == camera_id:
                 if update.name:
-                    camera['name'] = update.name
+                    camera["name"] = update.name
                 if update.enabled is not None:
-                    camera['enabled'] = update.enabled
+                    camera["enabled"] = update.enabled
                 if update.rtsp_url:
-                    camera['rtsp_url'] = update.rtsp_url
+                    camera["rtsp_url"] = update.rtsp_url
                 camera_found = True
                 break
 
@@ -119,7 +116,7 @@ async def update_camera(camera_id: str, update: CameraUpdate):
 
         config.save()
 
-        return {'success': True, 'message': 'Camera updated'}
+        return {"success": True, "message": "Camera updated"}
 
     except Exception as e:
         logger.error(f"Error updating camera: {e}")

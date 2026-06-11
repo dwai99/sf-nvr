@@ -6,9 +6,9 @@ on camera SD cards when local NVR storage is unavailable.
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, List, Optional, Any, Tuple
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import time
 
 logger = logging.getLogger(__name__)
@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class CachedRecordings:
     """Cache entry for SD card recordings query results."""
+
     recordings: List[Dict[str, Any]]
     cached_at: float
     start_time: datetime
@@ -31,12 +32,7 @@ class SDCardRecordingsManager:
     SD card recordings with local NVR recordings.
     """
 
-    def __init__(
-        self,
-        playback_db,
-        cache_duration: int = 300,  # 5 minutes
-        query_timeout: float = 30.0
-    ):
+    def __init__(self, playback_db, cache_duration: int = 300, query_timeout: float = 30.0):  # 5 minutes
         """
         Initialize the SD Card Recordings Manager.
 
@@ -93,11 +89,7 @@ class SDCardRecordingsManager:
         return False
 
     async def get_camera_sd_recordings(
-        self,
-        camera_id: str,
-        start_time: datetime,
-        end_time: datetime,
-        force_refresh: bool = False
+        self, camera_id: str, start_time: datetime, end_time: datetime, force_refresh: bool = False
     ) -> List[Dict[str, Any]]:
         """
         Get recordings from camera's SD card for a time range.
@@ -119,9 +111,12 @@ class SDCardRecordingsManager:
                 cached = self._cache[camera_id]
                 # Filter cached results to requested range
                 return [
-                    r for r in cached.recordings
-                    if (datetime.fromisoformat(r['end_time']) >= start_time and
-                        datetime.fromisoformat(r['start_time']) <= end_time)
+                    r
+                    for r in cached.recordings
+                    if (
+                        datetime.fromisoformat(r["end_time"]) >= start_time
+                        and datetime.fromisoformat(r["start_time"]) <= end_time
+                    )
                 ]
 
         # Query camera for SD card recordings
@@ -131,28 +126,24 @@ class SDCardRecordingsManager:
             return []
 
         # Check Profile G support
-        if not device.device_info.get('supports_profile_g', False):
+        if not device.device_info.get("supports_profile_g", False):
             logger.debug(f"Camera {camera_id} does not support Profile G")
             return []
 
         try:
             recordings = await asyncio.wait_for(
-                device.get_sd_recordings(start_time, end_time),
-                timeout=self.query_timeout
+                device.get_sd_recordings(start_time, end_time), timeout=self.query_timeout
             )
 
             # Cache the results
             async with self._cache_lock:
                 self._cache[camera_id] = CachedRecordings(
-                    recordings=recordings,
-                    cached_at=time.time(),
-                    start_time=start_time,
-                    end_time=end_time
+                    recordings=recordings, cached_at=time.time(), start_time=start_time, end_time=end_time
                 )
 
             # Add camera_id to each recording
             for rec in recordings:
-                rec['camera_id'] = camera_id
+                rec["camera_id"] = camera_id
 
             logger.info(f"Retrieved {len(recordings)} SD card recordings for {camera_id}")
             return recordings
@@ -165,10 +156,7 @@ class SDCardRecordingsManager:
             return []
 
     def identify_local_gaps(
-        self,
-        local_segments: List[Dict[str, Any]],
-        start_time: datetime,
-        end_time: datetime
+        self, local_segments: List[Dict[str, Any]], start_time: datetime, end_time: datetime
     ) -> List[Tuple[datetime, datetime]]:
         """
         Find gaps in local recordings where SD card recordings could fill in.
@@ -188,37 +176,31 @@ class SDCardRecordingsManager:
         gaps = []
 
         # Sort segments by start time
-        sorted_segments = sorted(
-            local_segments,
-            key=lambda s: datetime.fromisoformat(s['start_time'])
-        )
+        sorted_segments = sorted(local_segments, key=lambda s: datetime.fromisoformat(s["start_time"]))
 
         # Check gap at the beginning
-        first_start = datetime.fromisoformat(sorted_segments[0]['start_time'])
+        first_start = datetime.fromisoformat(sorted_segments[0]["start_time"])
         if first_start > start_time:
             gaps.append((start_time, first_start))
 
         # Check gaps between segments
         for i in range(len(sorted_segments) - 1):
-            current_end = datetime.fromisoformat(sorted_segments[i]['end_time'])
-            next_start = datetime.fromisoformat(sorted_segments[i + 1]['start_time'])
+            current_end = datetime.fromisoformat(sorted_segments[i]["end_time"])
+            next_start = datetime.fromisoformat(sorted_segments[i + 1]["start_time"])
 
             if next_start > current_end:
                 # Gap found
                 gaps.append((current_end, next_start))
 
         # Check gap at the end
-        last_end = datetime.fromisoformat(sorted_segments[-1]['end_time'])
+        last_end = datetime.fromisoformat(sorted_segments[-1]["end_time"])
         if last_end < end_time:
             gaps.append((last_end, end_time))
 
         return gaps
 
     def merge_recordings(
-        self,
-        local_segments: List[Dict[str, Any]],
-        sd_segments: List[Dict[str, Any]],
-        prefer_local: bool = True
+        self, local_segments: List[Dict[str, Any]], sd_segments: List[Dict[str, Any]], prefer_local: bool = True
     ) -> List[Dict[str, Any]]:
         """
         Merge local and SD card recordings, handling overlaps.
@@ -239,12 +221,12 @@ class SDCardRecordingsManager:
 
         # Mark source on all segments
         for seg in local_segments:
-            if 'source' not in seg:
-                seg['source'] = 'local'
+            if "source" not in seg:
+                seg["source"] = "local"
 
         for seg in sd_segments:
-            if 'source' not in seg:
-                seg['source'] = 'sd_card'
+            if "source" not in seg:
+                seg["source"] = "sd_card"
 
         merged = []
 
@@ -255,18 +237,14 @@ class SDCardRecordingsManager:
             # Find gaps in local coverage
             gaps = self.identify_local_gaps(
                 local_segments,
-                datetime.fromisoformat(min(
-                    seg['start_time'] for seg in local_segments + sd_segments
-                )),
-                datetime.fromisoformat(max(
-                    seg['end_time'] for seg in local_segments + sd_segments
-                ))
+                datetime.fromisoformat(min(seg["start_time"] for seg in local_segments + sd_segments)),
+                datetime.fromisoformat(max(seg["end_time"] for seg in local_segments + sd_segments)),
             )
 
             # Add SD segments that fill gaps
             for sd_seg in sd_segments:
-                sd_start = datetime.fromisoformat(sd_seg['start_time'])
-                sd_end = datetime.fromisoformat(sd_seg['end_time'])
+                sd_start = datetime.fromisoformat(sd_seg["start_time"])
+                sd_end = datetime.fromisoformat(sd_seg["end_time"])
 
                 for gap_start, gap_end in gaps:
                     # Check if SD segment overlaps with this gap
@@ -278,7 +256,7 @@ class SDCardRecordingsManager:
             merged = local_segments + sd_segments
 
         # Sort by start time
-        merged.sort(key=lambda s: s['start_time'])
+        merged.sort(key=lambda s: s["start_time"])
 
         return merged
 
@@ -304,41 +282,10 @@ class SDCardRecordingsManager:
             logger.error(f"Error getting replay URI for {camera_id}: {e}")
             return None
 
-    def clear_cache(self, camera_id: Optional[str] = None) -> None:
-        """
-        Clear the recordings cache.
-
-        Args:
-            camera_id: Specific camera to clear, or None to clear all
-        """
-        if camera_id:
-            if camera_id in self._cache:
-                del self._cache[camera_id]
-                logger.info(f"Cleared SD card cache for {camera_id}")
-        else:
-            self._cache.clear()
-            logger.info("Cleared all SD card caches")
-
     def get_supported_cameras(self) -> List[str]:
         """Get list of cameras with Profile G support."""
         return [
-            camera_id for camera_id, device in self._onvif_devices.items()
-            if device.device_info.get('supports_profile_g', False)
+            camera_id
+            for camera_id, device in self._onvif_devices.items()
+            if device.device_info.get("supports_profile_g", False)
         ]
-
-    async def check_all_profile_g_support(self) -> Dict[str, bool]:
-        """
-        Check Profile G support for all registered cameras.
-
-        Returns:
-            Dict mapping camera_id to Profile G support status
-        """
-        results = {}
-        for camera_id, device in self._onvif_devices.items():
-            try:
-                supported = await device.check_profile_g_support()
-                results[camera_id] = supported
-            except Exception as e:
-                logger.error(f"Error checking Profile G for {camera_id}: {e}")
-                results[camera_id] = False
-        return results

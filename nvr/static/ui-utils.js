@@ -4,78 +4,6 @@
  */
 
 /**
- * Loading Spinner Component
- * Creates an inline spinner element
- */
-function createSpinner(size = 20, color = '#4a9eff') {
-    const spinner = document.createElement('div');
-    spinner.className = 'ui-spinner';
-    spinner.style.cssText = `
-        width: ${size}px;
-        height: ${size}px;
-        border: 3px solid rgba(74, 158, 255, 0.2);
-        border-top-color: ${color};
-        border-radius: 50%;
-        animation: spin 0.8s linear infinite;
-        display: inline-block;
-    `;
-    return spinner;
-}
-
-/**
- * Show loading overlay on an element
- */
-function showLoadingOverlay(element, message = 'Loading...') {
-    // Remove existing overlay if any
-    hideLoadingOverlay(element);
-
-    const overlay = document.createElement('div');
-    overlay.className = 'ui-loading-overlay';
-    overlay.style.cssText = `
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background: rgba(0, 0, 0, 0.7);
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        gap: 15px;
-        z-index: 1000;
-        border-radius: inherit;
-    `;
-
-    const spinner = createSpinner(40, '#4a9eff');
-    const text = document.createElement('div');
-    text.textContent = message;
-    text.style.cssText = 'color: white; font-size: 14px;';
-
-    overlay.appendChild(spinner);
-    overlay.appendChild(text);
-
-    // Make parent position relative if needed
-    const position = window.getComputedStyle(element).position;
-    if (position === 'static') {
-        element.style.position = 'relative';
-    }
-
-    element.appendChild(overlay);
-    return overlay;
-}
-
-/**
- * Hide loading overlay
- */
-function hideLoadingOverlay(element) {
-    const overlay = element.querySelector('.ui-loading-overlay');
-    if (overlay) {
-        overlay.remove();
-    }
-}
-
-/**
  * Tooltip System
  * Automatically adds tooltips to elements with data-tooltip attribute
  */
@@ -395,77 +323,6 @@ function hideModal() {
 }
 
 /**
- * Confirm Dialog
- */
-function showConfirm(title, message, onConfirm, onCancel) {
-    showModal(title, `<p>${message}</p>`, {
-        buttons: [
-            {
-                text: 'Cancel',
-                onClick: onCancel,
-                closeOnClick: true
-            },
-            {
-                text: 'Confirm',
-                primary: true,
-                onClick: onConfirm,
-                closeOnClick: true
-            }
-        ]
-    });
-}
-
-/**
- * Progress Bar Component
- */
-function createProgressBar(options = {}) {
-    const container = document.createElement('div');
-    container.style.cssText = `
-        width: 100%;
-        height: ${options.height || '8px'};
-        background: #333;
-        border-radius: 4px;
-        overflow: hidden;
-        position: relative;
-    `;
-
-    const bar = document.createElement('div');
-    bar.style.cssText = `
-        height: 100%;
-        background: ${options.color || '#4a9eff'};
-        width: 0%;
-        transition: width 0.3s ease;
-    `;
-
-    container.appendChild(bar);
-
-    return {
-        element: container,
-        setProgress: (percent) => {
-            bar.style.width = Math.min(100, Math.max(0, percent)) + '%';
-        },
-        setColor: (color) => {
-            bar.style.background = color;
-        }
-    };
-}
-
-/**
- * Format bytes to human-readable size
- */
-function formatBytes(bytes, decimals = 2) {
-    if (bytes === 0) return '0 Bytes';
-
-    const k = 1024;
-    const dm = decimals < 0 ? 0 : decimals;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
-
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
-}
-
-/**
  * Format duration in seconds to human-readable time
  */
 function formatDuration(seconds) {
@@ -494,20 +351,6 @@ function debounce(func, wait) {
         };
         clearTimeout(timeout);
         timeout = setTimeout(later, wait);
-    };
-}
-
-/**
- * Throttle function
- */
-function throttle(func, limit) {
-    let inThrottle;
-    return function(...args) {
-        if (!inThrottle) {
-            func.apply(this, args);
-            inThrottle = true;
-            setTimeout(() => inThrottle = false, limit);
-        }
     };
 }
 

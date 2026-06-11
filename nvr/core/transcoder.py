@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 class BackgroundTranscoder:
     """Transcodes recorded segments to H.264 in background for instant playback"""
 
-    def __init__(self, max_workers: int = 2, replace_original: bool = True, preferred_encoder: str = 'auto'):
+    def __init__(self, max_workers: int = 2, replace_original: bool = True, preferred_encoder: str = "auto"):
         """
         Initialize background transcoder
 
@@ -41,11 +41,7 @@ class BackgroundTranscoder:
 
         self.running = True
         for i in range(self.max_workers):
-            worker = threading.Thread(
-                target=self._worker_loop,
-                name=f"Transcoder-{i}",
-                daemon=True
-            )
+            worker = threading.Thread(target=self._worker_loop, name=f"Transcoder-{i}", daemon=True)
             worker.start()
             self.workers.append(worker)
 
@@ -96,28 +92,28 @@ class BackgroundTranscoder:
         """
         # Encoder preference mapping
         encoder_map = {
-            'nvenc': 'h264_nvenc',
-            'qsv': 'h264_qsv',
-            'videotoolbox': 'h264_videotoolbox',
-            'amf': 'h264_amf',
-            'x264': 'libx264'
+            "nvenc": "h264_nvenc",
+            "qsv": "h264_qsv",
+            "videotoolbox": "h264_videotoolbox",
+            "amf": "h264_amf",
+            "x264": "libx264",
         }
 
         encoders = [
             # NVIDIA NVENC (fastest, excellent quality)
-            ('h264_nvenc', ['-preset', 'fast', '-rc', 'vbr', '-cq', '23', '-b:v', '2M', '-maxrate', '4M']),
+            ("h264_nvenc", ["-preset", "fast", "-rc", "vbr", "-cq", "23", "-b:v", "2M", "-maxrate", "4M"]),
             # Intel QuickSync (very fast, good quality)
-            ('h264_qsv', ['-preset', 'fast', '-global_quality', '23']),
+            ("h264_qsv", ["-preset", "fast", "-global_quality", "23"]),
             # Apple VideoToolbox (fast on Mac, good quality)
-            ('h264_videotoolbox', ['-b:v', '2M', '-maxrate', '4M']),
+            ("h264_videotoolbox", ["-b:v", "2M", "-maxrate", "4M"]),
             # AMD AMF (fast, good quality - less common)
-            ('h264_amf', ['-quality', 'balanced', '-rc', 'vbr_peak', '-qmin', '18', '-qmax', '28']),
+            ("h264_amf", ["-quality", "balanced", "-rc", "vbr_peak", "-qmin", "18", "-qmax", "28"]),
             # CPU fallback (slowest but universally available)
-            ('libx264', ['-preset', 'veryfast', '-crf', '23'])
+            ("libx264", ["-preset", "veryfast", "-crf", "23"]),
         ]
 
         # If user specified a preference, try it first
-        if self.preferred_encoder != 'auto' and self.preferred_encoder in encoder_map:
+        if self.preferred_encoder != "auto" and self.preferred_encoder in encoder_map:
             preferred = encoder_map[self.preferred_encoder]
             logger.info(f"User prefers {preferred} encoder, testing availability...")
 
@@ -136,7 +132,7 @@ class BackgroundTranscoder:
 
         # Should never reach here since libx264 is always available
         logger.warning("No encoder found, using libx264 as last resort")
-        return 'libx264', ['-preset', 'veryfast', '-crf', '23']
+        return "libx264", ["-preset", "veryfast", "-crf", "23"]
 
     def _test_encoder(self, encoder: str) -> bool:
         """
@@ -150,12 +146,7 @@ class BackgroundTranscoder:
         """
         try:
             # First check if encoder exists in ffmpeg
-            result = subprocess.run(
-                ['ffmpeg', '-hide_banner', '-encoders'],
-                capture_output=True,
-                timeout=2,
-                text=True
-            )
+            result = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, timeout=2, text=True)
 
             if encoder not in result.stdout:
                 logger.debug(f"Encoder {encoder} not found in ffmpeg build")
@@ -165,14 +156,23 @@ class BackgroundTranscoder:
             # This catches cases where encoder is listed but hardware unavailable
             test_result = subprocess.run(
                 [
-                    'ffmpeg', '-hide_banner', '-loglevel', 'error',
-                    '-f', 'lavfi', '-i', 'color=c=black:s=64x64:d=0.1',  # Tiny black frame
-                    '-c:v', encoder,
-                    '-f', 'null', '-'  # Don't write output
+                    "ffmpeg",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=c=black:s=64x64:d=0.1",  # Tiny black frame
+                    "-c:v",
+                    encoder,
+                    "-f",
+                    "null",
+                    "-",  # Don't write output
                 ],
                 capture_output=True,
                 timeout=3,
-                text=True
+                text=True,
             )
 
             if test_result.returncode == 0:
@@ -226,21 +226,21 @@ class BackgroundTranscoder:
         try:
             # Build ffmpeg command with detected encoder
             cmd = [
-                'ffmpeg',
-                '-i', str(source_path),
-                '-c:v', self.encoder,   # Use detected encoder (GPU or CPU)
+                "ffmpeg",
+                "-i",
+                str(source_path),
+                "-c:v",
+                self.encoder,  # Use detected encoder (GPU or CPU)
                 *self.encoder_options,  # Encoder-specific options
-                '-c:a', 'aac',          # AAC audio codec (if any audio)
-                '-movflags', '+faststart',  # Enable progressive streaming
-                '-y',                   # Overwrite if exists
-                str(transcoded_path)
+                "-c:a",
+                "aac",  # AAC audio codec (if any audio)
+                "-movflags",
+                "+faststart",  # Enable progressive streaming
+                "-y",  # Overwrite if exists
+                str(transcoded_path),
             ]
 
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                timeout=300  # 5 minute timeout per file
-            )
+            result = subprocess.run(cmd, capture_output=True, timeout=300)  # 5 minute timeout per file
 
             if result.returncode == 0:
                 logger.info(f"Transcoded successfully: {source_path.name} -> {transcoded_path.name}")
@@ -260,11 +260,13 @@ class BackgroundTranscoder:
                         # old unlink()+rename() sequence destroyed the segment).
                         os.replace(str(transcoded_path), str(source_path))
 
-                        logger.info(f"Replaced original with transcoded version. Saved {savings:.1f}MB ({original_size:.1f}MB -> {transcoded_size:.1f}MB)")
+                        logger.info(
+                            f"Replaced original with transcoded version. Saved {savings:.1f}MB ({original_size:.1f}MB -> {transcoded_size:.1f}MB)"
+                        )
                     except Exception as e:
                         logger.error(f"Failed to replace original file {source_path.name}: {e}")
             else:
-                error_msg = result.stderr.decode('utf-8', errors='ignore')[-500:]
+                error_msg = result.stderr.decode("utf-8", errors="ignore")[-500:]
                 logger.error(f"Transcode failed for {source_path.name}: {error_msg}")
 
                 # Remove partial file if exists
@@ -306,14 +308,12 @@ def get_transcoder() -> BackgroundTranscoder:
         from nvr.core.config import config
 
         # Read transcoder configuration
-        max_workers = config.get('transcoder.max_workers', 2)
-        replace_original = config.get('transcoder.replace_original', True)
-        preferred_encoder = config.get('transcoder.preferred_encoder', 'auto')
+        max_workers = config.get("transcoder.max_workers", 2)
+        replace_original = config.get("transcoder.replace_original", True)
+        preferred_encoder = config.get("transcoder.preferred_encoder", "auto")
 
         _transcoder = BackgroundTranscoder(
-            max_workers=max_workers,
-            replace_original=replace_original,
-            preferred_encoder=preferred_encoder
+            max_workers=max_workers, replace_original=replace_original, preferred_encoder=preferred_encoder
         )
         _transcoder.start()
         logger.info(f"Transcoder started with {max_workers} workers, preferred encoder: {preferred_encoder}")
