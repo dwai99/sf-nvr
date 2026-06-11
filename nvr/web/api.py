@@ -502,6 +502,10 @@ async def disk_monitor_task():
     MIN_FREE_GB = 5.0  # Always keep at least 5GB free
     WARNING_THRESHOLD = 90.0  # Start cleanup at 90% full
     CRITICAL_THRESHOLD = 95.0  # Aggressive cleanup at 95% full
+    # Absolute floor: if free space falls below this, override retention_days and
+    # delete the oldest footage regardless of age. A full disk stops ALL recording,
+    # which is worse than losing the oldest in-retention clips.
+    ABSOLUTE_MIN_FREE_GB = float(config.get("storage.absolute_min_free_gb", 2.0))
 
     storage_path = config.storage_path
     disk_manager = DiskManager(storage_path, min_free_gb=MIN_FREE_GB, warning_threshold_percent=WARNING_THRESHOLD)
@@ -542,7 +546,8 @@ async def disk_monitor_task():
                 logger.error(f"CRITICAL: Disk space low! {usage['free_gb']:.1f}GB free ({usage['percent']:.1f}% used)")
                 logger.info("Starting emergency cleanup to free 10GB...")
 
-                # Aggressive cleanup: try to free 10GB
+                # First pass: honor retention, deleting only footage older than
+                # the retention window.
                 files_deleted, bytes_freed = disk_manager.cleanup_old_recordings(
                     target_free_gb=MIN_FREE_GB + 10,
                     retention_days=retention_days,
@@ -553,10 +558,38 @@ async def disk_monitor_task():
                     logger.info(
                         f"Emergency cleanup: deleted {files_deleted} files, freed {bytes_freed/(1024**3):.2f}GB"
                     )
-                else:
-                    logger.error(
-                        "Emergency cleanup freed nothing - all recordings within retention or storage unwritable!"
+
+                # Last resort: if we're STILL below the absolute floor, every
+                # deletable file is within the retention window. A full disk stops
+                # all recording, so override retention and delete oldest-first
+                # (still never touching the actively-writing segments).
+                usage = disk_manager.get_disk_usage() or usage
+                if usage["free_gb"] < ABSOLUTE_MIN_FREE_GB:
+                    logger.critical(
+                        f"Free space {usage['free_gb']:.1f}GB below absolute floor "
+                        f"{ABSOLUTE_MIN_FREE_GB:.1f}GB - overriding retention to keep recording"
                     )
+                    if alert_system:
+                        await alert_system.check_storage(usage["percent"], usage["free_gb"])
+
+                    override_deleted, override_bytes = disk_manager.cleanup_old_recordings(
+                        target_free_gb=MIN_FREE_GB + 10,
+                        retention_days=None,  # ignore retention; disk-full is worse
+                        protected_paths=protected,
+                    )
+                    files_deleted += override_deleted
+                    bytes_freed += override_bytes
+                    if override_deleted > 0:
+                        logger.warning(
+                            f"Retention override: deleted {override_deleted} in-retention file(s), "
+                            f"freed {override_bytes/(1024**3):.2f}GB to keep recording"
+                        )
+                    else:
+                        logger.error(
+                            "Retention override freed nothing - storage unwritable or only active segments remain"
+                        )
+                elif files_deleted == 0:
+                    logger.error("Emergency cleanup freed nothing - storage may be unwritable")
 
             # Regular cleanup if above warning threshold
             elif usage["percent"] >= WARNING_THRESHOLD:

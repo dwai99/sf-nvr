@@ -732,7 +732,9 @@ async def stream_video_segment(
 
             # Apply speed processing if requested (for speeds > 2x)
             if speed > 2.0:
-                speed_file = get_speed_processed_video(file_to_serve, speed)
+                # Runs ffmpeg (subprocess.run, up to 120s) — offload so it
+                # doesn't block the event loop and stall every other stream.
+                speed_file = await asyncio.to_thread(get_speed_processed_video, file_to_serve, speed)
                 if speed_file:
                     logger.info(f"Serving {speed}x speed-processed video: {speed_file.name}")
                     return range_requests_response(speed_file, request, content_type="video/mp4")
@@ -1105,7 +1107,10 @@ async def generate_timelapse(
 
             logger.info(f"Starting timelapse generation: {' '.join(ffmpeg_cmd)}")
 
-            result = subprocess.run(
+            # Offload the long-running ffmpeg (up to 600s) so it doesn't block
+            # the event loop and freeze every live stream during generation.
+            result = await asyncio.to_thread(
+                subprocess.run,
                 ffmpeg_cmd,
                 stderr=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,

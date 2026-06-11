@@ -1,5 +1,6 @@
 """Ultra-fast RTSP proxy - streams H.264 directly to browser with ZERO processing"""
 
+import asyncio
 import logging
 from typing import Dict
 import subprocess
@@ -73,7 +74,9 @@ class RTSPProxy:
             # Stream FFmpeg output directly to HTTP response
             # This is pure passthrough - no Python processing!
             while True:
-                chunk = process.stdout.read(8192)  # 8KB chunks
+                # Blocking pipe read offloaded so this async generator doesn't
+                # stall the event loop (and every other camera) between chunks.
+                chunk = await asyncio.to_thread(process.stdout.read, 8192)  # 8KB chunks
                 if not chunk:
                     break
                 yield chunk
@@ -145,10 +148,12 @@ class MSEStreamProxy:
 
         try:
             while True:
-                chunk = process.stdout.read(16384)  # 16KB chunks
+                # Offload the blocking read so the event loop stays responsive.
+                chunk = await asyncio.to_thread(process.stdout.read, 16384)  # 16KB chunks
                 if not chunk:
                     break
                 yield chunk
         finally:
             process.kill()
+            process.wait()  # reap the process so it doesn't linger as a zombie
             process.wait()
