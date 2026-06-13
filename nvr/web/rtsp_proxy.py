@@ -15,7 +15,11 @@ class RTSPProxy:
     """
 
     def __init__(self):
-        self.active_streams: Dict[str, subprocess.Popen] = {}
+        # Keyed by a unique stream id, not camera name: concurrent viewers of the
+        # same camera each get their own entry instead of overwriting it (which
+        # left earlier ffmpeg processes unreachable from stop_stream/stop_all).
+        self.active_streams: Dict[int, tuple] = {}
+        self._next_stream_id = 0
         logger.info("RTSP Proxy initialized (ZERO-LATENCY mode)")
 
     async def stream_camera(self, rtsp_url: str, camera_name: str):
@@ -68,7 +72,9 @@ class RTSPProxy:
             bufsize=0,  # No buffering
         )
 
-        self.active_streams[camera_name] = process
+        stream_id = self._next_stream_id
+        self._next_stream_id += 1
+        self.active_streams[stream_id] = (camera_name, process)
 
         try:
             # Stream FFmpeg output directly to HTTP response
@@ -87,23 +93,23 @@ class RTSPProxy:
             # Cleanup
             process.kill()
             process.wait()
-            if camera_name in self.active_streams:
-                del self.active_streams[camera_name]
+            self.active_streams.pop(stream_id, None)
             logger.info(f"Stopped RTSP proxy for {camera_name}")
 
     def stop_stream(self, camera_name: str):
-        """Stop a specific stream"""
-        if camera_name in self.active_streams:
-            process = self.active_streams[camera_name]
+        """Stop all streams for a camera"""
+        for stream_id in [sid for sid, (name, _) in self.active_streams.items() if name == camera_name]:
+            _, process = self.active_streams.pop(stream_id)
             process.kill()
             process.wait()
-            del self.active_streams[camera_name]
             logger.info(f"Stopped stream: {camera_name}")
 
     def stop_all(self):
         """Stop all streams"""
-        for camera_name in list(self.active_streams.keys()):
-            self.stop_stream(camera_name)
+        for stream_id, (camera_name, process) in list(self.active_streams.items()):
+            process.kill()
+            process.wait()
+            self.active_streams.pop(stream_id, None)
         logger.info("Stopped all RTSP proxy streams")
 
 

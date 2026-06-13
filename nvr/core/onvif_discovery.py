@@ -54,8 +54,13 @@ class ONVIFDevice:
         self.device_info: Dict[str, Any] = {}
         self.rtsp_urls: List[str] = []
 
-    async def connect(self) -> bool:
-        """Connect to ONVIF camera and retrieve information"""
+    async def connect(self, quiet: bool = False) -> bool:
+        """Connect to ONVIF camera and retrieve information.
+
+        quiet=True downgrades connection-failure logging to debug — used during
+        network discovery, where probing non-camera hosts (routers, etc.) is
+        expected to fail and shouldn't spam ERROR-level logs.
+        """
         try:
             # Create ONVIF camera instance
             wsdl_dir = get_wsdl_dir()
@@ -93,10 +98,12 @@ class ONVIFDevice:
             return True
 
         except Fault as e:
-            logger.error(f"ONVIF fault connecting to {self.host}:{self.port}: {e}")
+            (logger.debug if quiet else logger.warning)(f"ONVIF fault connecting to {self.host}:{self.port}: {e}")
             return False
         except Exception as e:
-            logger.error(f"Error connecting to {self.host}:{self.port}: {e}")
+            # During discovery this is usually just "not an ONVIF device" (a
+            # router/printer answering on port 80), so keep it quiet there.
+            (logger.debug if quiet else logger.error)(f"Error connecting to {self.host}:{self.port}: {e}")
             return False
 
     async def _get_network_info(self, device_mgmt) -> None:
@@ -444,7 +451,7 @@ class ONVIFDiscovery:
             logger.info(f"Testing {ip}:{port} ({idx}/{len(responsive_targets)})...")
             try:
                 device = ONVIFDevice(ip, port, self.username, self.password)
-                connected = await asyncio.wait_for(device.connect(), timeout=onvif_timeout)
+                connected = await asyncio.wait_for(device.connect(quiet=True), timeout=onvif_timeout)
                 if connected:
                     devices.append(device)
                     logger.info(f"✓ Found ONVIF camera at {ip}:{port}")

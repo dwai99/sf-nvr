@@ -473,6 +473,8 @@ async def shutdown_event():
 
     if webrtc_manager:
         await webrtc_manager.close_all()
+    if webrtc_passthrough:
+        await webrtc_passthrough.close_all()
     if recorder_manager:
         recorder_manager.stop_all()
     if motion_monitor:
@@ -1582,8 +1584,9 @@ async def get_system_stats():
     """Get system resource usage statistics"""
     import psutil
 
-    # CPU usage
-    cpu_percent = psutil.cpu_percent(interval=0.1)
+    # CPU usage. interval=None is non-blocking (returns usage since the last
+    # call) instead of sleeping 100ms on the event loop every poll.
+    cpu_percent = psutil.cpu_percent(interval=None)
     cpu_count = psutil.cpu_count()
 
     # Memory usage

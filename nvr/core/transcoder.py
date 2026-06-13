@@ -14,7 +14,13 @@ logger = logging.getLogger(__name__)
 class BackgroundTranscoder:
     """Transcodes recorded segments to H.264 in background for instant playback"""
 
-    def __init__(self, max_workers: int = 2, replace_original: bool = True, preferred_encoder: str = "auto"):
+    def __init__(
+        self,
+        max_workers: int = 2,
+        replace_original: bool = True,
+        preferred_encoder: str = "auto",
+        max_queue: int = 200,
+    ):
         """
         Initialize background transcoder
 
@@ -23,7 +29,7 @@ class BackgroundTranscoder:
             replace_original: If True, delete original file after successful transcode (saves disk space)
             preferred_encoder: Preferred encoder ('auto', 'nvenc', 'qsv', 'videotoolbox', 'amf', or 'x264')
         """
-        self.transcode_queue = queue.Queue()
+        self.transcode_queue: queue.Queue = queue.Queue(maxsize=max_queue)
         self.max_workers = max_workers
         self.replace_original = replace_original
         self.workers = []
@@ -79,8 +85,17 @@ class BackgroundTranscoder:
             logger.debug(f"Already transcoded: {source_path.name}")
             return
 
-        logger.info(f"Transcode queued: {source_path.name}")
-        self.transcode_queue.put(source_path)
+        try:
+            self.transcode_queue.put_nowait(source_path)
+            logger.info(f"Transcode queued: {source_path.name}")
+        except queue.Full:
+            # Bounded so a backlog (e.g. after downtime, or CPU-only fallback)
+            # can't grow memory without limit. The original file stays playable;
+            # it just won't be re-encoded to H.264.
+            logger.warning(
+                f"Transcode queue full (maxsize={self.transcode_queue.maxsize}); "
+                f"dropping {source_path.name} — original stays playable, not re-encoded to H.264"
+            )
 
     def _detect_best_encoder(self) -> Tuple[str, List[str]]:
         """
@@ -296,27 +311,37 @@ class BackgroundTranscoder:
         return source_path.parent / f"{source_path.stem}_h264{source_path.suffix}"
 
 
-# Global transcoder instance
+# Global transcoder instance. Guarded by a lock because get_transcoder() is
+# called from the recorder threads (one per camera) as they close segments —
+# without it two threads could race and spin up 2x the worker pool.
 _transcoder: Optional[BackgroundTranscoder] = None
+_transcoder_lock = threading.Lock()
 
 
 def get_transcoder() -> BackgroundTranscoder:
     """Get or create global transcoder instance with config-based settings"""
     global _transcoder
     if _transcoder is None:
-        # Import config here to avoid circular imports
-        from nvr.core.config import config
+        with _transcoder_lock:
+            if _transcoder is None:  # double-checked: another thread may have built it
+                # Import config here to avoid circular imports
+                from nvr.core.config import config
 
-        # Read transcoder configuration
-        max_workers = config.get("transcoder.max_workers", 2)
-        replace_original = config.get("transcoder.replace_original", True)
-        preferred_encoder = config.get("transcoder.preferred_encoder", "auto")
+                # Read transcoder configuration
+                max_workers = config.get("transcoder.max_workers", 2)
+                replace_original = config.get("transcoder.replace_original", True)
+                preferred_encoder = config.get("transcoder.preferred_encoder", "auto")
+                max_queue = config.get("transcoder.max_queue", 200)
 
-        _transcoder = BackgroundTranscoder(
-            max_workers=max_workers, replace_original=replace_original, preferred_encoder=preferred_encoder
-        )
-        _transcoder.start()
-        logger.info(f"Transcoder started with {max_workers} workers, preferred encoder: {preferred_encoder}")
+                transcoder = BackgroundTranscoder(
+                    max_workers=max_workers,
+                    replace_original=replace_original,
+                    preferred_encoder=preferred_encoder,
+                    max_queue=max_queue,
+                )
+                transcoder.start()
+                _transcoder = transcoder
+                logger.info(f"Transcoder started with {max_workers} workers, preferred encoder: {preferred_encoder}")
     return _transcoder
 
 
