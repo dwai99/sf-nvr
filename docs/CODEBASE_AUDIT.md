@@ -1,74 +1,65 @@
 # Codebase Audit & Backlog
 
 Generated 2026-06-11 from a full read-only audit (dead code, performance, robustness, features).
-Items are roughly prioritized. `[x]` = done, `[ ]` = open.
+`[x]` = done, `[ ]` = deferred (with rationale at the bottom).
 
-## Done in this pass
-- [x] **Dead code removed** — 32 unused imports, 3 unused locals, 3 placeholder f-strings;
-  unused functions (recording-mode preset helpers, `run_segment_repair`, `clear_cache`,
-  `check_all_profile_g_support`, `draw_detections`, `migrate_camera_ids`, `TimeRangeRequest`),
-  dead JS helpers in `ui-utils.js`, and `templates/index.html.backup`. `nvr/` formatted with Black.
-- [x] **Disk-full deadlock** — emergency cleanup now has an absolute-floor tier
-  (`storage.absolute_min_free_gb`, default 2GB) that overrides `retention_days` and deletes
-  oldest-first rather than letting the disk fill and silently stop recording. Raises
-  `STORAGE_CRITICAL`. (`nvr/web/api.py` `disk_monitor_task`)
-- [x] **Event-loop blocking** — wrapped blocking ffmpeg/pipe calls in `asyncio.to_thread`:
-  speed-processing and timelapse `subprocess.run` (`playback_api.py`), and the two async-generator
-  pipe reads in `rtsp_proxy.py`. Also reap the MSE ffmpeg process (`kill()` → `wait()`).
+## Performance
+- [x] **Dead code removed** — unused imports/locals/f-strings, unused functions, dead JS helpers,
+  `index.html.backup`; `nvr/` formatted with Black (CI `black --check` passes).
+- [x] **MJPEG live path re-encodes per viewer** — offloaded to a worker thread and shared via a
+  per-recorder cache (`recorder.render_live_frame`); overlay reuses the monitor's boxes.
+- [x] **Recorder JPEG-encodes every frame 24/7** — demand-gated (`JPEG_DEMAND_SECONDS`); motion uses
+  the raw frame (`get_latest_raw_frame`); dropped the redundant byte copy.
+- [x] **SQLite connection churn** — per-thread reused connection, PRAGMAs set once.
+- [x] **Cache storage-stats** — `get_storage_stats` cached 30s (was two full scans per UI poll).
+- [x] **psutil.cpu_percent** — `interval=None` (non-blocking) instead of a 100ms event-loop stall.
+- [ ] **`OR camera_name` defeats indexes** — deferred.
+- [ ] **Cleanup walks the volume via `rglob`** — partly addressed (single-pass walk already; orphan
+  cleanup below handles untracked files). Full DB-driven rewrite deferred.
+- [ ] **Share one upstream ffmpeg per camera** for live viewers — deferred.
 
-## Performance — open
-- [x] **MJPEG live path re-encodes per viewer on the loop** (`api.py` `/live`): now offloaded to a
-  worker thread and shared via a per-recorder cache keyed by source-frame identity
-  (`recorder.render_live_frame`), so N viewers cost one decode/encode per frame. The overlay reuses
-  the motion monitor's latest boxes (`MotionDetector.get_last_motion`) instead of re-detecting per
-  viewer — which also removed the prev-frame shape-thrash bug.
-- [x] **Recorder JPEG-encodes every frame 24/7** even with no live viewers — now demand-gated: the
-  capture loop only JPEG-encodes when a live-view consumer requested a frame within
-  `JPEG_DEMAND_SECONDS` (3s). Motion detection consumes the raw frame
-  (`recorder.get_latest_raw_frame()`) instead of decoding the JPEG, so it no longer forces encoding
-  and the encode→decode round-trip is gone. Dropped the redundant `bytes(... .tobytes())` copy.
-  (AI detection, off by default, still uses the JPEG path and creates demand when enabled.)
-- [ ] **SQLite connection churn** (`playback_db.py` `_get_connection`): opens a new connection and
-  re-issues `PRAGMA journal_mode=WAL` on every query. Pool/cache connections; set PRAGMAs once.
-- [ ] **`OR camera_name` defeats indexes** (`playback_db.py` range queries): `WHERE (camera_id=? OR
-  camera_name=?)` can't use either index. Query by `camera_id`, or UNION two indexed lookups.
-- [ ] **Cleanup walks the 926GB volume** with `rglob('*.mp4')` (`recorder.py`, `storage_manager.py`)
-  instead of querying the `recording_segments` table it already maintains.
-- [ ] **Cache storage-stats / recordings listings** (short TTL); they're polled by the UI and re-scan.
-- [ ] **Share one upstream ffmpeg per camera** for live viewers (`webrtc_h264.py`, `rtsp_proxy.py`) —
-  today each viewer spawns its own camera connection + ffmpeg.
-- [ ] **`psutil.cpu_percent(interval=0.1)`** blocks 100ms per system-stats poll (`api.py`); use `interval=None`.
+## Robustness
+- [x] **Disk-full deadlock** — absolute-floor tier (`storage.absolute_min_free_gb`) overrides retention.
+- [x] **Event-loop blocking** — `asyncio.to_thread` around ffmpeg/pipe calls; MSE process reaped.
+- [x] **Camera-down alerts go nowhere / lost on restart** — alerts persisted to SQLite, listable and
+  acknowledgeable (`/api/alerts`), surfaced in `/api/status`, pruned after 30 days.
+- [x] **Motion detection dead for cameras enabled after startup** — `MotionMonitor.ensure_monitoring`
+  registers a per-camera task in `start_camera`.
+- [x] **`/api/config` replaces whole sub-dicts** — now merges each section over stored values.
+- [x] **RTSP direct-proxy leaks ffmpeg on concurrent viewers** — keyed by unique stream id.
+- [x] **`webrtc_passthrough.close_all()` not called on shutdown** — now awaited.
+- [x] **Lock-free transcoder singleton / unbounded queue** — lock + bounded queue (drop+warn when full).
+- [x] **`cleanup_old_incomplete_segments` size estimate** — uses real ffprobe duration; drops
+  unprobeable/truncated rows.
+- [ ] **Per-camera start/stop lock** — deferred.
 
-## Robustness — open
-- [ ] **Camera-down alerts go nowhere by default** — only `LogAlertHandler` is always on; alerts are
-  in-memory and lost on restart. Ship a default email/ntfy/Pushover handler + persist to SQLite.
-- [ ] **Motion detection dead for cameras enabled after startup** (`api.py` `start_camera`): detector +
-  `monitor_recorder` task are only created at startup. Register/teardown them in start/stop_camera.
-- [ ] **`/api/config` replaces whole sub-dicts** (`settings_api.py` `update_config`): a partial POST can
-  drop `storage_path` etc. or delete omitted cameras. Deep-merge or validate a full schema.
-- [ ] **RTSP direct-proxy leaks ffmpeg on concurrent viewers** (`rtsp_proxy.py`): `active_streams` keyed
-  by camera name overwrites without killing the prior process. Key by unique stream id.
-- [ ] **`webrtc_passthrough.close_all()` not called on shutdown** (`api.py` shutdown) — leak on exit.
-- [ ] **Lock-free transcoder singleton** (`transcoder.py` `get_transcoder`) called from recorder threads;
-  guard with a lock. Transcode `queue.Queue()` is unbounded — bound it.
-- [ ] **Per-camera start/stop has no lock** (`api.py`): concurrent calls can interleave state.
-- [ ] **`cleanup_old_incomplete_segments` estimates duration from file size** (`playback_db.py`); prefer
-  the ffprobe-based `repair_missing_end_times`.
+## Features
+- [x] **Persisted/acknowledgeable alerts** (see Robustness).
+- [x] **Consolidated `/api/status`** — per-camera health + storage + transcode backlog + system + open
+  alert count, one call for the mobile app.
+- [x] **`/metrics` (Prometheus)** — per-camera recording/write_failed/reconnects + disk + queue depth.
+- [x] **Cross-camera motion/event search** — `GET /api/playback/motion-events/search` (camera /
+  intensity / type filters + paging).
+- [x] **Structured (JSON) logging** — opt-in via `logging.json: true`.
+- [x] **Orphaned-file cleanup** (bonus, user-requested) — `GET /api/storage/orphans` and a maintenance
+  step; dry-run by default, real deletion behind `storage.orphan_cleanup_enabled`. Safety rails:
+  min-age, hidden/cache dirs, `_h264` variants, storage-mounted check.
+- [x] **Tests** for the above (alerts, search, orphan cleanup) — `tests/unit/test_audit_additions.py`.
+- [ ] **Token auth for the mobile app** — deferred (needs a scheme decision; HTTP Basic exists today).
+- [ ] **Per-camera storage quotas** — deferred (lower value; retention-logic change).
 
-## Features — open (value/effort)
-- [ ] **Default alert delivery + persisted/acknowledgeable alerts** (high / S) — turns existing detection
-  into notifications users actually receive.
-- [ ] **Consolidated mobile-ready `/api/status` + token auth** (high / M) — for the planned Flutter app
-  (`docs/MOBILE_APP_ROADMAP.md`); current `/health` omits per-camera write_failed/storage status.
-- [ ] **Cross-camera motion/event search API + UI** (high / M) — schema/indexes already support it.
-- [ ] **`/metrics` (Prometheus) or richer `/health`** (med / S) — per-camera fps/reconnects, transcode
-  queue depth, disk %, active recorders (most values already on recorder objects).
-- [ ] **Test coverage for thin/high-risk modules** (med / M) — `recording_modes`, `disk_manager`
-  (the retention/disk-full path), `onvif_discovery`, `rtsp_proxy`, webrtc currently ~0 tests.
-- [ ] **Structured (JSON) logging option** (med / S); **per-camera storage quotas** (low / M).
+## Deferred — rationale
+- **`OR camera_name` index rewrite**: 9 query sites; a correct fix needs UNION-of-indexed-lookups with
+  ordering/dedup care around the camera_id↔camera_name migration. Medium gain (queries are already
+  bounded by the time index), high regression risk — not worth it in this pass.
+- **Cleanup via DB instead of `rglob`**: DB-driven cleanup would miss on-disk files with no row
+  (exactly the orphans the new cleanup targets), so the filesystem walk is still needed; the walk is
+  already single-pass. A hybrid rewrite is larger than its remaining payoff here.
+- **Share one upstream ffmpeg per camera**: significant rework of the WebRTC/RTSP streaming path, which
+  is currently used by the (not-yet-active) mobile subsystem. Revisit when the mobile app lands.
+- **Per-camera start/stop lock**: low severity (≤3 users; `recorder.start()` already guards the unsafe
+  use-after-free). The fix re-indents three large handlers — churn/risk outweighs the benefit now.
+- **Token auth / per-camera quotas**: product decisions (auth scheme; quota policy) — surface to owner.
 
 ## Kept intentionally (not dead — for the planned mobile app)
-- WebRTC subsystem (`webrtc_server.py`, `webrtc_h264.py`, `/api/webrtc/offer`, `webrtc-client.js`)
-- Direct-RTSP / MSE proxy (`rtsp_proxy.py`, `/stream/direct`, `/stream/mse`)
-- `config.py` camera accessors (`get_camera_by_id`, `get_camera_by_name`, etc.) — unused today,
-  likely needed by the mobile API.
+- WebRTC subsystem, direct-RTSP/MSE proxy, and `config.py` camera accessors.
