@@ -103,6 +103,18 @@ webrtc_passthrough: WebRTCPassthroughManager = None
 rtsp_proxy: RTSPProxy = None
 mse_proxy: MSEStreamProxy = None
 sd_card_manager = None
+event_recorder = None
+
+
+def _wire_motion_event_capture(detector, camera: dict) -> None:
+    """If high-res-on-motion is enabled, fire a main-stream event capture when
+    this camera's detector reports motion start."""
+    if not event_recorder or detector is None:
+        return
+    cid = camera.get("id", camera["name"])
+    name = camera["name"]
+    main_url = camera["rtsp_url"]
+    detector.on_motion_start = lambda: event_recorder.trigger(cid, name, main_url, detector)
 
 
 def _derive_substream_url(url: str) -> Optional[str]:
@@ -144,7 +156,7 @@ def get_recording_url(camera: dict) -> str:
 @app.on_event("startup")
 async def startup_event():
     """Initialize NVR on startup"""
-    global recorder_manager, motion_monitor, ai_monitor, playback_db, storage_manager, recording_mode_manager, webrtc_manager, webrtc_passthrough, rtsp_proxy, mse_proxy, sd_card_manager
+    global recorder_manager, motion_monitor, ai_monitor, playback_db, storage_manager, recording_mode_manager, webrtc_manager, webrtc_passthrough, rtsp_proxy, mse_proxy, sd_card_manager, event_recorder
 
     logger.info("Starting NVR...")
 
@@ -415,6 +427,22 @@ async def startup_event():
         except Exception as e:
             logger.error(f"Auto-discovery failed: {e}")
 
+    # High-res-on-motion: record the low-bandwidth sub-stream continuously, but
+    # capture a full-res clip from the main stream when motion fires (only 1-2 at
+    # a time, so the WiFi airtime that 7 main streams would saturate stays clear).
+    if config.get("recording.high_res_on_motion", False) and playback_db:
+        from nvr.core.event_recorder import HighResEventRecorder
+
+        event_recorder = HighResEventRecorder(
+            config.storage_path,
+            playback_db,
+            max_concurrent=config.get("recording.high_res_max_concurrent", 2),
+            cooldown_seconds=config.get("recording.high_res_cooldown_seconds", 5),
+            max_duration_seconds=config.get("recording.high_res_max_duration_seconds", 60),
+            output_width=config.get("recording.high_res_output_width", 1920),
+        )
+        logger.info("High-res-on-motion event recording enabled")
+
     # Load all cameras - disabled cameras get live view but no recording
     cameras = config.cameras
     recording_enabled = config.get("recording.enabled", True)
@@ -444,12 +472,13 @@ async def startup_event():
             # Add motion detector if enabled (frame-difference method)
             if config.get("motion_detection.enabled", True) and motion_monitor:
                 recorder = recorder_manager.get_recorder(camera_name)
-                motion_monitor.add_camera(
+                detector = motion_monitor.add_camera(
                     camera_name,
                     sensitivity=config.get("motion_detection.sensitivity", 25),
                     min_area=config.get("motion_detection.min_area", 500),
                     recorder=recorder,
                 )
+                _wire_motion_event_capture(detector, camera)
 
             # Add AI detector if enabled
             if use_ai and ai_monitor:
@@ -959,12 +988,17 @@ async def start_camera(camera_id: str, permanent: bool = False) -> Dict[str, Any
         # record but produce no motion events until a full restart.
         if config.get("motion_detection.enabled", True) and motion_monitor:
             if not motion_monitor.get_detector(camera_name):
-                motion_monitor.add_camera(
+                detector = motion_monitor.add_camera(
                     camera_name,
                     sensitivity=config.get("motion_detection.sensitivity", 25),
                     min_area=config.get("motion_detection.min_area", 500),
                     recorder=recorder,
                 )
+                cam_cfg = next(
+                    (c for c in config.cameras if c.get("id") == camera_id or c["name"] == camera_name), None
+                )
+                if cam_cfg:
+                    _wire_motion_event_capture(detector, cam_cfg)
             motion_monitor.ensure_monitoring(camera_name, recorder)
 
         message = f"Started recording {camera_name}"

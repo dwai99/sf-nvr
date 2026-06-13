@@ -547,6 +547,7 @@ class PlaybackDatabase:
                 WHERE (camera_id = ? OR camera_name = ?)
                 AND start_time < ?
                 AND (end_time > ? OR end_time IS NULL)
+                AND (source IS NULL OR source != 'event')
                 ORDER BY start_time ASC
             """,
                 (camera_id, camera_id, end_time, start_time),
@@ -585,6 +586,7 @@ class PlaybackDatabase:
                 SELECT * FROM recording_segments
                 WHERE start_time <= ?
                 AND (end_time >= ? OR end_time IS NULL)
+                AND (source IS NULL OR source != 'event')
                 ORDER BY camera_id, start_time ASC
             """,
                 (end_time, start_time),
@@ -660,6 +662,32 @@ class PlaybackDatabase:
                 result[camera_id].append(dict(row))
 
             return result
+
+    def get_event_clips(
+        self, camera: str = None, start_time: datetime = None, end_time: datetime = None, limit: int = 200
+    ) -> List[Dict]:
+        """List high-res motion-triggered event clips (source='event'), newest first."""
+        conds = ["source = 'event'"]
+        params = []
+        if camera:
+            conds.append("(camera_id = ? OR camera_name = ?)")
+            params += [camera, camera]
+        if start_time is not None:
+            conds.append("start_time >= ?")
+            params.append(start_time)
+        if end_time is not None:
+            conds.append("start_time <= ?")
+            params.append(end_time)
+        query = (
+            "SELECT id, camera_id, camera_name, file_path, start_time, end_time, "
+            "duration_seconds, file_size_bytes, width, height FROM recording_segments "
+            "WHERE " + " AND ".join(conds) + " ORDER BY start_time DESC LIMIT ?"
+        )
+        params.append(limit)
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, params)
+            return [dict(r) for r in cursor.fetchall()]
 
     def search_motion_events(
         self,
