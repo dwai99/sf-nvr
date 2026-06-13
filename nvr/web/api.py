@@ -6,7 +6,7 @@ import secrets
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse, PlainTextResponse
 from fastapi import Request
 from typing import List, Dict, Any
 import cv2
@@ -1626,6 +1626,139 @@ async def health_check():
         checks["uptime"] = "unknown"
 
     return {"status": status, "cameras": len(config.cameras), "recording": active_recorders, "checks": checks}
+
+
+def _transcode_queue_depth() -> int:
+    """Current transcode backlog (0 if the transcoder isn't up yet)."""
+    try:
+        from nvr.core.transcoder import get_transcoder
+
+        t = get_transcoder()
+        return t.transcode_queue.qsize() if t and t.transcode_queue else 0
+    except Exception:
+        return 0
+
+
+@app.get("/api/status")
+async def get_status():
+    """Consolidated status for dashboards and the mobile app: per-camera health,
+    storage, transcode backlog, and system resources in a single call."""
+    import psutil
+    import time
+
+    cameras = await get_all_cameras_health()
+    recording = sum(1 for c in cameras if c.get("is_recording"))
+    write_failed = [c["camera_name"] for c in cameras if c.get("write_failed")]
+
+    storage = {"writable": config.is_storage_writable()}
+    try:
+        disk = psutil.disk_usage(str(config.storage_path))
+        storage.update(
+            percent=round(disk.percent, 1),
+            free_gb=round(disk.free / (1024**3), 1),
+            total_gb=round(disk.total / (1024**3), 1),
+        )
+    except Exception:
+        pass
+    if storage_manager:
+        storage["retention_days"] = getattr(storage_manager, "retention_days", None)
+
+    system = {}
+    try:
+        system = {
+            "cpu_percent": round(psutil.cpu_percent(interval=None), 1),
+            "memory_percent": round(psutil.virtual_memory().percent, 1),
+            "uptime_seconds": int(time.time() - psutil.Process().create_time()),
+        }
+    except Exception:
+        pass
+
+    overall = "healthy"
+    if write_failed or not storage.get("writable", True) or storage.get("percent", 0) > 95:
+        overall = "degraded"
+    elif any(c.get("status") in ("stale", "degraded", "stopped", "not_started") for c in cameras):
+        overall = "degraded"
+
+    return {
+        "status": overall,
+        "camera_count": len(cameras),
+        "recording": recording,
+        "write_failed_cameras": write_failed,
+        "transcode_queue": _transcode_queue_depth(),
+        "storage": storage,
+        "system": system,
+        "cameras": cameras,
+    }
+
+
+def _prom_label(value: str) -> str:
+    """Escape a string for use as a Prometheus label value."""
+    return str(value).replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
+
+
+@app.get("/metrics", response_class=PlainTextResponse)
+async def metrics():
+    """Prometheus metrics (text exposition format) for Grafana/alerting."""
+    import psutil
+
+    cameras = await get_all_cameras_health()
+    out = []
+
+    def emit(name, help_text, mtype, samples):
+        out.append(f"# HELP {name} {help_text}")
+        out.append(f"# TYPE {name} {mtype}")
+        out.extend(samples)
+
+    emit(
+        "nvr_camera_recording",
+        "Camera is actively recording (1) or not (0)",
+        "gauge",
+        [
+            f'nvr_camera_recording{{camera="{_prom_label(c["camera_name"])}"}} {1 if c.get("is_recording") else 0}'
+            for c in cameras
+        ],
+    )
+    emit(
+        "nvr_camera_write_failed",
+        "Camera writes are failing to land on disk (1) or not (0)",
+        "gauge",
+        [
+            f'nvr_camera_write_failed{{camera="{_prom_label(c["camera_name"])}"}} {1 if c.get("write_failed") else 0}'
+            for c in cameras
+        ],
+    )
+    emit(
+        "nvr_camera_reconnects_total",
+        "Total RTSP reconnects since start",
+        "counter",
+        [
+            f'nvr_camera_reconnects_total{{camera="{_prom_label(c["camera_name"])}"}} {c.get("total_reconnects", 0)}'
+            for c in cameras
+        ],
+    )
+
+    system_samples = []
+    try:
+        disk = psutil.disk_usage(str(config.storage_path))
+        system_samples.append(f"nvr_disk_used_percent {round(disk.percent, 1)}")
+        system_samples.append(f"nvr_disk_free_bytes {disk.free}")
+    except Exception:
+        pass
+    emit("nvr_disk", "Storage volume usage", "gauge", system_samples)
+    emit(
+        "nvr_recording_cameras",
+        "Number of cameras currently recording",
+        "gauge",
+        [f"nvr_recording_cameras {sum(1 for c in cameras if c.get('is_recording'))}"],
+    )
+    emit(
+        "nvr_transcode_queue_depth",
+        "Pending transcode jobs",
+        "gauge",
+        [f"nvr_transcode_queue_depth {_transcode_queue_depth()}"],
+    )
+
+    return "\n".join(out) + "\n"
 
 
 @app.get("/api/system/stats")
