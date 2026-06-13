@@ -22,8 +22,12 @@ Items are roughly prioritized. `[x]` = done, `[ ]` = open.
   (`recorder.render_live_frame`), so N viewers cost one decode/encode per frame. The overlay reuses
   the motion monitor's latest boxes (`MotionDetector.get_last_motion`) instead of re-detecting per
   viewer — which also removed the prev-frame shape-thrash bug.
-- [ ] **Recorder JPEG-encodes every frame 24/7** even with no live viewers (`recorder.py` `_record_frames`).
-  Gate encoding on an actual consumer / throttle to ~10fps; drop the redundant `bytes(... .tobytes())` copy.
+- [x] **Recorder JPEG-encodes every frame 24/7** even with no live viewers — now demand-gated: the
+  capture loop only JPEG-encodes when a live-view consumer requested a frame within
+  `JPEG_DEMAND_SECONDS` (3s). Motion detection consumes the raw frame
+  (`recorder.get_latest_raw_frame()`) instead of decoding the JPEG, so it no longer forces encoding
+  and the encode→decode round-trip is gone. Dropped the redundant `bytes(... .tobytes())` copy.
+  (AI detection, off by default, still uses the JPEG path and creates demand when enabled.)
 - [ ] **SQLite connection churn** (`playback_db.py` `_get_connection`): opens a new connection and
   re-issues `PRAGMA journal_mode=WAL` on every query. Pool/cache connections; set PRAGMAs once.
 - [ ] **`OR camera_name` defeats indexes** (`playback_db.py` range queries): `WHERE (camera_id=? OR

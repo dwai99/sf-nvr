@@ -273,35 +273,29 @@ class MotionMonitor:
         """
         Monitor motion from a recorder's latest frame.
 
-        The heavy work (JPEG decode + contour detection) runs in a worker thread
-        via asyncio.to_thread so it never blocks the event loop, and we skip
-        frames we've already processed (get_latest_frame returns the cached frame
-        when no new one has arrived), avoiding redundant CPU on every tick.
+        The contour detection runs in a worker thread via asyncio.to_thread so it
+        never blocks the event loop, and we skip frames we've already processed
+        (get_latest_raw_frame returns the same array until a new frame arrives),
+        avoiding redundant CPU on every tick.
         """
         detector = self.get_detector(camera_name)
         if not detector:
             logger.error(f"No motion detector for {camera_name}")
             return
 
-        last_processed = None  # identity of the last JPEG buffer we ran detection on
-
-        def _decode_and_process(jpeg_bytes):
-            # Runs off the event loop
-            nparr = np.frombuffer(jpeg_bytes, np.uint8)
-            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            if frame is None:
-                return None
-            return detector.process_frame(frame)
+        last_processed = None  # identity of the last raw frame we ran detection on
 
         while self.is_running:
             try:
-                jpeg_data = recorder.get_latest_frame()
+                # Consume the recorder's raw frame directly — no JPEG decode, and
+                # this never forces the recorder to encode when nobody is watching.
+                frame = recorder.get_latest_raw_frame()
 
-                # Only process genuinely new frames (get_latest_frame returns the
-                # same cached object when the queue is empty).
-                if jpeg_data is not None and jpeg_data is not last_processed:
-                    last_processed = jpeg_data
-                    result = await asyncio.to_thread(_decode_and_process, jpeg_data)
+                # Only process genuinely new frames (get_latest_raw_frame returns
+                # the same array object until the next frame is captured).
+                if frame is not None and frame is not last_processed:
+                    last_processed = frame
+                    result = await asyncio.to_thread(detector.process_frame, frame)
                     if result:
                         has_motion, boxes = result
                         if has_motion:

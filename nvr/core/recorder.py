@@ -17,6 +17,11 @@ os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|timeout;600000
 
 logger = logging.getLogger(__name__)
 
+# How long after the last live-view frame request we keep JPEG-encoding for.
+# Past this with no viewers, the recorder stops encoding (motion/AI use the raw
+# frame), so idle cameras don't burn CPU compressing frames nobody watches.
+JPEG_DEMAND_SECONDS = 3.0
+
 
 class RTSPRecorder:
     """Records RTSP streams to disk with automatic segmentation"""
@@ -56,6 +61,13 @@ class RTSPRecorder:
 
         # Cache last frame to avoid blank frames when queue is empty
         self.last_frame: Optional[bytes] = None  # Store JPEG bytes, not numpy array
+        # Latest decoded BGR frame for in-process consumers (motion/AI). Kept
+        # every frame regardless of viewers, so detection never depends on the
+        # live-view JPEG encode.
+        self.last_raw_frame = None
+        # Monotonic time of the last live-view frame request; drives demand-gated
+        # JPEG encoding (see JPEG_DEMAND_SECONDS).
+        self._last_jpeg_demand = 0.0
         self.frame_lock = threading.Lock()
         # Shared live-view render cache: viewers requesting the same
         # (raw, quality, realtime) share one decode/resize/encode per source
@@ -336,31 +348,38 @@ class RTSPRecorder:
                             self.actively_writing = False
                             current_segment_started = False
 
-                # Compress frame to JPEG for live viewing (saves memory)
-                # Quality 85 is good balance between size and quality
-                success, jpeg_bytes = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                # Keep the latest decoded frame for in-process consumers
+                # (motion/AI detection) — always, independent of live viewers.
+                with self.frame_lock:
+                    self.last_raw_frame = frame
 
-                if success and jpeg_bytes is not None:
-                    # Make an immutable copy of the bytes immediately
-                    jpeg_data = bytes(jpeg_bytes.tobytes())
+                # JPEG-encode for live view only when a viewer requested frames
+                # recently. With nobody watching there's no point burning CPU
+                # compressing every frame on every camera around the clock.
+                if time.monotonic() - self._last_jpeg_demand < JPEG_DEMAND_SECONDS:
+                    # Quality 85 is a good balance between size and quality
+                    success, jpeg_bytes = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
 
-                    # Validate JPEG structure before queuing
-                    # Must start with FFD8 (SOI) and end with FFD9 (EOI)
-                    if len(jpeg_data) > 1000 and jpeg_data[0:2] == b"\xff\xd8" and jpeg_data[-2:] == b"\xff\xd9":
+                    if success and jpeg_bytes is not None:
+                        jpeg_data = jpeg_bytes.tobytes()  # tobytes() already returns immutable bytes
 
-                        # Put compressed frame in queue for live viewing
-                        with self.frame_lock:
-                            try:
-                                self.frame_queue.put_nowait(jpeg_data)
-                            except queue.Full:
-                                # Replace oldest frame with new one
+                        # Validate JPEG structure before queuing
+                        # Must start with FFD8 (SOI) and end with FFD9 (EOI)
+                        if len(jpeg_data) > 1000 and jpeg_data[0:2] == b"\xff\xd8" and jpeg_data[-2:] == b"\xff\xd9":
+
+                            # Put compressed frame in queue for live viewing
+                            with self.frame_lock:
                                 try:
-                                    self.frame_queue.get_nowait()
                                     self.frame_queue.put_nowait(jpeg_data)
-                                except queue.Empty:
-                                    pass
-                            # Always update last_frame for fallback
-                            self.last_frame = jpeg_data
+                                except queue.Full:
+                                    # Replace oldest frame with new one
+                                    try:
+                                        self.frame_queue.get_nowait()
+                                        self.frame_queue.put_nowait(jpeg_data)
+                                    except queue.Empty:
+                                        pass
+                                # Always update last_frame for fallback
+                                self.last_frame = jpeg_data
             except Exception as _frame_err:
                 # A single bad/corrupt frame (common on weak-signal cameras)
                 # must not tear down the capture session and force a full
@@ -676,6 +695,8 @@ class RTSPRecorder:
         """Get the latest frame from the stream (for live view)
         Returns JPEG-compressed frame as bytes (not numpy array) to save memory
         """
+        # Register live-view demand so the capture loop keeps JPEG-encoding.
+        self._last_jpeg_demand = time.monotonic()
         with self.frame_lock:
             try:
                 # Try to get fresh frame from queue (already JPEG compressed and validated)
@@ -685,6 +706,17 @@ class RTSPRecorder:
             except queue.Empty:
                 # Return cached frame instead of None to avoid blank frames
                 return self.last_frame
+
+    def get_latest_raw_frame(self):
+        """Return the latest decoded BGR frame for in-process consumers.
+
+        Used by motion/AI detection so they don't decode the live-view JPEG (or
+        force it to be encoded). Does NOT register live-view demand. Returns a
+        numpy array or None; the capture loop only ever rebinds this to a fresh
+        array, so the returned frame is safe to read without copying.
+        """
+        with self.frame_lock:
+            return self.last_raw_frame
 
     def render_live_frame(self, raw, quality, realtime, overlay_fn=None, motion_boxes=None):
         """Produce a JPEG for live view, shared across all viewers.
@@ -700,6 +732,8 @@ class RTSPRecorder:
         boxes from the motion monitor); drawn before any downscale so the boxes
         stay aligned with the image.
         """
+        # Register live-view demand so the capture loop keeps JPEG-encoding.
+        self._last_jpeg_demand = time.monotonic()
         with self.frame_lock:
             source = self.last_frame
         if source is None:
