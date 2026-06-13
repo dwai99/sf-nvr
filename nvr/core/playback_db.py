@@ -655,6 +655,56 @@ class PlaybackDatabase:
 
             return result
 
+    def search_motion_events(
+        self,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        camera: Optional[str] = None,
+        min_intensity: Optional[float] = None,
+        event_type: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> Dict:
+        """Search motion/AI events across cameras with optional filters + paging.
+
+        Returns {"events": [...newest first...], "total": N, "limit", "offset"}.
+        """
+        conds, params = [], []
+        if start_time is not None:
+            conds.append("event_time >= ?")
+            params.append(start_time)
+        if end_time is not None:
+            conds.append("event_time <= ?")
+            params.append(end_time)
+        if camera:
+            conds.append("(camera_id = ? OR camera_name = ?)")
+            params.extend([camera, camera])
+        if min_intensity is not None:
+            conds.append("intensity >= ?")
+            params.append(min_intensity)
+        if event_type:
+            conds.append("event_type = ?")
+            params.append(event_type)
+        where = (" WHERE " + " AND ".join(conds)) if conds else ""
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"SELECT COUNT(*) AS n FROM motion_events{where}", params)
+            total = cursor.fetchone()["n"]
+            cursor.execute(
+                f"""
+                SELECT id, camera_id, camera_name, event_time, duration_seconds,
+                       frame_count, intensity, event_type
+                FROM motion_events{where}
+                ORDER BY event_time DESC
+                LIMIT ? OFFSET ?
+                """,
+                params + [limit, offset],
+            )
+            events = [dict(r) for r in cursor.fetchall()]
+
+        return {"events": events, "total": total, "limit": limit, "offset": offset}
+
     def get_motion_event_counts(
         self, start_time: datetime, end_time: datetime, bucket_minutes: int = 5
     ) -> Dict[str, List[Dict]]:

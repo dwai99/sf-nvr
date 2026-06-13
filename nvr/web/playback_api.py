@@ -377,6 +377,42 @@ async def get_all_recordings(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# NOTE: registered before /motion-events/{camera_id} so "search" isn't captured
+# as a camera_id by the path param route.
+@router.get("/api/playback/motion-events/search")
+async def search_motion_events(
+    start_time: Optional[str] = Query(None, description="ISO datetime, inclusive"),
+    end_time: Optional[str] = Query(None, description="ISO datetime, inclusive"),
+    camera_id: Optional[str] = Query(None, description="Camera id or name"),
+    min_intensity: Optional[float] = Query(None, description="Only events at/above this intensity"),
+    event_type: Optional[str] = Query(None, description="Filter by event type (e.g. 'motion')"),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+):
+    """Search motion/AI events across cameras with optional filters and paging."""
+    from nvr.web.api import playback_db
+
+    try:
+        start_dt = datetime.fromisoformat(start_time) if start_time else None
+        end_dt = datetime.fromisoformat(end_time) if end_time else None
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid datetime format (use ISO 8601)")
+
+    try:
+        return playback_db.search_motion_events(
+            start_time=start_dt,
+            end_time=end_dt,
+            camera=camera_id,
+            min_intensity=min_intensity,
+            event_type=event_type,
+            limit=limit,
+            offset=offset,
+        )
+    except Exception as e:
+        logger.error(f"Error searching motion events: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/api/playback/motion-events/{camera_id}")
 async def get_camera_motion_events(
     camera_id: str,
