@@ -3,6 +3,7 @@
 import sqlite3
 import subprocess
 import logging
+import threading
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
@@ -17,31 +18,53 @@ class PlaybackDatabase:
     def __init__(self, db_path: Path):
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        # One reused connection per thread. SQLite connections aren't safe to
+        # share across threads, but the recorder writes from camera threads while
+        # playback reads from the event loop — so each gets its own.
+        self._local = threading.local()
         self._init_database()
 
-    @contextmanager
-    def _get_connection(self):
-        """Context manager for database connections.
-
-        WAL mode + a busy timeout let the recorder keep writing segments while
-        playback/maintenance read concurrently, instead of failing with
-        'database is locked'.
-        """
+    def _connect(self) -> sqlite3.Connection:
+        """Open a configured connection. PRAGMAs are set once here (per
+        connection) rather than re-issued on every query."""
         conn = sqlite3.connect(str(self.db_path), timeout=30)
         conn.row_factory = sqlite3.Row
         try:
-            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA journal_mode=WAL")  # persists in the file header
             conn.execute("PRAGMA busy_timeout=5000")
         except sqlite3.Error as e:
             logger.warning(f"Could not set SQLite pragmas: {e}")
+        return conn
+
+    @contextmanager
+    def _get_connection(self):
+        """Yield this thread's cached connection (created on first use).
+
+        WAL mode + a busy timeout let the recorder keep writing segments while
+        playback/maintenance read concurrently. Reusing one connection per thread
+        avoids opening/closing (and re-PRAGMA-ing) on every query. The DB work
+        inside each `with` block is synchronous, so async coroutines on the event
+        loop never interleave two transactions on the shared connection.
+        """
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = self._connect()
+            self._local.conn = conn
         try:
             yield conn
             conn.commit()
         except Exception as e:
-            conn.rollback()
+            try:
+                conn.rollback()
+            except sqlite3.Error:
+                pass
+            # Drop a possibly-broken connection so the next call rebuilds it.
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
+            self._local.conn = None
             raise e
-        finally:
-            conn.close()
 
     def _init_database(self):
         """Initialize database schema"""
