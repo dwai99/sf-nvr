@@ -22,6 +22,7 @@ def run_maintenance(playback_db):
         "database_optimized": False,
         "orphan_files_found": 0,
         "orphan_files_deleted": 0,
+        "durations_corrected": 0,
     }
 
     logger.info("Starting database maintenance...")
@@ -81,6 +82,19 @@ def run_maintenance(playback_db):
             results["orphan_files_deleted"] = orphan_result["deleted_count"]
     except Exception as e:
         logger.error(f"Error scanning for orphaned files: {e}")
+
+    # 2d. Correct segments whose stored duration overstates the real file
+    # (flaky cameras write fewer frames than wall-clock time), so the timeline
+    # matches what's playable and clicking can seek anywhere on it. Bounded +
+    # tracked so it works through the backlog newest-first without re-probing.
+    try:
+        from nvr.core.config import config
+
+        limit = config.get("recording.duration_repair_batch", 1000)
+        dur = playback_db.repair_overstated_durations(limit=limit)
+        results["durations_corrected"] = dur["corrected"]
+    except Exception as e:
+        logger.error(f"Error repairing overstated durations: {e}")
 
     # 2c. Prune old acknowledged alerts so the table doesn't grow forever.
     try:

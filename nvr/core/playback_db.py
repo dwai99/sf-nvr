@@ -266,6 +266,12 @@ class PlaybackDatabase:
             )
             logger.info("Migration complete: added camera_id column and index")
 
+        # Track which segments have had their real (playable) duration verified
+        # against the file, so the overstated-duration repair never re-probes.
+        if "duration_verified" not in segments_columns:
+            logger.info("Migrating recording_segments table: adding duration_verified column")
+            cursor.execute("ALTER TABLE recording_segments ADD COLUMN duration_verified INTEGER DEFAULT 0")
+
         # Check if camera_id column exists in motion_events
         if "camera_id" not in motion_columns:
             logger.info("Migrating motion_events table: adding camera_id column")
@@ -1046,6 +1052,87 @@ class PlaybackDatabase:
             return float(result.stdout.strip())
         except Exception:
             return None
+
+    def repair_overstated_durations(self, limit: int = 500, tolerance_seconds: float = 3.0) -> Dict:
+        """Re-probe segments whose stored duration overstates the real file.
+
+        The recorder records wall-clock duration, but a flaky camera writes fewer
+        frames, so the file's playable length can be far shorter than
+        (end_time - start_time). The timeline uses end_time, so clicking into the
+        dropped-frame tail can't seek anywhere. This rewrites end_time /
+        duration_seconds to the actual ffprobe duration so the timeline matches
+        what's playable.
+
+        Bounded and tracked via duration_verified (so it never re-probes), newest
+        segments first. Returns a summary dict.
+        """
+        results = {"checked": 0, "corrected": 0, "unprobeable": 0, "remaining": 0}
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, file_path, start_time, end_time, duration_seconds
+                FROM recording_segments
+                WHERE duration_verified = 0 AND end_time IS NOT NULL
+                ORDER BY start_time DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+            rows = cursor.fetchall()
+
+            for row in rows:
+                path = Path(row["file_path"])
+                if not path.exists():
+                    # Missing file — leave the row for cleanup_deleted_files, but
+                    # mark verified so we don't keep re-checking it here.
+                    cursor.execute("UPDATE recording_segments SET duration_verified = 1 WHERE id = ?", (row["id"],))
+                    continue
+
+                results["checked"] += 1
+                actual = self._ffprobe_duration(path)
+                if actual is None:
+                    # Truncated/unprobeable — handled by the incomplete-segment
+                    # repair; don't mark verified so it isn't permanently skipped.
+                    results["unprobeable"] += 1
+                    continue
+
+                start_dt = (
+                    datetime.fromisoformat(row["start_time"])
+                    if isinstance(row["start_time"], str)
+                    else row["start_time"]
+                )
+                # Stored span: prefer the explicit duration, else end-minus-start.
+                stored_span = row["duration_seconds"]
+                if stored_span is None:
+                    end_dt = (
+                        datetime.fromisoformat(row["end_time"]) if isinstance(row["end_time"], str) else row["end_time"]
+                    )
+                    stored_span = (end_dt - start_dt).total_seconds()
+
+                if abs(stored_span - actual) > tolerance_seconds:
+                    new_end = start_dt + timedelta(seconds=actual)
+                    cursor.execute(
+                        "UPDATE recording_segments SET end_time = ?, duration_seconds = ?, duration_verified = 1 "
+                        "WHERE id = ?",
+                        (new_end, int(round(actual)), row["id"]),
+                    )
+                    results["corrected"] += 1
+                else:
+                    cursor.execute("UPDATE recording_segments SET duration_verified = 1 WHERE id = ?", (row["id"],))
+
+            cursor.execute(
+                "SELECT COUNT(*) AS n FROM recording_segments WHERE duration_verified = 0 AND end_time IS NOT NULL"
+            )
+            results["remaining"] = cursor.fetchone()["n"]
+
+        if results["corrected"]:
+            logger.info(
+                f"Duration repair: corrected {results['corrected']} overstated segment(s), "
+                f"{results['remaining']} still unverified"
+            )
+        return results
 
     def cleanup_old_incomplete_segments(self, hours_threshold: int = 24) -> int:
         """

@@ -1464,6 +1464,23 @@ async def get_orphaned_files(delete: bool = False):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/storage/repair-durations")
+async def repair_durations(limit: int = 1000):
+    """Re-probe segments and correct end_times that overstate the real file length.
+
+    Fixes timelines where clicking can't seek into a segment's dropped-frame tail.
+    Bounded per call (newest-first) and tracked, so repeated calls work through the
+    backlog without re-probing. Returns {checked, corrected, unprobeable, remaining}.
+    """
+    if not playback_db:
+        raise HTTPException(status_code=503, detail="Playback database not initialized")
+    try:
+        return await asyncio.to_thread(playback_db.repair_overstated_durations, limit)
+    except Exception as e:
+        logger.error(f"Error repairing durations: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/storage/deletion-history")
 async def get_deletion_history(limit: int = 100, camera: str = None):
     """Get history of deleted recordings"""
