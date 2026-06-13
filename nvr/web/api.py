@@ -10,7 +10,6 @@ from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse
 from fastapi import Request
 from typing import List, Dict, Any
 import cv2
-import numpy as np
 import asyncio
 from datetime import datetime
 import json
@@ -1037,59 +1036,39 @@ async def live_stream(camera_id: str, raw: bool = False, quality: int = 50, real
     jpeg_quality = max(1, min(100, quality))
 
     async def generate():
-        """Generate MJPEG stream"""
+        """Generate MJPEG stream.
+
+        Rendering is shared across viewers (cached per quality on the recorder)
+        and offloaded to a worker thread, so many viewers of one camera cost a
+        single decode/encode per frame and never block the event loop. The
+        motion overlay reuses the motion monitor's latest boxes instead of
+        re-running detection per viewer.
+        """
+        detector = motion_monitor.get_detector(camera_name) if (not raw and motion_monitor) else None
+
         while True:
-            jpeg_data = recorder.get_latest_frame()
+            # Reuse the monitor's latest motion result (no per-viewer detection).
+            motion_boxes = None
+            if detector is not None:
+                has_motion, boxes = detector.get_last_motion()
+                if has_motion:
+                    motion_boxes = boxes
+
+            # Shared, cached, off-loop render (returns stored q85 bytes when no
+            # processing is needed).
+            jpeg_data = await asyncio.to_thread(
+                recorder.render_live_frame,
+                raw,
+                jpeg_quality,
+                realtime,
+                detector.draw_motion if detector is not None else None,
+                motion_boxes,
+            )
 
             # CRITICAL: If no frame available, sleep to prevent CPU spinning
             if jpeg_data is None:
                 await asyncio.sleep(0.1)  # Wait 100ms before trying again
                 continue
-
-            # Frame is already JPEG compressed from recorder at quality 85 (saves memory!)
-            # Check if we need to decode and re-process:
-            # - Not raw mode (need to apply motion detection)
-            # - Quality differs significantly from stored (85)
-            # - Need to resize for low quality
-            needs_processing = (not raw) or (jpeg_quality < 60 and not realtime)
-
-            if needs_processing:
-                # Decode JPEG to numpy array for processing
-                nparr = np.frombuffer(jpeg_data, np.uint8)
-                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
-                if frame is not None:
-                    # Resize frame for lower bandwidth (optional - more aggressive optimization)
-                    # Skip resizing in realtime mode for maximum speed
-                    if not realtime and jpeg_quality < 60:
-                        # Scale down to 720p for low quality
-                        h, w = frame.shape[:2]
-                        if w > 1280:
-                            scale = 1280 / w
-                            new_w = int(w * scale)
-                            new_h = int(h * scale)
-                            frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
-
-                    # Apply motion detection visualization only if not raw mode
-                    if not raw:
-                        detector = motion_monitor.get_detector(camera_name) if motion_monitor else None
-                        if detector:
-                            has_motion, boxes = detector.process_frame(frame)
-                            if has_motion:
-                                frame = detector.draw_motion(frame, boxes)
-
-                    # Re-encode with requested quality
-                    encode_params = [
-                        cv2.IMWRITE_JPEG_QUALITY,
-                        jpeg_quality,
-                        cv2.IMWRITE_JPEG_OPTIMIZE,
-                        1 if not realtime else 0,
-                        cv2.IMWRITE_JPEG_PROGRESSIVE,
-                        0,
-                    ]
-                    ret, buffer = cv2.imencode(".jpg", frame, encode_params)
-                    if ret:
-                        jpeg_data = buffer.tobytes()
 
             # Stream JPEG data (either original at quality 85, or re-encoded)
             yield (b"--frame\r\n" b"Content-Type: image/jpeg\r\n\r\n" + jpeg_data + b"\r\n")

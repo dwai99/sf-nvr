@@ -3,6 +3,7 @@
 import logging
 import os
 import cv2
+import numpy as np
 from pathlib import Path
 from typing import Optional, Callable
 from datetime import datetime, timedelta
@@ -56,6 +57,11 @@ class RTSPRecorder:
         # Cache last frame to avoid blank frames when queue is empty
         self.last_frame: Optional[bytes] = None  # Store JPEG bytes, not numpy array
         self.frame_lock = threading.Lock()
+        # Shared live-view render cache: viewers requesting the same
+        # (raw, quality, realtime) share one decode/resize/encode per source
+        # frame instead of each doing their own. Keyed by source-bytes identity.
+        self._live_cache: dict = {}
+        self._live_cache_lock = threading.Lock()
 
         # Motion tracking
         self.motion_event_start: Optional[datetime] = None
@@ -679,6 +685,70 @@ class RTSPRecorder:
             except queue.Empty:
                 # Return cached frame instead of None to avoid blank frames
                 return self.last_frame
+
+    def render_live_frame(self, raw, quality, realtime, overlay_fn=None, motion_boxes=None):
+        """Produce a JPEG for live view, shared across all viewers.
+
+        Frames are stored as quality-85 JPEG. When a viewer asks for a different
+        quality or the motion overlay, the processed result is cached per
+        (raw, quality, realtime) keyed by the source frame's identity, so N
+        simultaneous viewers cost one decode+encode instead of N. The heavy CPU
+        work (imdecode/resize/imencode) lives here so callers can offload it to a
+        thread and keep the event loop free.
+
+        overlay_fn/motion_boxes: optional precomputed motion overlay (full-res
+        boxes from the motion monitor); drawn before any downscale so the boxes
+        stay aligned with the image.
+        """
+        with self.frame_lock:
+            source = self.last_frame
+        if source is None:
+            return None
+
+        # Quality 85 is what we store; only reprocess when the request actually
+        # differs — overlay wanted, or a downscale for low quality.
+        needs_processing = (not raw) or (quality < 60 and not realtime)
+        if not needs_processing:
+            return source
+
+        key = (raw, quality, realtime)
+        with self._live_cache_lock:
+            cached = self._live_cache.get(key)
+            if cached is not None and cached[0] is source:
+                return cached[1]
+
+        frame = cv2.imdecode(np.frombuffer(source, np.uint8), cv2.IMREAD_COLOR)
+        if frame is None:
+            return source
+
+        # Motion overlay first (boxes are in full-resolution coords), so a later
+        # downscale keeps them aligned with the image.
+        if overlay_fn is not None and motion_boxes:
+            frame = overlay_fn(frame, motion_boxes)
+
+        # Downscale to 720p for low quality (skip in realtime for max speed).
+        if not realtime and quality < 60:
+            h, w = frame.shape[:2]
+            if w > 1280:
+                scale = 1280 / w
+                frame = cv2.resize(frame, (1280, int(h * scale)), interpolation=cv2.INTER_AREA)
+
+        encode_params = [
+            cv2.IMWRITE_JPEG_QUALITY,
+            quality,
+            cv2.IMWRITE_JPEG_OPTIMIZE,
+            0 if realtime else 1,
+            cv2.IMWRITE_JPEG_PROGRESSIVE,
+            0,
+        ]
+        ok, buffer = cv2.imencode(".jpg", frame, encode_params)
+        if not ok:
+            return source
+        rendered = buffer.tobytes()
+
+        with self._live_cache_lock:
+            self._live_cache[key] = (source, rendered)
+        return rendered
 
     def log_motion_event(self, intensity: float = 0.0) -> None:
         """Log a motion detection event to the database"""

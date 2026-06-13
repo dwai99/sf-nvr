@@ -24,12 +24,7 @@ class TestCameraManagement:
         recorder.camera_id = "cam_001"
         recorder.rtsp_url = "rtsp://192.168.1.100/stream"
         recorder.running = True
-        recorder.health = {
-            "status": "healthy",
-            "fps": 30.0,
-            "frame_count": 1000,
-            "error_count": 0
-        }
+        recorder.health = {"status": "healthy", "fps": 30.0, "frame_count": 1000, "error_count": 0}
         recorder.get_latest_frame.return_value = None
 
         # Verify expected fields
@@ -84,7 +79,7 @@ class TestCameraHealth:
             "fps": 30.0,
             "frame_count": 10000,
             "error_count": 0,
-            "last_frame_time": datetime.now().isoformat()
+            "last_frame_time": datetime.now().isoformat(),
         }
 
         assert health["status"] == "healthy"
@@ -98,7 +93,7 @@ class TestCameraHealth:
             "fps": 15.0,  # Lower than expected
             "frame_count": 5000,
             "error_count": 10,
-            "last_frame_time": (datetime.now() - timedelta(seconds=5)).isoformat()
+            "last_frame_time": (datetime.now() - timedelta(seconds=5)).isoformat(),
         }
 
         assert health["status"] == "degraded"
@@ -112,7 +107,7 @@ class TestCameraHealth:
             "fps": 0.0,
             "frame_count": 0,
             "error_count": 50,
-            "last_frame_time": (datetime.now() - timedelta(minutes=5)).isoformat()
+            "last_frame_time": (datetime.now() - timedelta(minutes=5)).isoformat(),
         }
 
         assert health["status"] == "offline"
@@ -124,7 +119,7 @@ class TestCameraHealth:
         cameras_health = [
             {"status": "healthy", "fps": 30.0},
             {"status": "healthy", "fps": 29.5},
-            {"status": "degraded", "fps": 15.0}
+            {"status": "degraded", "fps": 15.0},
         ]
 
         healthy_count = sum(1 for cam in cameras_health if cam["status"] == "healthy")
@@ -143,16 +138,8 @@ class TestONVIFDiscovery:
     def test_discover_cameras_success(self):
         """Test successful camera discovery result structure"""
         cameras = [
-            {
-                "name": "Camera 1",
-                "ip": "192.168.1.100",
-                "rtsp_url": "rtsp://192.168.1.100/stream"
-            },
-            {
-                "name": "Camera 2",
-                "ip": "192.168.1.101",
-                "rtsp_url": "rtsp://192.168.1.101/stream"
-            }
+            {"name": "Camera 1", "ip": "192.168.1.100", "rtsp_url": "rtsp://192.168.1.100/stream"},
+            {"name": "Camera 2", "ip": "192.168.1.101", "rtsp_url": "rtsp://192.168.1.101/stream"},
         ]
 
         assert len(cameras) == 2
@@ -167,9 +154,7 @@ class TestONVIFDiscovery:
 
     def test_discover_cameras_with_ip_range(self):
         """Test discovery result with specific IP range"""
-        cameras = [
-            {"name": "Camera", "ip": "10.0.0.50", "rtsp_url": "rtsp://10.0.0.50/stream"}
-        ]
+        cameras = [{"name": "Camera", "ip": "10.0.0.50", "rtsp_url": "rtsp://10.0.0.50/stream"}]
 
         assert len(cameras) == 1
         assert cameras[0]["ip"].startswith("10.0.0")
@@ -183,15 +168,15 @@ class TestStorageManagement:
         """Test storage statistics structure"""
         stats = {
             "total_space": 1024 * 1024 * 1024 * 1000,  # 1TB
-            "used_space": 1024 * 1024 * 1024 * 500,     # 500GB
-            "free_space": 1024 * 1024 * 1024 * 500,     # 500GB
+            "used_space": 1024 * 1024 * 1024 * 500,  # 500GB
+            "free_space": 1024 * 1024 * 1024 * 500,  # 500GB
             "percent_used": 50.0,
             "recordings": {
                 "total_files": 1000,
                 "total_size": 1024 * 1024 * 1024 * 450,  # 450GB
                 "oldest_recording": (datetime.now() - timedelta(days=30)).isoformat(),
-                "newest_recording": datetime.now().isoformat()
-            }
+                "newest_recording": datetime.now().isoformat(),
+            },
         }
 
         assert stats["percent_used"] == 50.0
@@ -200,10 +185,7 @@ class TestStorageManagement:
 
     def test_storage_critical_threshold(self):
         """Test storage critical threshold detection"""
-        stats = {
-            "percent_used": 95.0,
-            "free_space": 1024 * 1024 * 1024 * 50  # 50GB
-        }
+        stats = {"percent_used": 95.0, "free_space": 1024 * 1024 * 1024 * 50}  # 50GB
 
         is_critical = stats["percent_used"] > 90.0
 
@@ -211,10 +193,7 @@ class TestStorageManagement:
 
     def test_storage_healthy(self):
         """Test healthy storage levels"""
-        stats = {
-            "percent_used": 60.0,
-            "free_space": 1024 * 1024 * 1024 * 400  # 400GB
-        }
+        stats = {"percent_used": 60.0, "free_space": 1024 * 1024 * 1024 * 400}  # 400GB
 
         is_healthy = stats["percent_used"] < 85.0
 
@@ -234,7 +213,7 @@ class TestLiveStreaming:
         frame = np.zeros((480, 640, 3), dtype=np.uint8)
 
         # Encode as JPEG
-        ret, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 50])
+        ret, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 50])
 
         assert ret is True
         assert len(jpeg) > 0
@@ -249,10 +228,10 @@ class TestLiveStreaming:
         frame = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
 
         # High quality
-        _, jpeg_high = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+        _, jpeg_high = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
 
         # Low quality
-        _, jpeg_low = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 30])
+        _, jpeg_low = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 30])
 
         # High quality should be larger (for varied content)
         assert len(jpeg_high) >= len(jpeg_low)
@@ -268,8 +247,10 @@ class TestLiveStreaming:
         time.sleep(frame_delay)
         elapsed = time.time() - start
 
-        # Should sleep approximately 1/30 second
-        assert 0.03 <= elapsed <= 0.04
+        # Should sleep at least 1/30 second. No tight upper bound: time.sleep
+        # can overshoot arbitrarily under scheduler load, so asserting a ceiling
+        # makes this flaky (it intermittently measured ~0.041s).
+        assert elapsed >= frame_delay
 
 
 @pytest.mark.unit
@@ -287,7 +268,7 @@ class TestRecordingsAccess:
             "end_time": datetime(2026, 1, 20, 12, 5, 0).isoformat(),
             "duration": 300,
             "size": 10 * 1024 * 1024,  # 10MB
-            "path": str(temp_dir / "segment.mp4")
+            "path": str(temp_dir / "segment.mp4"),
         }
 
         assert recording["duration"] == 300
@@ -326,10 +307,7 @@ class TestWebSocketEvents:
             "type": "motion_detected",
             "camera": "Front Door",
             "timestamp": datetime.now().isoformat(),
-            "data": {
-                "intensity": 85.5,
-                "duration": 3.5
-            }
+            "data": {"intensity": 85.5, "duration": 3.5},
         }
 
         # Should be JSON serializable
@@ -346,7 +324,7 @@ class TestWebSocketEvents:
             {"type": "motion_detected", "camera": "Cam1"},
             {"type": "recording_started", "camera": "Cam2"},
             {"type": "camera_offline", "camera": "Cam3"},
-            {"type": "storage_warning", "level": "low"}
+            {"type": "storage_warning", "level": "low"},
         ]
 
         event_types = [e["type"] for e in events]
@@ -372,13 +350,7 @@ class TestAPIErrorHandling:
 
     def test_invalid_rtsp_url(self):
         """Test handling invalid RTSP URL"""
-        invalid_urls = [
-            "",
-            "not-a-url",
-            "http://wrong-protocol.com",
-            "rtsp://",
-            "rtsp:///no-host"
-        ]
+        invalid_urls = ["", "not-a-url", "http://wrong-protocol.com", "rtsp://", "rtsp:///no-host"]
 
         for url in invalid_urls:
             is_valid = url.startswith("rtsp://") and len(url) > 8
@@ -422,7 +394,7 @@ class TestSystemConfiguration:
             "cleanup_threshold": 85,
             "segment_duration": 300,
             "enable_motion_detection": True,
-            "alert_cooldown": 300
+            "alert_cooldown": 300,
         }
 
         assert config["retention_days"] == 30
@@ -432,11 +404,7 @@ class TestSystemConfiguration:
     def test_config_validation(self):
         """Test configuration validation"""
         # Valid config
-        valid_config = {
-            "retention_days": 7,
-            "cleanup_threshold": 80,
-            "segment_duration": 300
-        }
+        valid_config = {"retention_days": 7, "cleanup_threshold": 80, "segment_duration": 300}
 
         assert valid_config["retention_days"] >= 1
         assert 0 < valid_config["cleanup_threshold"] <= 100
@@ -464,7 +432,7 @@ class TestAlertSystem:
             alert_type=AlertType.CAMERA_OFFLINE,
             level=AlertLevel.WARNING,
             message="Camera offline",
-            camera_name="Front Door"
+            camera_name="Front Door",
         )
 
         assert alert.level == AlertLevel.WARNING
@@ -491,7 +459,7 @@ class TestAlertSystem:
             {"level": "info", "priority": 1},
             {"level": "warning", "priority": 2},
             {"level": "error", "priority": 3},
-            {"level": "critical", "priority": 4}
+            {"level": "critical", "priority": 4},
         ]
 
         sorted_alerts = sorted(alerts, key=lambda x: x["priority"], reverse=True)
@@ -510,7 +478,7 @@ class TestAPIUtilities:
         iso_format = now.isoformat()
 
         # Should be parseable back to datetime
-        parsed = datetime.fromisoformat(iso_format.replace('Z', '+00:00') if 'Z' in iso_format else iso_format)
+        parsed = datetime.fromisoformat(iso_format.replace("Z", "+00:00") if "Z" in iso_format else iso_format)
 
         assert parsed.year == now.year
         assert parsed.month == now.month
@@ -518,18 +486,14 @@ class TestAPIUtilities:
 
     def test_file_size_formatting(self):
         """Test human-readable file size formatting"""
-        sizes = {
-            1024: "1.0 KB",
-            1024 * 1024: "1.0 MB",
-            1024 * 1024 * 1024: "1.0 GB"
-        }
+        sizes = {1024: "1.0 KB", 1024 * 1024: "1.0 MB", 1024 * 1024 * 1024: "1.0 GB"}
 
         def format_size(size_bytes):
             if size_bytes < 1024:
                 return f"{size_bytes} B"
-            elif size_bytes < 1024 ** 2:
+            elif size_bytes < 1024**2:
                 return f"{size_bytes / 1024:.1f} KB"
-            elif size_bytes < 1024 ** 3:
+            elif size_bytes < 1024**3:
                 return f"{size_bytes / (1024 ** 2):.1f} MB"
             else:
                 return f"{size_bytes / (1024 ** 3):.1f} GB"
@@ -539,16 +503,18 @@ class TestAPIUtilities:
 
     def test_camera_name_sanitization(self):
         """Test camera name sanitization"""
+
         def sanitize_name(name):
             # Remove or replace invalid characters
             import re
-            return re.sub(r'[^\w\s-]', '_', name)
+
+            return re.sub(r"[^\w\s-]", "_", name)
 
         test_cases = {
             "Front Door": "Front Door",
             "Camera #1": "Camera _1",
             "Test/Camera": "Test_Camera",
-            "Caméra": "Caméra"  # Unicode may be preserved
+            "Caméra": "Caméra",  # Unicode may be preserved
         }
 
         for input_name, expected in test_cases.items():
@@ -597,10 +563,7 @@ class TestPerformanceOptimizations:
             return None
 
         # Add to cache
-        cache["test"] = {
-            "value": "data",
-            "timestamp": datetime.now().timestamp()
-        }
+        cache["test"] = {"value": "data", "timestamp": datetime.now().timestamp()}
 
         result = get_cached("test")
         assert result == "data"
@@ -612,40 +575,49 @@ class TestBasicAuthCheck:
 
     def _hdr(self, user, pwd):
         import base64
+
         token = base64.b64encode(f"{user}:{pwd}".encode()).decode()
         return f"Basic {token}"
 
     def test_correct_credentials(self):
         from nvr.web.api import _check_basic_auth
+
         assert _check_basic_auth(self._hdr("admin", "s3cret"), "admin", "s3cret") is True
 
     def test_wrong_password(self):
         from nvr.web.api import _check_basic_auth
+
         assert _check_basic_auth(self._hdr("admin", "nope"), "admin", "s3cret") is False
 
     def test_wrong_username(self):
         from nvr.web.api import _check_basic_auth
+
         assert _check_basic_auth(self._hdr("bob", "s3cret"), "admin", "s3cret") is False
 
     def test_missing_header(self):
         from nvr.web.api import _check_basic_auth
+
         assert _check_basic_auth("", "admin", "s3cret") is False
 
     def test_non_basic_scheme(self):
         from nvr.web.api import _check_basic_auth
+
         assert _check_basic_auth("Bearer abc", "admin", "s3cret") is False
 
     def test_malformed_base64(self):
         from nvr.web.api import _check_basic_auth
+
         assert _check_basic_auth("Basic !!!notbase64!!!", "admin", "s3cret") is False
 
     def test_no_colon_in_decoded(self):
         from nvr.web.api import _check_basic_auth
         import base64
+
         bad = "Basic " + base64.b64encode(b"adminnopassword").decode()
         assert _check_basic_auth(bad, "admin", "s3cret") is False
 
     def test_password_containing_colon(self):
         from nvr.web.api import _check_basic_auth
+
         # Password with a colon must still match (partition on first colon only)
         assert _check_basic_auth(self._hdr("admin", "pa:ss"), "admin", "pa:ss") is True

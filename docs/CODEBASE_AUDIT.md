@@ -17,9 +17,11 @@ Items are roughly prioritized. `[x]` = done, `[ ]` = open.
   pipe reads in `rtsp_proxy.py`. Also reap the MSE ffmpeg process (`kill()` → `wait()`).
 
 ## Performance — open
-- [ ] **MJPEG live path re-encodes per viewer on the loop** (`api.py` ~`/live`): decode→resize→
-  imencode runs on the event loop and re-runs motion detection per viewer. Offload to a thread and
-  cache one encode per (quality); reuse the motion monitor's latest result.
+- [x] **MJPEG live path re-encodes per viewer on the loop** (`api.py` `/live`): now offloaded to a
+  worker thread and shared via a per-recorder cache keyed by source-frame identity
+  (`recorder.render_live_frame`), so N viewers cost one decode/encode per frame. The overlay reuses
+  the motion monitor's latest boxes (`MotionDetector.get_last_motion`) instead of re-detecting per
+  viewer — which also removed the prev-frame shape-thrash bug.
 - [ ] **Recorder JPEG-encodes every frame 24/7** even with no live viewers (`recorder.py` `_record_frames`).
   Gate encoding on an actual consumer / throttle to ~10fps; drop the redundant `bytes(... .tobytes())` copy.
 - [ ] **SQLite connection churn** (`playback_db.py` `_get_connection`): opens a new connection and

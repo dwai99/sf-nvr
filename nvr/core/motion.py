@@ -49,6 +49,12 @@ class MotionDetector:
         self.motion_detected = False
         self.last_motion_time: Optional[datetime] = None
 
+        # Latest detection result, cached so the live-view overlay can reuse it
+        # instead of re-running detection per viewer. Boxes are in the processed
+        # frame's full-resolution pixel space.
+        self.last_boxes: List[Tuple[int, int, int, int]] = []
+        self.last_has_motion = False
+
         # Callbacks
         self.on_motion_start: Optional[Callable] = None
         self.on_motion_end: Optional[Callable] = None
@@ -148,7 +154,21 @@ class MotionDetector:
         if self.recorder and hasattr(self.recorder, "update_motion_state"):
             self.recorder.update_motion_state(self.motion_detected)
 
+        # Cache for the live-view overlay to reuse without reprocessing.
+        self.last_boxes = motion_boxes
+        self.last_has_motion = has_motion
+
         return has_motion, motion_boxes
+
+    def get_last_motion(self) -> Tuple[bool, List[Tuple[int, int, int, int]]]:
+        """Return the most recent (has_motion, boxes) without reprocessing.
+
+        Lets the live-view overlay reuse the motion monitor's latest result
+        instead of running detection again per viewer. Boxes are in the
+        full-resolution frame's pixel space.
+        """
+        with self._lock:
+            return self.last_has_motion, list(self.last_boxes)
 
     def _on_motion_started(self) -> None:
         """Called when motion starts"""
