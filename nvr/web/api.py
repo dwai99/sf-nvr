@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse, PlainTextResponse
 from fastapi import Request
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import cv2
 import asyncio
 from datetime import datetime
@@ -103,6 +103,42 @@ webrtc_passthrough: WebRTCPassthroughManager = None
 rtsp_proxy: RTSPProxy = None
 mse_proxy: MSEStreamProxy = None
 sd_card_manager = None
+
+
+def _derive_substream_url(url: str) -> Optional[str]:
+    """Derive a camera's low-res sub-stream RTSP URL from its main-stream URL.
+
+    Covers the common Night Owl / cheap-NVR scheme `chN_0.264` (main) ->
+    `chN_1.264` (sub). Returns None if the pattern isn't recognized.
+    """
+    import re
+
+    m = re.search(r"(ch\d+_)0(\.264)", url)
+    if m:
+        return url[: m.start()] + m.group(1) + "1" + m.group(2) + url[m.end() :]
+    return None
+
+
+def get_recording_url(camera: dict) -> str:
+    """RTSP URL to RECORD from. Prefer the sub-stream when enabled: pulling the
+    full-res main stream from many cameras at once saturates the network (a
+    single 4K stream is fine, but 7 together starve each other to a few fps).
+    The sub-stream is low-bandwidth and sustains full frame rate.
+
+    Per-camera `substream_url` (explicit) wins; otherwise the sub-stream is
+    auto-derived. Enabled via per-camera `record_substream` or global
+    `recording.use_substream`.
+    """
+    main = camera["rtsp_url"]
+    use_sub = camera.get("record_substream", config.get("recording.use_substream", False))
+    if not use_sub:
+        return main
+    sub = camera.get("substream_url") or _derive_substream_url(main)
+    if sub:
+        logger.info(f"Recording {camera.get('name')} from sub-stream for reliable frame rate")
+        return sub
+    logger.warning(f"Sub-stream recording enabled for {camera.get('name')} but no sub-stream URL could be resolved")
+    return main
 
 
 @app.on_event("startup")
@@ -387,7 +423,7 @@ async def startup_event():
     for camera in cameras:
         camera_name = camera["name"]
         camera_id = camera.get("id", camera_name)  # Fallback to name if no ID
-        rtsp_url = camera["rtsp_url"]
+        rtsp_url = get_recording_url(camera)
         camera_enabled = camera.get("enabled", True)
 
         # Add camera to recorder manager
