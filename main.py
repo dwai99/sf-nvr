@@ -13,6 +13,7 @@ os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|timeout;600000
 os.environ["OPENCV_LOG_LEVEL"] = "ERROR"
 os.environ["OPENCV_VIDEOIO_DEBUG"] = "0"
 
+import json
 import logging
 import logging.handlers
 import sys
@@ -22,9 +23,27 @@ import uvicorn
 import yaml
 
 
+class JsonLogFormatter(logging.Formatter):
+    """One JSON object per log line, so logs can be shipped/queried structured.
+
+    Enabled via `logging.json: true` in config.yaml.
+    """
+
+    def format(self, record):
+        payload = {
+            "time": self.formatTime(record),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        if record.exc_info:
+            payload["exc_info"] = self.formatException(record.exc_info)
+        return json.dumps(payload)
+
+
 def load_log_config() -> dict:
     """Load logging configuration from config file before full config module"""
-    defaults = {"file": "./logs/nvr.log", "level": "INFO", "max_size_mb": 10, "backup_count": 5}
+    defaults = {"file": "./logs/nvr.log", "level": "INFO", "max_size_mb": 10, "backup_count": 5, "json": False}
 
     config_path = Path("config/config.yaml")
     if config_path.exists():
@@ -38,6 +57,7 @@ def load_log_config() -> dict:
                         "level": log_config.get("level", defaults["level"]),
                         "max_size_mb": log_config.get("max_size_mb", defaults["max_size_mb"]),
                         "backup_count": log_config.get("backup_count", defaults["backup_count"]),
+                        "json": log_config.get("json", defaults["json"]),
                     }
         except Exception:
             pass  # Use defaults if config can't be read
@@ -52,8 +72,11 @@ log_config = load_log_config()
 log_path = Path(log_config["file"])
 log_path.parent.mkdir(parents=True, exist_ok=True)
 
-# Setup logging with rotation
-log_formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+# Setup logging with rotation. JSON output is opt-in via logging.json in config.
+if log_config.get("json"):
+    log_formatter = JsonLogFormatter()
+else:
+    log_formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
 # Rotating file handler
 file_handler = logging.handlers.RotatingFileHandler(
