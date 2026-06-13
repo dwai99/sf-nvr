@@ -20,6 +20,8 @@ def run_maintenance(playback_db):
         "incomplete_segments_cleaned": 0,
         "segments_repaired": 0,
         "database_optimized": False,
+        "orphan_files_found": 0,
+        "orphan_files_deleted": 0,
     }
 
     logger.info("Starting database maintenance...")
@@ -59,6 +61,26 @@ def run_maintenance(playback_db):
         logger.info(f"Cleaned up {cleaned} old incomplete segments")
     except Exception as e:
         logger.error(f"Error cleaning up incomplete segments: {e}")
+
+    # 2b. Reclaim on-disk recordings that have no DB row (files taking up space
+    # that the app never references). Dry-run by default — it just reports the
+    # count/size unless storage.orphan_cleanup_enabled is set. Only runs when
+    # storage is mounted (an unmount would make every file look orphaned).
+    try:
+        from nvr.core.config import config
+
+        if config.is_storage_writable():
+            enabled = config.get("storage.orphan_cleanup_enabled", False)
+            min_age_hours = config.get("storage.orphan_min_age_hours", 1)
+            orphan_result = playback_db.cleanup_orphaned_files(
+                config.storage_path,
+                dry_run=not enabled,
+                min_age_seconds=int(min_age_hours * 3600),
+            )
+            results["orphan_files_found"] = orphan_result["orphan_count"]
+            results["orphan_files_deleted"] = orphan_result["deleted_count"]
+    except Exception as e:
+        logger.error(f"Error scanning for orphaned files: {e}")
 
     # 3. Optimize database
     try:

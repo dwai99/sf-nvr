@@ -1421,6 +1421,42 @@ async def run_manual_cleanup():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/storage/orphans")
+async def get_orphaned_files(delete: bool = False):
+    """Report on-disk recordings that have no database row (untracked, wasting space).
+
+    Read-only by default: lists candidate files and their total size, deleting
+    nothing. Pass ?delete=true to actually remove them — honored only if
+    storage.orphan_cleanup_enabled is set in config, and never while storage is
+    unmounted.
+    """
+    if not playback_db:
+        raise HTTPException(status_code=503, detail="Playback database not initialized")
+    try:
+        if not config.is_storage_writable():
+            raise HTTPException(status_code=409, detail="Storage not writable/mounted")
+
+        enabled = config.get("storage.orphan_cleanup_enabled", False)
+        min_age_hours = config.get("storage.orphan_min_age_hours", 1)
+        do_delete = delete and enabled
+
+        report = await asyncio.to_thread(
+            playback_db.cleanup_orphaned_files,
+            config.storage_path,
+            not do_delete,  # dry_run
+            int(min_age_hours * 3600),
+        )
+        report["deletion_enabled"] = enabled
+        if delete and not enabled:
+            report["note"] = "Deletion requested but storage.orphan_cleanup_enabled is false; ran as dry-run."
+        return report
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error scanning orphaned files: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/storage/deletion-history")
 async def get_deletion_history(limit: int = 100, camera: str = None):
     """Get history of deleted recordings"""

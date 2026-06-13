@@ -773,6 +773,111 @@ class PlaybackDatabase:
 
         return deleted_count
 
+    def find_orphaned_files(self, storage_path: Path, min_age_seconds: int = 3600) -> List[tuple]:
+        """Find on-disk recording files (.mp4) that have NO recording_segments row.
+
+        These are files taking up space that the app never references. The check
+        is deliberately conservative to avoid ever flagging a live recording:
+
+          - skips files modified within min_age_seconds (may be actively writing,
+            or have a DB insert still pending),
+          - skips hidden/cache dirs (.transcoded/.speed_cache/.timelapse/...),
+          - keeps '_h264' transcode variants whose base file IS tracked (a
+            transient or replace_original=False artifact, not a leak),
+          - matches by resolved absolute path.
+
+        Returns a list of (Path, size_bytes), oldest first.
+        """
+        storage_path = Path(storage_path)
+
+        known = set()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT file_path FROM recording_segments")
+            for row in cursor.fetchall():
+                try:
+                    known.add(str(Path(row["file_path"]).resolve()))
+                except OSError:
+                    known.add(row["file_path"])
+
+        cutoff = time.time() - min_age_seconds
+        orphans = []
+        for path in storage_path.rglob("*.mp4"):
+            # Skip anything under a hidden/cache directory.
+            try:
+                rel_parts = path.relative_to(storage_path).parts
+            except ValueError:
+                continue
+            if any(part.startswith(".") for part in rel_parts):
+                continue
+            try:
+                st = path.stat()
+            except OSError:
+                continue
+            if st.st_mtime > cutoff:
+                continue  # too new — may be writing or its DB row is pending
+            try:
+                resolved = str(path.resolve())
+            except OSError:
+                resolved = str(path)
+            if resolved in known:
+                continue
+            # Spare '_h264' transcode variants whose base recording is tracked.
+            if path.stem.endswith("_h264"):
+                base = path.with_name(path.stem[: -len("_h264")] + path.suffix)
+                try:
+                    if str(base.resolve()) in known:
+                        continue
+                except OSError:
+                    pass
+            orphans.append((path, st.st_size, st.st_mtime))
+
+        orphans.sort(key=lambda x: x[2])  # oldest first
+        return [(p, sz) for p, sz, _ in orphans]
+
+    def cleanup_orphaned_files(self, storage_path: Path, dry_run: bool = True, min_age_seconds: int = 3600) -> Dict:
+        """Delete on-disk recordings that have no DB row.
+
+        Dry-run by DEFAULT: it logs what it WOULD delete and returns the report
+        without removing anything. Pass dry_run=False to actually delete. This
+        deletes recordings, so callers should gate real deletion behind explicit
+        config and confirm storage is mounted first.
+        """
+        orphans = self.find_orphaned_files(storage_path, min_age_seconds=min_age_seconds)
+        total_bytes = sum(sz for _, sz in orphans)
+        result = {
+            "orphan_count": len(orphans),
+            "orphan_bytes": total_bytes,
+            "deleted_count": 0,
+            "deleted_bytes": 0,
+            "dry_run": dry_run,
+            "files": [{"path": str(p), "size_bytes": sz} for p, sz in orphans[:200]],
+        }
+
+        if not orphans:
+            return result
+
+        if dry_run:
+            logger.info(
+                f"[orphan-scan] {len(orphans)} untracked file(s), {total_bytes / (1024**3):.2f}GB "
+                f"(dry-run — nothing deleted). Enable storage.orphan_cleanup_enabled to reclaim."
+            )
+            return result
+
+        deleted = 0
+        freed = 0
+        for path, size in orphans:
+            try:
+                path.unlink()
+                deleted += 1
+                freed += size
+            except OSError as e:
+                logger.warning(f"[orphan-cleanup] could not delete {path}: {e}")
+        result["deleted_count"] = deleted
+        result["deleted_bytes"] = freed
+        logger.info(f"[orphan-cleanup] deleted {deleted} untracked file(s), freed {freed / (1024**3):.2f}GB")
+        return result
+
     @staticmethod
     def _ffprobe_duration(file_path) -> Optional[float]:
         """Return a video file's duration in seconds via ffprobe, or None if it
