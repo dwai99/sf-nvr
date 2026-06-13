@@ -2761,10 +2761,14 @@
         }
 
         function updateTimelinePosition(percent) {
+            // Clamp so the handle/progress never leave the track. (A negative
+            // width is silently rejected by the browser while a negative left is
+            // honored, which previously let the handle fly off-screen.)
+            const clamped = Math.max(0, Math.min(100, percent));
             const progress = document.getElementById('timeline-progress');
             const handle = document.getElementById('timeline-handle');
-            progress.style.width = percent + '%';
-            handle.style.left = percent + '%';
+            progress.style.width = clamped + '%';
+            handle.style.left = clamped + '%';
         }
 
         function showTooltip(event) {
@@ -3540,7 +3544,7 @@
         // Initialize on load
         init();
 
-        // Update timeline and current time display
+        // Update timeline and current time display as the video plays.
         setInterval(() => {
             if (Object.keys(videoElements).length === 0) return;
 
@@ -3570,19 +3574,27 @@
 
                         if (rangeMs > 0) {
                             const percent = ((currentTimestampMs - startMs) / rangeMs) * 100;
-                            updateTimelinePosition(percent);
 
-                            // Update playbackState.currentTime as offset from timeline start
-                            playbackState.currentTime = (currentTimestampMs - startMs) / 1000;
+                            // Only advance the handle when the playing video maps
+                            // INSIDE the visible range. Right after a seek the video
+                            // src is briefly stale (old segment), which yields an
+                            // out-of-range value; applying it would yank the handle
+                            // off the track and undo a click-to-seek the user just did.
+                            if (percent >= 0 && percent <= 100) {
+                                updateTimelinePosition(percent);
 
-                            // Update timestamp display (actual recording time)
-                            const currentDate = new Date(currentTimestampMs);
-                            document.getElementById('timestamp-display').textContent =
-                                currentDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+                                // Update playbackState.currentTime as offset from timeline start
+                                playbackState.currentTime = (currentTimestampMs - startMs) / 1000;
 
-                            // Update elapsed time display (time since start of selected range)
-                            const elapsedSeconds = (currentTimestampMs - startMs) / 1000;
-                            document.getElementById('current-time-display').textContent = formatDuration(elapsedSeconds);
+                                // Update timestamp display (actual recording time)
+                                const currentDate = new Date(currentTimestampMs);
+                                document.getElementById('timestamp-display').textContent =
+                                    currentDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+
+                                // Update elapsed time display (time since start of selected range)
+                                const elapsedSeconds = (currentTimestampMs - startMs) / 1000;
+                                document.getElementById('current-time-display').textContent = formatDuration(elapsedSeconds);
+                            }
                         }
                     }
                 } else {
