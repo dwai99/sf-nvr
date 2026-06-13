@@ -4,6 +4,7 @@ import sqlite3
 import subprocess
 import logging
 import threading
+import time
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
@@ -22,6 +23,9 @@ class PlaybackDatabase:
         # share across threads, but the recorder writes from camera threads while
         # playback reads from the event loop — so each gets its own.
         self._local = threading.local()
+        # (time, value) cache for get_storage_stats — the UI polls it and each
+        # call is two full-table scans.
+        self._storage_stats_cache = None
         self._init_database()
 
     def _connect(self) -> sqlite3.Connection:
@@ -699,8 +703,19 @@ class PlaybackDatabase:
             rows = cursor.fetchall()
             return [row["record_date"] for row in rows]
 
+    _STORAGE_STATS_TTL = 30.0  # seconds
+
     def get_storage_stats(self) -> Dict:
-        """Get storage statistics"""
+        """Get storage statistics.
+
+        Cached for a few seconds: the UI polls this and each call is two
+        full-table scans of recording_segments, which change only every few
+        minutes as segments are written.
+        """
+        cached = self._storage_stats_cache
+        if cached is not None and (time.monotonic() - cached[0]) < self._STORAGE_STATS_TTL:
+            return cached[1]
+
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
@@ -734,7 +749,10 @@ class PlaybackDatabase:
 
             overall = dict(cursor.fetchone())
 
-            return {"cameras": cameras, "overall": overall}
+            result = {"cameras": cameras, "overall": overall}
+
+        self._storage_stats_cache = (time.monotonic(), result)
+        return result
 
     def cleanup_deleted_files(self, storage_path: Path) -> int:
         """Remove database entries for files that no longer exist"""
