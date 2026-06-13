@@ -33,14 +33,16 @@ class TestPlaybackDatabaseInit:
         # Query to check if tables exist
         with playback_db._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT name FROM sqlite_master
                 WHERE type='table' AND name IN ('recording_segments', 'motion_events')
-            """)
+            """
+            )
             tables = [row[0] for row in cursor.fetchall()]
 
-        assert 'recording_segments' in tables
-        assert 'motion_events' in tables
+        assert "recording_segments" in tables
+        assert "motion_events" in tables
 
 
 @pytest.mark.unit
@@ -57,7 +59,7 @@ class TestSegmentOperations:
             file_path="/recordings/test_camera/20260120_120000.mp4",
             start_time=start_time,
             end_time=end_time,
-            duration_seconds=300
+            duration_seconds=300,
         )
 
         assert segment_id > 0
@@ -75,7 +77,7 @@ class TestSegmentOperations:
             file_size_bytes=10 * 1024 * 1024,  # 10 MB
             fps=30.0,
             width=1920,
-            height=1080
+            height=1080,
         )
 
         assert segment_id > 0
@@ -86,9 +88,7 @@ class TestSegmentOperations:
 
         # Add segment without end time
         playback_db.add_segment(
-            camera_id="test_camera",
-            file_path="/recordings/test_camera/20260120_120000.mp4",
-            start_time=start_time
+            camera_id="test_camera", file_path="/recordings/test_camera/20260120_120000.mp4", start_time=start_time
         )
 
         # Update end time
@@ -98,26 +98,22 @@ class TestSegmentOperations:
             file_path="/recordings/test_camera/20260120_120000.mp4",
             end_time=end_time,
             duration_seconds=300,
-            file_size_bytes=10 * 1024 * 1024
+            file_size_bytes=10 * 1024 * 1024,
         )
 
         # Verify update succeeded by querying the segment
         segments = playback_db.get_segments_in_range(
-            camera_id="test_camera",
-            start_time=start_time,
-            end_time=end_time + timedelta(minutes=1)
+            camera_id="test_camera", start_time=start_time, end_time=end_time + timedelta(minutes=1)
         )
         assert len(segments) == 1
-        assert segments[0]['end_time'] is not None
+        assert segments[0]["end_time"] is not None
 
     def test_delete_segment_by_path(self, playback_db):
         """Test deleting segment by camera and filename"""
         start_time = datetime(2026, 1, 20, 12, 0, 0)
 
         playback_db.add_segment(
-            camera_id="test_camera",
-            file_path="/recordings/test_camera/20260120_120000.mp4",
-            start_time=start_time
+            camera_id="test_camera", file_path="/recordings/test_camera/20260120_120000.mp4", start_time=start_time
         )
 
         # Delete segment
@@ -145,7 +141,7 @@ class TestSegmentQueries:
                 file_path=f"/recordings/test_camera/segment_{i}.mp4",
                 start_time=start,
                 end_time=start + timedelta(minutes=5),
-                duration_seconds=300
+                duration_seconds=300,
             )
 
         # Query for segments in middle of range
@@ -153,9 +149,7 @@ class TestSegmentQueries:
         query_end = base_time + timedelta(minutes=15)
 
         segments = playback_db.get_segments_in_range(
-            camera_id="test_camera",
-            start_time=query_start,
-            end_time=query_end
+            camera_id="test_camera", start_time=query_start, end_time=query_end
         )
 
         # Should get 2-3 segments that overlap with query range
@@ -177,7 +171,7 @@ class TestSegmentQueries:
                 file_path=f"/recordings/test_camera/{date.strftime('%Y%m%d')}.mp4",
                 start_time=date,
                 end_time=date + timedelta(hours=1),
-                duration_seconds=3600
+                duration_seconds=3600,
             )
 
         # Get recording days
@@ -199,7 +193,7 @@ class TestSegmentQueries:
                 file_path=f"/recordings/test_camera/segment_{i}.mp4",
                 start_time=start,
                 end_time=start + timedelta(minutes=5),
-                duration_seconds=300
+                duration_seconds=300,
             )
 
         # Get all segments
@@ -208,7 +202,7 @@ class TestSegmentQueries:
         assert len(segments) == 5
         # Should be ordered by start_time
         for i in range(len(segments) - 1):
-            assert segments[i]['start_time'] <= segments[i + 1]['start_time']
+            assert segments[i]["start_time"] <= segments[i + 1]["start_time"]
 
     def test_get_all_segments_in_range(self, playback_db):
         """Test getting segments for all cameras in time range"""
@@ -223,14 +217,11 @@ class TestSegmentQueries:
                     file_path=f"/recordings/camera_{camera_num}/segment_{i}.mp4",
                     start_time=start,
                     end_time=start + timedelta(minutes=5),
-                    duration_seconds=300
+                    duration_seconds=300,
                 )
 
         # Get segments for all cameras
-        result = playback_db.get_all_segments_in_range(
-            start_time=base_time,
-            end_time=base_time + timedelta(hours=1)
-        )
+        result = playback_db.get_all_segments_in_range(start_time=base_time, end_time=base_time + timedelta(hours=1))
 
         # Should have data for 3 cameras
         assert len(result) == 3
@@ -251,11 +242,7 @@ class TestMotionEvents:
         """Test adding a motion event"""
         event_time = datetime(2026, 1, 20, 12, 30, 45)
 
-        event_id = playback_db.add_motion_event(
-            camera_id="test_camera",
-            event_time=event_time,
-            intensity=75
-        )
+        event_id = playback_db.add_motion_event(camera_id="test_camera", event_time=event_time, intensity=75)
 
         assert event_id > 0
 
@@ -266,26 +253,20 @@ class TestMotionEvents:
         # Add multiple motion events
         for i in range(10):
             event_time = base_time + timedelta(minutes=i * 3)
-            playback_db.add_motion_event(
-                camera_id="test_camera",
-                event_time=event_time,
-                intensity=50 + i * 5
-            )
+            playback_db.add_motion_event(camera_id="test_camera", event_time=event_time, intensity=50 + i * 5)
 
         # Query for events in middle of range
         query_start = base_time + timedelta(minutes=10)
         query_end = base_time + timedelta(minutes=20)
 
         events = playback_db.get_motion_events_in_range(
-            camera_id="test_camera",
-            start_time=query_start,
-            end_time=query_end
+            camera_id="test_camera", start_time=query_start, end_time=query_end
         )
 
         # Should get events that fall within range
         assert len(events) >= 3
-        assert all('event_time' in e for e in events)
-        assert all('intensity' in e for e in events)
+        assert all("event_time" in e for e in events)
+        assert all("intensity" in e for e in events)
 
     def test_motion_event_intensity_range(self, playback_db):
         """Test that motion intensity values are stored correctly"""
@@ -296,20 +277,18 @@ class TestMotionEvents:
 
         for intensity in intensities:
             playback_db.add_motion_event(
-                camera_id="test_camera",
-                event_time=event_time + timedelta(seconds=intensity),
-                intensity=intensity
+                camera_id="test_camera", event_time=event_time + timedelta(seconds=intensity), intensity=intensity
             )
 
         # Query all events
         events = playback_db.get_motion_events_in_range(
             camera_id="test_camera",
             start_time=event_time - timedelta(minutes=1),
-            end_time=event_time + timedelta(minutes=5)
+            end_time=event_time + timedelta(minutes=5),
         )
 
         # Verify intensities
-        event_intensities = [e['intensity'] for e in events]
+        event_intensities = [e["intensity"] for e in events]
         assert 0 in event_intensities
         assert 50 in event_intensities
         assert 100 in event_intensities
@@ -334,7 +313,7 @@ class TestDatabaseMaintenance:
             file_path=str(existing_file),
             start_time=datetime(2026, 1, 20, 12, 0, 0),
             end_time=datetime(2026, 1, 20, 12, 5, 0),
-            duration_seconds=300
+            duration_seconds=300,
         )
 
         playback_db.add_segment(
@@ -342,7 +321,7 @@ class TestDatabaseMaintenance:
             file_path=str(recordings_path / "missing.mp4"),
             start_time=datetime(2026, 1, 20, 13, 0, 0),
             end_time=datetime(2026, 1, 20, 13, 5, 0),
-            duration_seconds=300
+            duration_seconds=300,
         )
 
         # Run cleanup
@@ -358,16 +337,12 @@ class TestDatabaseMaintenance:
 
         # Add old incomplete segment (no end_time)
         playback_db.add_segment(
-            camera_id="test_camera",
-            file_path="/recordings/test_camera/old_incomplete.mp4",
-            start_time=old_time
+            camera_id="test_camera", file_path="/recordings/test_camera/old_incomplete.mp4", start_time=old_time
         )
 
         # Add recent incomplete segment
         playback_db.add_segment(
-            camera_id="test_camera",
-            file_path="/recordings/test_camera/recent_incomplete.mp4",
-            start_time=recent_time
+            camera_id="test_camera", file_path="/recordings/test_camera/recent_incomplete.mp4", start_time=recent_time
         )
 
         # Add completed segment
@@ -376,7 +351,7 @@ class TestDatabaseMaintenance:
             file_path="/recordings/test_camera/completed.mp4",
             start_time=old_time,
             end_time=old_time + timedelta(minutes=5),
-            duration_seconds=300
+            duration_seconds=300,
         )
 
         # Cleanup segments older than 24 hours
@@ -394,7 +369,7 @@ class TestDatabaseMaintenance:
                 file_path=f"/recordings/test_camera/segment_{i}.mp4",
                 start_time=datetime(2026, 1, 20) + timedelta(minutes=i * 5),
                 end_time=datetime(2026, 1, 20) + timedelta(minutes=i * 5 + 5),
-                duration_seconds=300
+                duration_seconds=300,
             )
 
         # Optimize database - should not raise exception
@@ -413,9 +388,7 @@ class TestDatabaseEdgeCases:
         future_time = datetime.now() + timedelta(days=1)
 
         segment_id = playback_db.add_segment(
-            camera_id="test_camera",
-            file_path="/recordings/test_camera/future.mp4",
-            start_time=future_time
+            camera_id="test_camera", file_path="/recordings/test_camera/future.mp4", start_time=future_time
         )
 
         # Should still work
@@ -426,9 +399,7 @@ class TestDatabaseEdgeCases:
         long_path = "/recordings/" + ("a" * 500) + "/test.mp4"
 
         segment_id = playback_db.add_segment(
-            camera_id="test_camera",
-            file_path=long_path,
-            start_time=datetime(2026, 1, 20, 12, 0, 0)
+            camera_id="test_camera", file_path=long_path, start_time=datetime(2026, 1, 20, 12, 0, 0)
         )
 
         assert segment_id > 0
@@ -436,9 +407,7 @@ class TestDatabaseEdgeCases:
     def test_motion_event_with_zero_intensity(self, playback_db):
         """Test motion event with zero intensity"""
         event_id = playback_db.add_motion_event(
-            camera_id="test_camera",
-            event_time=datetime(2026, 1, 20, 12, 0, 0),
-            intensity=0
+            camera_id="test_camera", event_time=datetime(2026, 1, 20, 12, 0, 0), intensity=0
         )
 
         assert event_id > 0
@@ -448,7 +417,7 @@ class TestDatabaseEdgeCases:
         segments = playback_db.get_segments_in_range(
             camera_id="test_camera",
             start_time=datetime(2026, 1, 20, 12, 0, 0),
-            end_time=datetime(2026, 1, 20, 13, 0, 0)
+            end_time=datetime(2026, 1, 20, 13, 0, 0),
         )
 
         assert segments == []
@@ -457,16 +426,12 @@ class TestDatabaseEdgeCases:
         """Test query for camera that doesn't exist"""
         # Add segment for one camera
         playback_db.add_segment(
-            camera_id="camera_1",
-            file_path="/recordings/camera_1/test.mp4",
-            start_time=datetime(2026, 1, 20, 12, 0, 0)
+            camera_id="camera_1", file_path="/recordings/camera_1/test.mp4", start_time=datetime(2026, 1, 20, 12, 0, 0)
         )
 
         # Query for different camera
         segments = playback_db.get_segments_in_range(
-            camera_id="camera_2",
-            start_time=datetime(2026, 1, 20, 12, 0, 0),
-            end_time=datetime(2026, 1, 20, 13, 0, 0)
+            camera_id="camera_2", start_time=datetime(2026, 1, 20, 12, 0, 0), end_time=datetime(2026, 1, 20, 13, 0, 0)
         )
 
         assert segments == []
@@ -481,7 +446,7 @@ class TestDatabaseEdgeCases:
             file_path="/recordings/test_camera/segment1.mp4",
             start_time=base_time,
             end_time=base_time + timedelta(minutes=10),
-            duration_seconds=600
+            duration_seconds=600,
         )
 
         playback_db.add_segment(
@@ -489,14 +454,12 @@ class TestDatabaseEdgeCases:
             file_path="/recordings/test_camera/segment2.mp4",
             start_time=base_time + timedelta(minutes=5),
             end_time=base_time + timedelta(minutes=15),
-            duration_seconds=600
+            duration_seconds=600,
         )
 
         # Query should return both
         segments = playback_db.get_segments_in_range(
-            camera_id="test_camera",
-            start_time=base_time,
-            end_time=base_time + timedelta(minutes=15)
+            camera_id="test_camera", start_time=base_time, end_time=base_time + timedelta(minutes=15)
         )
 
         assert len(segments) == 2
@@ -510,10 +473,10 @@ class TestStorageStatistics:
         """Test storage stats with no data"""
         stats = playback_db.get_storage_stats()
 
-        assert 'cameras' in stats
-        assert 'overall' in stats
-        assert isinstance(stats['cameras'], dict)
-        assert len(stats['cameras']) == 0
+        assert "cameras" in stats
+        assert "overall" in stats
+        assert isinstance(stats["cameras"], dict)
+        assert len(stats["cameras"]) == 0
 
     def test_get_storage_stats_with_data(self, playback_db):
         """Test storage stats with multiple cameras"""
@@ -529,25 +492,25 @@ class TestStorageStatistics:
                     start_time=start,
                     end_time=start + timedelta(minutes=5),
                     duration_seconds=300,
-                    file_size_bytes=10 * 1024 * 1024  # 10 MB
+                    file_size_bytes=10 * 1024 * 1024,  # 10 MB
                 )
 
         stats = playback_db.get_storage_stats()
 
         # Check cameras stats
-        assert len(stats['cameras']) == 3
-        assert 'camera_1' in stats['cameras']
-        assert 'camera_2' in stats['cameras']
-        assert 'camera_3' in stats['cameras']
+        assert len(stats["cameras"]) == 3
+        assert "camera_1" in stats["cameras"]
+        assert "camera_2" in stats["cameras"]
+        assert "camera_3" in stats["cameras"]
 
         # Each camera should have correct count
-        for camera_name, camera_stats in stats['cameras'].items():
-            assert camera_stats['segment_count'] == 5
-            assert camera_stats['total_bytes'] == 5 * 10 * 1024 * 1024  # 5 segments × 10 MB
+        for camera_name, camera_stats in stats["cameras"].items():
+            assert camera_stats["segment_count"] == 5
+            assert camera_stats["total_bytes"] == 5 * 10 * 1024 * 1024  # 5 segments × 10 MB
 
         # Check overall stats
-        assert stats['overall']['total_segments'] == 15  # 3 cameras × 5 segments
-        assert stats['overall']['total_bytes'] == 15 * 10 * 1024 * 1024  # 150 MB total
+        assert stats["overall"]["total_segments"] == 15  # 3 cameras × 5 segments
+        assert stats["overall"]["total_bytes"] == 15 * 10 * 1024 * 1024  # 150 MB total
 
 
 @pytest.mark.unit
@@ -571,7 +534,7 @@ class TestDatabaseMaintenanceExtended:
                 file_path=str(file_path),
                 start_time=datetime(2026, 1, 20, 12, i, 0),
                 end_time=datetime(2026, 1, 20, 12, i + 5, 0),
-                duration_seconds=300
+                duration_seconds=300,
             )
 
         # Run cleanup - should find 0 orphans
@@ -591,24 +554,23 @@ class TestDatabaseMaintenanceExtended:
         playback_db.add_segment(
             camera_id="test_camera",
             file_path=str(file_path),
-            start_time=old_time
+            start_time=old_time,
             # No end_time - incomplete!
         )
 
         # Verify segment is incomplete
         segments_before = playback_db.get_all_segments("test_camera")
         assert len(segments_before) == 1
-        assert segments_before[0]['end_time'] is None
+        assert segments_before[0]["end_time"] is None
 
-        # Run cleanup - should finalize the segment
+        # Run cleanup. The dummy file isn't a real video, so ffprobe can't read a
+        # duration; the unplayable segment's row is dropped rather than finalized
+        # with a fabricated size-based duration (the old behavior).
         cleaned = playback_db.cleanup_old_incomplete_segments(hours_threshold=24)
 
-        # Segment should still exist but now be finalized
+        assert cleaned == 1
         segments_after = playback_db.get_all_segments("test_camera")
-        assert len(segments_after) == 1
-        # Should now have end_time estimated (or segment deleted if finalization failed)
-        # Just verify the cleanup ran without error
-        assert cleaned >= 0
+        assert len(segments_after) == 0
 
     def test_cleanup_old_incomplete_segments_removes_missing(self, playback_db, temp_dir):
         """Test that incomplete segments without files are removed"""
@@ -620,7 +582,7 @@ class TestDatabaseMaintenanceExtended:
         playback_db.add_segment(
             camera_id="test_camera",
             file_path=str(recordings_path / "missing.mp4"),  # File doesn't exist
-            start_time=old_time
+            start_time=old_time,
             # No end_time - incomplete!
         )
 
@@ -646,7 +608,7 @@ class TestDatabaseMaintenanceExtended:
         playback_db.add_segment(
             camera_id="test_camera",
             file_path=str(recordings_path / "current.mp4"),
-            start_time=recent_time
+            start_time=recent_time,
             # No end_time - currently recording!
         )
 
@@ -666,7 +628,7 @@ class TestDatabaseMaintenanceExtended:
             file_path="/recordings/test_camera/complete.mp4",
             start_time=base_time,
             end_time=base_time + timedelta(minutes=5),  # Has end_time - complete
-            duration_seconds=300
+            duration_seconds=300,
         )
 
         # Run cleanup - should find nothing to clean
@@ -678,11 +640,11 @@ class TestDatabaseMaintenanceExtended:
         from unittest.mock import patch, MagicMock
 
         # Create directory structure
-        recordings_path = temp_dir / 'recordings' / 'test_camera'
+        recordings_path = temp_dir / "recordings" / "test_camera"
         recordings_path.mkdir(parents=True, exist_ok=True)
 
         # Create an actual file
-        file_path = recordings_path / 'incomplete.mp4'
+        file_path = recordings_path / "incomplete.mp4"
         create_test_video_file(file_path, size_mb=5)
 
         # Add incomplete segment (no end_time)
@@ -692,7 +654,7 @@ class TestDatabaseMaintenanceExtended:
             file_path=str(file_path),
             start_time=old_time,
             end_time=None,  # Incomplete - no end_time
-            duration_seconds=None
+            duration_seconds=None,
         )
 
         # Mock Path.stat() to raise an exception during finalization
@@ -709,7 +671,7 @@ class TestDatabaseMaintenanceExtended:
                 # Second call from file_path.stat().st_size - make it fail
                 raise OSError("Simulated stat error during finalization")
 
-        with patch.object(Path, 'stat', mock_stat_func):
+        with patch.object(Path, "stat", mock_stat_func):
             # Run cleanup - should catch error and delete segment
             cleaned = playback_db.cleanup_old_incomplete_segments(hours_threshold=24)
 
@@ -727,17 +689,25 @@ class TestCameraIdNameMatching:
 
     def test_segments_match_id_and_name(self, playback_db):
         from datetime import datetime, timedelta
+
         base = datetime(2026, 6, 2, 12, 0, 0)
         # Row A: keyed by camera_id == query value
-        playback_db.add_segment(camera_id='cam_new', camera_name='Patio',
-                                file_path='/x/a.mp4', start_time=base,
-                                end_time=base + timedelta(minutes=5))
+        playback_db.add_segment(
+            camera_id="cam_new",
+            camera_name="Patio",
+            file_path="/x/a.mp4",
+            start_time=base,
+            end_time=base + timedelta(minutes=5),
+        )
         # Row B: legacy — camera_id differs, but camera_name == query value
-        playback_db.add_segment(camera_id='legacy', camera_name='cam_new',
-                                file_path='/x/b.mp4', start_time=base + timedelta(minutes=5),
-                                end_time=base + timedelta(minutes=10))
+        playback_db.add_segment(
+            camera_id="legacy",
+            camera_name="cam_new",
+            file_path="/x/b.mp4",
+            start_time=base + timedelta(minutes=5),
+            end_time=base + timedelta(minutes=10),
+        )
 
-        rows = playback_db.get_segments_in_range('cam_new', base - timedelta(minutes=1),
-                                                 base + timedelta(minutes=11))
-        paths = sorted(r['file_path'] for r in rows)
-        assert paths == ['/x/a.mp4', '/x/b.mp4'], "must return both id- and name-matched rows"
+        rows = playback_db.get_segments_in_range("cam_new", base - timedelta(minutes=1), base + timedelta(minutes=11))
+        paths = sorted(r["file_path"] for r in rows)
+        assert paths == ["/x/a.mp4", "/x/b.mp4"], "must return both id- and name-matched rows"

@@ -911,6 +911,19 @@ async def start_camera(camera_id: str, permanent: bool = False) -> Dict[str, Any
         await recorder.start(streaming_only=False)
         logger.info(f"Recorder started for {camera_name}")
 
+        # Ensure motion detection runs for this camera. If it was disabled at
+        # startup it has no detector/monitor task yet, so without this it would
+        # record but produce no motion events until a full restart.
+        if config.get("motion_detection.enabled", True) and motion_monitor:
+            if not motion_monitor.get_detector(camera_name):
+                motion_monitor.add_camera(
+                    camera_name,
+                    sensitivity=config.get("motion_detection.sensitivity", 25),
+                    min_area=config.get("motion_detection.min_area", 500),
+                    recorder=recorder,
+                )
+            motion_monitor.ensure_monitoring(camera_name, recorder)
+
         message = f"Started recording {camera_name}"
 
         # If permanent, also enable in config

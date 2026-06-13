@@ -1,6 +1,7 @@
 """Database for recording metadata and playback"""
 
 import sqlite3
+import subprocess
 import logging
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -731,6 +732,32 @@ class PlaybackDatabase:
 
         return deleted_count
 
+    @staticmethod
+    def _ffprobe_duration(file_path) -> Optional[float]:
+        """Return a video file's duration in seconds via ffprobe, or None if it
+        can't be probed (e.g. a truncated segment missing its moov atom)."""
+        try:
+            result = subprocess.run(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format=duration",
+                    "-of",
+                    "default=noprint_wrappers=1:nokey=1",
+                    str(file_path),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode != 0:
+                return None
+            return float(result.stdout.strip())
+        except Exception:
+            return None
+
     def cleanup_old_incomplete_segments(self, hours_threshold: int = 24) -> int:
         """
         Clean up incomplete segments (NULL end_time) that are older than threshold
@@ -771,33 +798,34 @@ class PlaybackDatabase:
             for row in old_incomplete:
                 file_path = Path(row["file_path"])
 
-                # If file exists, try to finalize it with actual file info
+                # If the file exists, finalize it with the REAL duration from
+                # ffprobe. Size-based estimates were wrong for variable bitrate /
+                # resolution and produced inaccurate timeline lengths.
                 if file_path.exists():
-                    try:
-                        file_size = file_path.stat().st_size
-                        # Estimate duration based on file size (rough estimate: ~2MB per minute for 1080p)
-                        estimated_duration = max(60, int(file_size / (2 * 1024 * 1024) * 60))
-                        estimated_end_time = datetime.fromisoformat(row["start_time"]) + timedelta(
-                            seconds=estimated_duration
-                        )
-
-                        # Update with estimates
-                        conn.execute(
-                            """
-                            UPDATE recording_segments
-                            SET end_time = ?,
-                                duration_seconds = ?,
-                                file_size_bytes = ?
-                            WHERE id = ?
-                        """,
-                            (estimated_end_time, estimated_duration, file_size, row["id"]),
-                        )
-
-                        logger.info(
-                            f"Finalized orphaned segment: {file_path.name} (estimated duration: {estimated_duration}s)"
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to finalize {file_path.name}: {e}")
+                    duration = self._ffprobe_duration(file_path)
+                    if duration is not None:
+                        try:
+                            file_size = file_path.stat().st_size
+                            end_time = datetime.fromisoformat(row["start_time"]) + timedelta(seconds=duration)
+                            conn.execute(
+                                """
+                                UPDATE recording_segments
+                                SET end_time = ?,
+                                    duration_seconds = ?,
+                                    file_size_bytes = ?
+                                WHERE id = ?
+                            """,
+                                (end_time, int(duration), file_size, row["id"]),
+                            )
+                            logger.info(f"Finalized orphaned segment: {file_path.name} (duration: {duration:.1f}s)")
+                        except Exception as e:
+                            logger.warning(f"Failed to finalize {file_path.name}: {e}")
+                            conn.execute("DELETE FROM recording_segments WHERE id = ?", (row["id"],))
+                            deleted_count += 1
+                    else:
+                        # Unprobeable (truncated / no moov atom) — the file is
+                        # unplayable, so drop the dangling DB row.
+                        logger.warning(f"Dropping unprobeable orphaned segment: {file_path.name}")
                         conn.execute("DELETE FROM recording_segments WHERE id = ?", (row["id"],))
                         deleted_count += 1
                 else:

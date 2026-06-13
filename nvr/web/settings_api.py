@@ -108,29 +108,20 @@ async def get_config():
 async def update_config(updates: ConfigUpdate):
     """Update configuration and save to file"""
     try:
-        # Update recording settings
-        if updates.recording:
-            config.set("recording", updates.recording)
+        # Merge each section over the stored values instead of replacing it
+        # wholesale: a partial POST must not drop keys it didn't include (e.g.
+        # changing retention_days shouldn't wipe storage_path/segment_duration).
+        def _merge_section(name, incoming):
+            if incoming:
+                current = config.get(name, {})
+                config.set(name, {**current, **incoming} if isinstance(current, dict) else incoming)
 
-        # Update motion detection settings
-        if updates.motion_detection:
-            config.set("motion_detection", updates.motion_detection)
-
-        # Update AI detection settings
-        if updates.ai_detection:
-            config.set("ai_detection", updates.ai_detection)
-
-        # Update web settings
-        if updates.web:
-            config.set("web", updates.web)
-
-        # Update ONVIF settings
-        if updates.onvif:
-            config.set("onvif", updates.onvif)
-
-        # Update storage settings
-        if updates.storage:
-            config.set("storage", updates.storage)
+        _merge_section("recording", updates.recording)
+        _merge_section("motion_detection", updates.motion_detection)
+        _merge_section("ai_detection", updates.ai_detection)
+        _merge_section("web", updates.web)
+        _merge_section("onvif", updates.onvif)
+        _merge_section("storage", updates.storage)
 
         # Update cameras list. Restore any masked passwords/RTSP creds from the
         # stored config so a settings save doesn't overwrite secrets with the mask.

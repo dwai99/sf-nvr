@@ -232,6 +232,9 @@ class MotionMonitor:
     def __init__(self):
         self.detectors: dict[str, MotionDetector] = {}
         self.is_running = False
+        # Per-camera monitor tasks, so a camera enabled after startup can be
+        # given its own monitor loop without a full restart.
+        self._tasks: dict[str, asyncio.Task] = {}
 
     def add_camera(self, camera_name: str, sensitivity: int = 25, min_area: int = 500, recorder=None) -> MotionDetector:
         """Add a camera to motion monitoring"""
@@ -315,13 +318,33 @@ class MotionMonitor:
         for camera_name, recorder in recorder_manager.recorders.items():
             if camera_name in self.detectors:
                 task = asyncio.create_task(self.monitor_recorder(camera_name, recorder))
+                self._tasks[camera_name] = task
                 tasks.append(task)
 
         if tasks:
             logger.info(f"Started motion monitoring for {len(tasks)} camera(s)")
             await asyncio.gather(*tasks)
 
+    def ensure_monitoring(self, camera_name: str, recorder) -> None:
+        """Start a monitor loop for one camera if it isn't already running.
+
+        Used when a camera is enabled after startup so its motion is detected
+        without a full restart. No-op if global monitoring isn't active, the
+        camera has no detector, or a live task already exists.
+        """
+        if not self.is_running or camera_name not in self.detectors:
+            return
+        existing = self._tasks.get(camera_name)
+        if existing and not existing.done():
+            return
+        self._tasks[camera_name] = asyncio.create_task(self.monitor_recorder(camera_name, recorder))
+        logger.info(f"Started motion monitoring for {camera_name} (enabled after startup)")
+
     def stop_monitoring(self) -> None:
         """Stop monitoring all cameras"""
         self.is_running = False
+        for task in self._tasks.values():
+            if not task.done():
+                task.cancel()
+        self._tasks.clear()
         logger.info("Stopped motion monitoring")
