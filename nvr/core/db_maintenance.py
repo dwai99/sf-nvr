@@ -82,6 +82,14 @@ def run_maintenance(playback_db):
     except Exception as e:
         logger.error(f"Error scanning for orphaned files: {e}")
 
+    # 2c. Prune old acknowledged alerts so the table doesn't grow forever.
+    try:
+        pruned = playback_db.cleanup_old_alerts(days=30)
+        if pruned:
+            logger.info(f"Pruned {pruned} old acknowledged alert(s)")
+    except Exception as e:
+        logger.error(f"Error pruning old alerts: {e}")
+
     # 3. Optimize database
     try:
         playback_db.optimize_database()

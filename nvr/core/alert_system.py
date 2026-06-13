@@ -107,6 +107,20 @@ class WebhookAlertHandler(AlertHandler):
             logger.error(f"Failed to send webhook alert: {e}")
 
 
+class DatabaseAlertHandler(AlertHandler):
+    """Persist alerts to the playback database so they survive restarts and can
+    be listed/acknowledged in the UI (the log handler alone is easy to miss)."""
+
+    def __init__(self, playback_db):
+        self.playback_db = playback_db
+
+    async def handle(self, alert: Alert):
+        try:
+            self.playback_db.add_alert(alert.to_dict())
+        except Exception as e:
+            logger.error(f"Failed to persist alert: {e}")
+
+
 class AlertSystem:
     """Central alert management system"""
 

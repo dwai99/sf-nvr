@@ -236,6 +236,13 @@ async def startup_event():
 
     alert_system = alert_sys
 
+    # Persist alerts so they survive restarts and can be acknowledged in the UI.
+    if playback_db:
+        from nvr.core.alert_system import DatabaseAlertHandler
+
+        alert_system.add_handler(DatabaseAlertHandler(playback_db))
+        logger.info("Alert persistence enabled (SQLite)")
+
     # Add webhook handler if configured
     webhook_url = config.get("alerts.webhook_url")
     if webhook_url:
@@ -1514,12 +1521,43 @@ async def get_deletion_stats():
 
 
 @app.get("/api/alerts")
-async def get_alerts(limit: int = 50):
-    """Get recent system alerts"""
+async def get_alerts(limit: int = 50, unacknowledged: bool = False):
+    """Get system alerts.
+
+    Reads from the persisted store (survives restarts) when available, falling
+    back to the in-memory ring buffer. Pass ?unacknowledged=true for just the
+    open ones.
+    """
+    if playback_db:
+        alerts = playback_db.get_alerts(limit=limit, unacknowledged_only=unacknowledged)
+        return {
+            "alerts": alerts,
+            "unacknowledged_count": len(playback_db.get_alerts(limit=1000, unacknowledged_only=True)),
+        }
+
     if not alert_system:
         return {"alerts": []}
-
     return {"alerts": alert_system.get_recent_alerts(limit)}
+
+
+@app.post("/api/alerts/{alert_id}/acknowledge")
+async def acknowledge_alert(alert_id: int):
+    """Acknowledge (dismiss) a single persisted alert."""
+    if not playback_db:
+        raise HTTPException(status_code=503, detail="Playback database not initialized")
+    changed = playback_db.acknowledge_alert(alert_id)
+    if not changed:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    return {"success": True, "alert_id": alert_id}
+
+
+@app.post("/api/alerts/acknowledge-all")
+async def acknowledge_all_alerts():
+    """Acknowledge (dismiss) all open alerts."""
+    if not playback_db:
+        raise HTTPException(status_code=503, detail="Playback database not initialized")
+    count = playback_db.acknowledge_all_alerts()
+    return {"success": True, "acknowledged": count}
 
 
 @app.get("/api/alerts/camera/{camera_id}")
@@ -1673,6 +1711,13 @@ async def get_status():
     except Exception:
         pass
 
+    unacknowledged_alerts = 0
+    if playback_db:
+        try:
+            unacknowledged_alerts = len(playback_db.get_alerts(limit=1000, unacknowledged_only=True))
+        except Exception:
+            pass
+
     overall = "healthy"
     if write_failed or not storage.get("writable", True) or storage.get("percent", 0) > 95:
         overall = "degraded"
@@ -1684,6 +1729,7 @@ async def get_status():
         "camera_count": len(cameras),
         "recording": recording,
         "write_failed_cameras": write_failed,
+        "unacknowledged_alerts": unacknowledged_alerts,
         "transcode_queue": _transcode_queue_depth(),
         "storage": storage,
         "system": system,

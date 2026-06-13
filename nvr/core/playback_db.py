@@ -5,6 +5,7 @@ import subprocess
 import logging
 import threading
 import time
+import json
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
@@ -192,6 +193,26 @@ class PlaybackDatabase:
                 ON deletion_log(deleted_at)
             """
             )
+
+            # System alerts (camera-down, storage, etc.) — persisted so they
+            # survive restarts and can be listed/acknowledged in the UI.
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS alerts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    alert_type TEXT NOT NULL,
+                    level TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    camera_name TEXT,
+                    details TEXT,
+                    timestamp TIMESTAMP NOT NULL,
+                    acknowledged INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """
+            )
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_alerts_time ON alerts(timestamp)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_alerts_ack ON alerts(acknowledged)")
 
             # Perform migrations for existing databases
             self._migrate_schema(conn, cursor)
@@ -772,6 +793,78 @@ class PlaybackDatabase:
             logger.info(f"Removed {deleted_count} orphaned database entries")
 
         return deleted_count
+
+    def add_alert(self, alert: Dict) -> int:
+        """Persist an alert (dict shape of Alert.to_dict()). Returns the row id."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO alerts (alert_type, level, message, camera_name, details, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    alert.get("type"),
+                    alert.get("level"),
+                    alert.get("message"),
+                    alert.get("camera_name"),
+                    json.dumps(alert.get("details") or {}),
+                    alert.get("timestamp"),
+                ),
+            )
+            return cursor.lastrowid
+
+    def get_alerts(self, limit: int = 100, unacknowledged_only: bool = False, camera_name: str = None) -> List[Dict]:
+        """List persisted alerts, newest first."""
+        query = "SELECT * FROM alerts"
+        conds, params = [], []
+        if unacknowledged_only:
+            conds.append("acknowledged = 0")
+        if camera_name:
+            conds.append("camera_name = ?")
+            params.append(camera_name)
+        if conds:
+            query += " WHERE " + " AND ".join(conds)
+        query += " ORDER BY timestamp DESC LIMIT ?"
+        params.append(limit)
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, params)
+            alerts = []
+            for row in cursor.fetchall():
+                alert = dict(row)
+                try:
+                    alert["details"] = json.loads(alert["details"]) if alert["details"] else {}
+                except (json.JSONDecodeError, TypeError):
+                    alert["details"] = {}
+                alert["acknowledged"] = bool(alert["acknowledged"])
+                alerts.append(alert)
+            return alerts
+
+    def acknowledge_alert(self, alert_id: int) -> bool:
+        """Mark a single alert acknowledged. Returns True if a row changed."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE alerts SET acknowledged = 1 WHERE id = ?", (alert_id,))
+            return cursor.rowcount > 0
+
+    def acknowledge_all_alerts(self) -> int:
+        """Mark all unacknowledged alerts acknowledged. Returns the count."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE alerts SET acknowledged = 1 WHERE acknowledged = 0")
+            return cursor.rowcount
+
+    def cleanup_old_alerts(self, days: int = 30) -> int:
+        """Delete acknowledged alerts older than `days`. Returns the count."""
+        from datetime import datetime, timedelta
+
+        cutoff = datetime.now() - timedelta(days=days)
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM alerts WHERE acknowledged = 1 AND timestamp < ?", (cutoff,))
+            return cursor.rowcount
 
     def find_orphaned_files(self, storage_path: Path, min_age_seconds: int = 3600) -> List[tuple]:
         """Find on-disk recording files (.mp4) that have NO recording_segments row.
