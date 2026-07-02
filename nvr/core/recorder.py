@@ -17,6 +17,43 @@ os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|timeout;600000
 
 logger = logging.getLogger(__name__)
 
+
+def _is_corrupt_frame(frame, min_band_fraction: float = 0.18) -> bool:
+    """Detect a partially-decoded frame (packet loss) by its tell-tale smear.
+
+    When lower slices of an H.264 frame are lost, the decoder replicates the last
+    good macroblock row downward, producing a band of near-identical rows. Real
+    content — even smooth sky — has sensor noise, so adjacent rows are never
+    pixel-identical over a large contiguous band. We flag a frame when the largest
+    run of near-identical adjacent rows in the lower ~60% covers more than
+    min_band_fraction of the frame height.
+
+    Cheap: one grayscale conversion of a column-downsampled strip + a vector diff.
+    Conservative threshold to avoid dropping legitimate frames.
+    """
+    try:
+        if frame is None or frame.ndim != 3:
+            return False
+        h, w = frame.shape[:2]
+        if h < 80:
+            return False
+        # Examine the lower 60% (smears start partway down and run to the bottom).
+        strip = frame[int(h * 0.4) :, :: max(1, w // 160)]  # column-subsample for speed
+        gray = strip.mean(axis=2)  # rows x cols
+        row_diff = np.abs(np.diff(gray, axis=0)).mean(axis=1)  # mean abs diff between adjacent rows
+        # A replicated (smeared) row pair differs by ~0; real content differs more.
+        near_identical = row_diff < 1.0
+        # Longest contiguous run of near-identical adjacent rows.
+        longest = cur = 0
+        for v in near_identical:
+            cur = cur + 1 if v else 0
+            if cur > longest:
+                longest = cur
+        return longest >= int(h * min_band_fraction)
+    except Exception:
+        return False
+
+
 # How long after the last live-view frame request we keep JPEG-encoding for.
 # Past this with no viewers, the recorder stops encoding (motion/AI use the raw
 # frame), so idle cameras don't burn CPU compressing frames nobody watches.
@@ -68,6 +105,9 @@ class RTSPRecorder:
         # Monotonic time of the last live-view frame request; drives demand-gated
         # JPEG encoding (see JPEG_DEMAND_SECONDS).
         self._last_jpeg_demand = 0.0
+        # Consecutive corrupt-frame drops; fail-open past a cap so a false
+        # positive can't freeze the stream.
+        self._consecutive_corrupt = 0
         self.frame_lock = threading.Lock()
         # Shared live-view render cache: viewers requesting the same
         # (raw, quality, realtime) share one decode/resize/encode per source
@@ -304,6 +344,20 @@ class RTSPRecorder:
             # Reset failure counter on successful read
             consecutive_failures = 0
             self.last_frame_time = datetime.now()
+
+            # Drop partially-decoded frames (packet loss under WiFi contention
+            # produces a valid but garbled frame — the bottom smears into vertical
+            # bands). Skip it so the smear is neither recorded nor shown live; the
+            # last good frame keeps being served. Fail-open after several
+            # consecutive drops so a false positive on a genuinely flat scene can
+            # never freeze the stream.
+            if _is_corrupt_frame(frame) and self._consecutive_corrupt < 15:
+                self._consecutive_corrupt += 1
+                self._corrupt_frame_count = getattr(self, "_corrupt_frame_count", 0) + 1
+                if self._corrupt_frame_count <= 3 or self._corrupt_frame_count % 100 == 0:
+                    logger.debug(f"Dropped corrupt frame for {self.camera_name} (#{self._corrupt_frame_count})")
+                continue
+            self._consecutive_corrupt = 0
 
             try:
                 # CRITICAL: Scale down frame to recording dimensions if needed
