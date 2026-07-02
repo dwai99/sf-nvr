@@ -1,6 +1,7 @@
 """Configuration management for NVR"""
 
 import os
+import logging
 import yaml
 import uuid
 import tempfile
@@ -8,6 +9,8 @@ import threading
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -122,19 +125,29 @@ class Config:
         return path
 
     def is_storage_writable(self) -> bool:
-        """Probe whether the storage path actually accepts writes right now.
+        """Probe whether the storage path is mounted and accepts writes.
 
         Catches the failure mode where statvfs/disk_usage still report healthy
         numbers but the volume is read-only / permission-revoked / unmounted, so
         recordings silently stop. Used by the health monitor to raise an alert.
+
+        A FULL disk (ENOSPC) counts as writable: the volume is mounted and the
+        right response is to clean up, NOT to skip cleanup. Treating "full" as
+        "unwritable" deadlocked the disk monitor — it refused to free space on a
+        100%-full disk, so the disk never recovered.
         """
+        import errno
+
         path = Path(self.get("recording.storage_path", "./recordings"))
         probe = path / ".nvr_write_test"
         try:
             probe.write_text("ok")
             probe.unlink()
             return True
-        except OSError:
+        except OSError as e:
+            if e.errno == errno.ENOSPC:
+                logger.warning("Storage is full (ENOSPC) but mounted — treating as writable so cleanup can run")
+                return True
             return False
 
     @property

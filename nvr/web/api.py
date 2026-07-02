@@ -440,6 +440,7 @@ async def startup_event():
             cooldown_seconds=config.get("recording.high_res_cooldown_seconds", 5),
             max_duration_seconds=config.get("recording.high_res_max_duration_seconds", 60),
             output_width=config.get("recording.high_res_output_width", 1920),
+            budget_seconds_per_hour=config.get("recording.high_res_budget_seconds_per_hour", 600),
         )
         logger.info("High-res-on-motion event recording enabled")
 

@@ -30,6 +30,7 @@ class HighResEventRecorder:
         cooldown_seconds: float = 5.0,
         max_duration_seconds: float = 60.0,
         output_width: int = 1920,
+        budget_seconds_per_hour: float = 600.0,
     ):
         self.storage_path = Path(storage_path)
         self.playback_db = playback_db
@@ -37,9 +38,15 @@ class HighResEventRecorder:
         self.cooldown_seconds = cooldown_seconds
         self.max_duration_seconds = max_duration_seconds
         self.output_width = output_width
+        # Hard cap on how many seconds of high-res event footage each camera may
+        # record per rolling hour. Without this, a scene with near-constant motion
+        # (trees, traffic, a busy patio) records essentially continuously and
+        # fills the disk — which is exactly what happened.
+        self.budget_seconds_per_hour = budget_seconds_per_hour
         self._lock = threading.Lock()
         self._active = set()  # camera_ids currently capturing
         self._sem = threading.Semaphore(max_concurrent)
+        self._spent = {}  # camera_id -> list of (finish_monotonic, seconds) in the last hour
 
     def trigger(self, camera_id: str, camera_name: str, main_url: str, detector=None) -> None:
         """Begin a high-res capture on motion start, if a slot is free and this
@@ -47,6 +54,12 @@ class HighResEventRecorder:
         with self._lock:
             if camera_id in self._active:
                 return  # already capturing; the running loop extends with continued motion
+            if self._spent_last_hour(camera_id) >= self.budget_seconds_per_hour:
+                logger.debug(
+                    f"High-res event skipped for {camera_name}: hourly budget "
+                    f"({self.budget_seconds_per_hour:.0f}s) exhausted"
+                )
+                return
             if not self._sem.acquire(blocking=False):
                 logger.debug(
                     f"High-res event skipped for {camera_name}: {self.max_concurrent} capture(s) already running"
@@ -59,6 +72,14 @@ class HighResEventRecorder:
             daemon=True,
             name=f"Event-{camera_name}",
         ).start()
+
+    def _spent_last_hour(self, camera_id) -> float:
+        """Seconds of event footage recorded for this camera in the last hour.
+        Caller must hold self._lock."""
+        cutoff = time.monotonic() - 3600
+        entries = [(t, s) for (t, s) in self._spent.get(camera_id, []) if t >= cutoff]
+        self._spent[camera_id] = entries
+        return sum(s for _, s in entries)
 
     def _capture(self, camera_id, camera_name, main_url, detector):
         cap = None
@@ -146,4 +167,6 @@ class HighResEventRecorder:
                     logger.error(f"High-res event: failed to register clip in DB: {e}")
             with self._lock:
                 self._active.discard(camera_id)
+                if duration > 0:
+                    self._spent.setdefault(camera_id, []).append((time.monotonic(), duration))
             self._sem.release()
