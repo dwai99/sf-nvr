@@ -118,9 +118,10 @@ class TestTranscoderQueue:
         # Should be in queue
         assert not transcoder.transcode_queue.empty()
 
-        # Get item from queue
-        queued_file = transcoder.transcode_queue.get_nowait()
+        # Get item from queue — items are (path, input_fps) tuples
+        queued_file, queued_fps = transcoder.transcode_queue.get_nowait()
         assert queued_file == test_file
+        assert queued_fps is None
 
     def test_queue_transcode_skips_nonexistent_file(self, temp_dir):
         """Test that queue_transcode skips non-existent files"""
@@ -209,10 +210,10 @@ class TestEncoderDetection:
         encoder, options = transcoder._detect_best_encoder()
 
         # Should return valid encoder
-        assert encoder in ['h264_videotoolbox', 'h264_nvenc', 'h264_qsv', 'libx264']
+        assert encoder in ["h264_videotoolbox", "h264_nvenc", "h264_qsv", "libx264"]
         assert isinstance(options, list)
 
-    @patch('subprocess.run')
+    @patch("subprocess.run")
     def test_detect_best_encoder_tries_hardware_first(self, mock_run):
         """Test that encoder detection tries hardware encoders first"""
         # Mock successful hardware encoder
@@ -223,13 +224,14 @@ class TestEncoderDetection:
         # Should have tried hardware encoders
         assert mock_run.call_count >= 1
 
-    @patch('subprocess.run')
+    @patch("subprocess.run")
     def test_detect_best_encoder_falls_back_to_software(self, mock_run):
         """Test that encoder detection falls back to software encoder"""
+
         # Mock all hardware encoders failing
         def run_side_effect(*args, **kwargs):
             # Check if this is an encoder test
-            if 'h264_videotoolbox' in str(args) or 'h264_nvenc' in str(args) or 'h264_qsv' in str(args):
+            if "h264_videotoolbox" in str(args) or "h264_nvenc" in str(args) or "h264_qsv" in str(args):
                 return Mock(returncode=1)  # Fail
             return Mock(returncode=0)  # Success for libx264
 
@@ -238,14 +240,14 @@ class TestEncoderDetection:
         transcoder = BackgroundTranscoder()
 
         # Should fall back to software encoder
-        assert transcoder.encoder == 'libx264'
+        assert transcoder.encoder == "libx264"
 
 
 @pytest.mark.unit
 class TestTranscodeExecution:
     """Test actual transcoding execution"""
 
-    @patch('subprocess.run')
+    @patch("subprocess.run")
     def test_transcode_calls_ffmpeg(self, mock_run, temp_dir):
         """Test that transcode calls ffmpeg with correct parameters"""
         mock_run.return_value = Mock(returncode=0)
@@ -262,7 +264,7 @@ class TestTranscodeExecution:
         # Should have called ffmpeg
         assert mock_run.called
 
-    @patch('subprocess.run')
+    @patch("subprocess.run")
     def test_transcode_handles_ffmpeg_failure(self, mock_run, temp_dir):
         """Test that transcode handles ffmpeg failure gracefully"""
         mock_run.return_value = Mock(returncode=1, stderr=b"Error message")
@@ -279,7 +281,7 @@ class TestTranscodeExecution:
         # Verify ffmpeg was called
         assert mock_run.called
 
-    @patch('subprocess.run')
+    @patch("subprocess.run")
     def test_transcode_replaces_original_when_configured(self, mock_run, temp_dir):
         """Test that transcode replaces original file when configured"""
         mock_run.return_value = Mock(returncode=0)
@@ -305,7 +307,7 @@ class TestTranscodeExecution:
         # Original should be replaced (source file should still exist with transcoded content)
         assert source.exists()
 
-    @patch('subprocess.run')
+    @patch("subprocess.run")
     def test_transcode_keeps_original_when_configured(self, mock_run, temp_dir):
         """Test that transcode keeps original file when configured"""
 

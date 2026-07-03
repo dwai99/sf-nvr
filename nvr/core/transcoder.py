@@ -68,12 +68,16 @@ class BackgroundTranscoder:
         self.workers.clear()
         logger.info("Stopped transcoder workers")
 
-    def queue_transcode(self, source_path: Path):
+    def queue_transcode(self, source_path: Path, input_fps: float = None):
         """
         Queue a video file for transcoding
 
         Args:
             source_path: Path to the source video file
+            input_fps: If set, reinterpret the input at this frame rate so the
+                output is real-time (frames written one-per-capture at a nominal
+                rate are "fast"; this retimes them to actual wall-clock speed
+                without duplicating/dropping frames).
         """
         if not source_path.exists():
             logger.warning(f"Cannot transcode non-existent file: {source_path}")
@@ -86,7 +90,7 @@ class BackgroundTranscoder:
             return
 
         try:
-            self.transcode_queue.put_nowait(source_path)
+            self.transcode_queue.put_nowait((source_path, input_fps))
             logger.info(f"Transcode queued: {source_path.name}")
         except queue.Full:
             # Bounded so a backlog (e.g. after downtime, or CPU-only fallback)
@@ -206,14 +210,20 @@ class BackgroundTranscoder:
         while self.running:
             try:
                 # Get next file to transcode (with timeout to check running flag)
-                source_path = self.transcode_queue.get(timeout=1)
+                item = self.transcode_queue.get(timeout=1)
 
                 # Sentinel value to stop worker
-                if source_path is None:
+                if item is None:
                     break
 
+                # Items are (source_path, input_fps); tolerate a bare path too.
+                if isinstance(item, tuple):
+                    source_path, input_fps = item
+                else:
+                    source_path, input_fps = item, None
+
                 # Perform transcode
-                self._transcode_file(source_path)
+                self._transcode_file(source_path, input_fps)
 
                 self.transcode_queue.task_done()
 
@@ -222,12 +232,14 @@ class BackgroundTranscoder:
             except Exception as e:
                 logger.error(f"Error in transcoder worker: {e}")
 
-    def _transcode_file(self, source_path: Path):
+    def _transcode_file(self, source_path: Path, input_fps: float = None):
         """
         Transcode a single file to H.264
 
         Args:
             source_path: Path to source video file
+            input_fps: If set, reinterpret the source at this rate (retime to
+                real time) before re-encoding.
         """
         transcoded_path = self._get_transcoded_path(source_path)
 
@@ -236,12 +248,18 @@ class BackgroundTranscoder:
             logger.debug(f"Skipping already transcoded: {source_path.name}")
             return
 
-        logger.info(f"Transcoding: {source_path.name} using {self.encoder}")
+        logger.info(
+            f"Transcoding: {source_path.name} using {self.encoder}" + (f" @ {input_fps:.1f}fps" if input_fps else "")
+        )
 
         try:
+            # -r BEFORE -i reinterprets the input frame rate, retiming the file to
+            # real time without adding/dropping frames (smooth + correct duration).
+            retime = ["-r", f"{input_fps:.3f}"] if input_fps else []
             # Build ffmpeg command with detected encoder
             cmd = [
                 "ffmpeg",
+                *retime,
                 "-i",
                 str(source_path),
                 "-c:v",

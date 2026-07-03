@@ -406,36 +406,23 @@ class RTSPRecorder:
                         # owns the writer-exists case (it must persist a mid-segment failure
                         # across frames so the health poll can see it).
                         if self.writer:
-                            # Real-time pacing: write exactly _record_fps frames
-                            # per wall-clock second, duplicating this frame when
-                            # capture is slow and dropping when fast, so the file's
-                            # duration matches wall-clock (accurate seek/markers).
-                            nowm = time.monotonic()
-                            interval = 1.0 / self._record_fps
-                            if self._next_write_time == 0.0:
-                                self._next_write_time = nowm
-                            elif nowm - self._next_write_time > 20.0:
-                                # Gap longer than the reconnect tolerance — resync
-                                # instead of burst-filling. Shorter hiccups (the
-                                # common WiFi blip) ARE filled below with the last
-                                # frame, keeping the segment one continuous
-                                # real-time file instead of fragmenting.
-                                self._next_write_time = nowm
-                            wrote = 0
-                            while nowm >= self._next_write_time:
-                                self.writer.write(frame)
-                                self._frames_written_total += 1
-                                self._segment_frame_count += 1
-                                self._next_write_time += interval
-                                wrote += 1
-                            if wrote:
-                                # _check_segment_growth() updates write_failed based on
-                                # whether the file is actually growing on disk (catches
-                                # silent mid-segment write loss, e.g. volume read-only).
-                                self._check_segment_growth()
-                                # Keep the two flags consistent: only "actively writing"
-                                # if bytes are really landing on disk.
-                                self.actively_writing = not self.write_failed
+                            # Write exactly one file-frame per captured frame — no
+                            # duplication. Duplicating to a fixed fps made playback
+                            # a frozen stutter (e.g. a 9.7fps stream padded to 15fps
+                            # is ~36% repeated frames). The file ends up "fast" (its
+                            # duration < wall-clock), and the transcoder retimes it
+                            # back to real time using the true frames/elapsed rate,
+                            # so playback is BOTH smooth and correctly timed.
+                            self.writer.write(frame)
+                            self._frames_written_total += 1
+                            self._segment_frame_count += 1
+                            # _check_segment_growth() updates write_failed based on
+                            # whether the file is actually growing on disk (catches
+                            # silent mid-segment write loss, e.g. volume read-only).
+                            self._check_segment_growth()
+                            # Keep the two flags consistent: only "actively writing"
+                            # if bytes are really landing on disk.
+                            self.actively_writing = not self.write_failed
                         else:
                             self.actively_writing = False
                             self.write_failed = True  # VideoWriter never opened
@@ -556,6 +543,24 @@ class RTSPRecorder:
         """
         self.has_motion = has_motion
 
+    def _queue_retimed_transcode(self, elapsed_seconds: float) -> None:
+        """Queue the just-closed segment for transcoding, retimed to real time.
+
+        Frames are written one-per-capture (smooth, no duplicates), so the raw
+        file is 'fast' — its duration is frames/nominal_fps, not wall-clock. The
+        true rate is frames/elapsed; passing it to the transcoder makes the
+        output real-time AND smooth, so the timeline and seeking stay accurate.
+        """
+        real_fps = None
+        if self._segment_frame_count >= 15 and elapsed_seconds >= 5:
+            real_fps = max(1.0, min(30.0, self._segment_frame_count / elapsed_seconds))
+        try:
+            from nvr.core.transcoder import get_transcoder
+
+            get_transcoder().queue_transcode(self.current_segment_path, input_fps=real_fps)
+        except Exception as e:
+            logger.warning(f"Failed to queue transcode for {self.current_segment_path}: {e}")
+
     def _close_current_segment(self):
         """Close the current recording segment"""
         if self.writer and self.current_segment_path and self.playback_db:
@@ -564,8 +569,9 @@ class RTSPRecorder:
 
             # Calculate actual segment duration and size. Use the monotonic clock
             # for duration (immune to DST/NTP backward steps) and clamp to >= 0.
+            elapsed = time.monotonic() - self._segment_start_monotonic
             end_time = datetime.now()
-            duration = max(0, int(time.monotonic() - self._segment_start_monotonic))
+            duration = max(0, int(elapsed))
             file_size = self.current_segment_path.stat().st_size if self.current_segment_path.exists() else 0
 
             # Update database with segment info
@@ -573,14 +579,8 @@ class RTSPRecorder:
                 self.camera_id, str(self.current_segment_path), end_time, duration, file_size
             )
 
-            # Queue segment for background transcoding for instant playback
-            try:
-                from nvr.core.transcoder import get_transcoder
-
-                transcoder = get_transcoder()
-                transcoder.queue_transcode(self.current_segment_path)
-            except Exception as e:
-                logger.warning(f"Failed to queue transcode for {self.current_segment_path}: {e}")
+            # Queue segment for background transcoding (retimed to real time)
+            self._queue_retimed_transcode(elapsed)
 
             logger.info(
                 f"Closed segment for {self.camera_name}: {self.current_segment_path.name} ({duration}s, {file_size / (1024*1024):.1f}MB)"
@@ -666,8 +666,9 @@ class RTSPRecorder:
             self.writer.release()
 
             # Calculate actual segment duration and size (monotonic, clamped)
+            elapsed = time.monotonic() - self._segment_start_monotonic
             end_time = datetime.now()
-            duration = max(0, int(time.monotonic() - self._segment_start_monotonic))
+            duration = max(0, int(elapsed))
             file_size = self.current_segment_path.stat().st_size if self.current_segment_path.exists() else 0
 
             # Update database with segment info
@@ -675,14 +676,8 @@ class RTSPRecorder:
                 self.camera_id, str(self.current_segment_path), end_time, duration, file_size
             )
 
-            # Queue segment for background transcoding for instant playback
-            try:
-                from nvr.core.transcoder import get_transcoder
-
-                transcoder = get_transcoder()
-                transcoder.queue_transcode(self.current_segment_path)
-            except Exception as e:
-                logger.warning(f"Failed to queue transcode for {self.current_segment_path}: {e}")
+            # Queue segment for background transcoding (retimed to real time)
+            self._queue_retimed_transcode(elapsed)
 
         # Use current clock time rounded to segment boundary for consistent filenames
         # This ensures files have predictable names like 20260119_143000.mp4 (2:30 PM)
