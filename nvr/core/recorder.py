@@ -108,13 +108,16 @@ class RTSPRecorder:
         # Consecutive corrupt-frame drops; fail-open past a cap so a false
         # positive can't freeze the stream.
         self._consecutive_corrupt = 0
-        # Actual measured capture rate (frames/sec). The camera reports 15fps but
-        # WiFi often delivers far fewer, so writing at the reported fps produced
-        # sped-up, time-compressed video whose timeline didn't match wall-clock
-        # (breaking seek + motion-marker alignment). We write each segment at the
-        # rate the PREVIOUS segment actually captured, so video plays real-time.
+        # Real-time frame pacing. The camera reports 15fps but WiFi delivers a
+        # variable, often lower rate (3-12fps, swinging minute to minute). Writing
+        # one file-frame per captured-frame at a fixed fps made video that didn't
+        # match wall-clock (sped up or stretched), breaking seek + motion markers.
+        # Instead we write at a fixed RECORD_FPS and pace to real time: duplicate
+        # the current frame when capture is slow, drop when fast. Video duration
+        # then always equals wall-clock, so the timeline and markers stay aligned.
         self._segment_frame_count = 0
-        self._measured_fps = None
+        self._next_write_time = 0.0
+        self._record_fps = 15.0  # fixed output rate; set per-segment from reported fps
         self.frame_lock = threading.Lock()
         # Shared live-view render cache: viewers requesting the same
         # (raw, quality, realtime) share one decode/resize/encode per source
@@ -389,16 +392,33 @@ class RTSPRecorder:
                         # owns the writer-exists case (it must persist a mid-segment failure
                         # across frames so the health poll can see it).
                         if self.writer:
-                            self.writer.write(frame)
-                            self._frames_written_total += 1
-                            self._segment_frame_count += 1
-                            # _check_segment_growth() updates write_failed based on
-                            # whether the file is actually growing on disk (catches
-                            # silent mid-segment write loss, e.g. volume read-only).
-                            self._check_segment_growth()
-                            # Keep the two flags consistent: only "actively writing"
-                            # if bytes are really landing on disk.
-                            self.actively_writing = not self.write_failed
+                            # Real-time pacing: write exactly _record_fps frames
+                            # per wall-clock second, duplicating this frame when
+                            # capture is slow and dropping when fast, so the file's
+                            # duration matches wall-clock (accurate seek/markers).
+                            nowm = time.monotonic()
+                            interval = 1.0 / self._record_fps
+                            if self._next_write_time == 0.0:
+                                self._next_write_time = nowm
+                            elif nowm - self._next_write_time > 3.0:
+                                # Long stall (camera hiccup): resync instead of
+                                # burst-filling hundreds of duplicate frames.
+                                self._next_write_time = nowm
+                            wrote = 0
+                            while nowm >= self._next_write_time:
+                                self.writer.write(frame)
+                                self._frames_written_total += 1
+                                self._segment_frame_count += 1
+                                self._next_write_time += interval
+                                wrote += 1
+                            if wrote:
+                                # _check_segment_growth() updates write_failed based on
+                                # whether the file is actually growing on disk (catches
+                                # silent mid-segment write loss, e.g. volume read-only).
+                                self._check_segment_growth()
+                                # Keep the two flags consistent: only "actively writing"
+                                # if bytes are really landing on disk.
+                                self.actively_writing = not self.write_failed
                         else:
                             self.actively_writing = False
                             self.write_failed = True  # VideoWriter never opened
@@ -519,23 +539,9 @@ class RTSPRecorder:
         """
         self.has_motion = has_motion
 
-    def _update_measured_fps(self) -> None:
-        """Record the actual capture rate of the segment just finished, so the
-        next segment's VideoWriter is created at a real-time rate. Ignores tiny
-        samples (too noisy) and smooths with an EMA. Clamped to a sane range."""
-        elapsed = time.monotonic() - self._segment_start_monotonic
-        if self._segment_frame_count >= 30 and elapsed >= 20:
-            actual = self._segment_frame_count / elapsed
-            actual = max(1.0, min(30.0, actual))
-            if self._measured_fps is None:
-                self._measured_fps = actual
-            else:
-                self._measured_fps = 0.5 * self._measured_fps + 0.5 * actual
-
     def _close_current_segment(self):
         """Close the current recording segment"""
         if self.writer and self.current_segment_path and self.playback_db:
-            self._update_measured_fps()
             self.writer.release()
             self.writer = None
 
@@ -640,7 +646,6 @@ class RTSPRecorder:
         """Start a new recording segment"""
         # Finalize previous segment in database
         if self.writer and self.current_segment_path and self.playback_db:
-            self._update_measured_fps()
             self.writer.release()
 
             # Calculate actual segment duration and size (monotonic, clamped)
@@ -674,6 +679,7 @@ class RTSPRecorder:
         self.current_segment_start = datetime(now.year, now.month, now.day, boundary_hour, boundary_minute, 0)
         self._segment_start_monotonic = time.monotonic()
         self._segment_frame_count = 0
+        self._next_write_time = 0.0  # reset the real-time write pacer for the new segment
         timestamp = self.current_segment_start.strftime("%Y%m%d_%H%M%S")
         filename = f"{timestamp}.{self.container}"
         filepath = self.camera_storage / filename
@@ -688,14 +694,13 @@ class RTSPRecorder:
                 n += 1
         self.current_segment_path = filepath
 
-        # Record at the actual measured capture rate, not the camera's reported
-        # fps. WiFi often delivers far fewer frames than reported (e.g. 6 vs 15),
-        # and writing at the reported rate produced sped-up, time-compressed
-        # video whose length didn't match wall-clock — which broke seeking and
-        # made motion markers land in gaps. Using the measured rate keeps video
-        # real-time and the timeline accurate. Falls back to reported fps until a
-        # segment has been measured.
-        writer_fps = self._measured_fps if self._measured_fps else fps
+        # Fixed real-time output rate. Frames are paced to this in the capture
+        # loop (duplicated when capture is slow, dropped when fast) so the file's
+        # duration always matches wall-clock regardless of the variable WiFi
+        # capture rate. Capped so a camera reporting e.g. 24fps doesn't inflate
+        # the file with duplicates.
+        writer_fps = float(max(5, min(int(fps) if fps else 15, 15)))
+        self._record_fps = writer_fps
 
         # Create video writer
         fourcc = cv2.VideoWriter_fourcc(*self._get_fourcc())
