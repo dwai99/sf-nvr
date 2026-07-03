@@ -300,11 +300,19 @@ class RTSPRecorder:
     def _record_frames(self, fps: float, width: int, height: int) -> None:
         """Record frames from stream"""
         consecutive_failures = 0
-        max_consecutive_failures = 30  # Allow 30 consecutive failures before reconnecting
+        first_failure_monotonic = None
 
         # CRITICAL: Determine recording dimensions BEFORE starting any segments
         # Get per-camera resolution if configured, otherwise fall back to global setting
         from nvr.core.config import config
+
+        # Tolerate brief WiFi hiccups before tearing down and reconnecting. A
+        # reconnect ends the current segment and starts a new file, so being
+        # trigger-happy here fragmented the timeline into many short clips. Wait
+        # this many seconds of continuous read failure before giving up; the
+        # stream usually recovers on its own well before that, and the gap is
+        # filled with the last frame so the segment stays one continuous file.
+        reconnect_after_s = config.get("recording.reconnect_after_seconds", 15)
 
         # Look up this camera's resolution setting
         cameras = config.get("cameras", [])
@@ -342,17 +350,23 @@ class RTSPRecorder:
 
             if not ret:
                 consecutive_failures += 1
-                if consecutive_failures >= max_consecutive_failures:
+                nowm = time.monotonic()
+                if first_failure_monotonic is None:
+                    first_failure_monotonic = nowm
+                # Reconnect only after a sustained outage, not a momentary blip.
+                if nowm - first_failure_monotonic >= reconnect_after_s:
                     logger.warning(
-                        f"Failed to read frame from {self.camera_name} ({consecutive_failures} consecutive failures)"
+                        f"No frames from {self.camera_name} for {reconnect_after_s}s "
+                        f"({consecutive_failures} failed reads) - reconnecting"
                     )
                     break
                 # Brief sleep to avoid tight loop on temporary network issues
                 time.sleep(0.1)
                 continue
 
-            # Reset failure counter on successful read
+            # Reset failure tracking on successful read
             consecutive_failures = 0
+            first_failure_monotonic = None
             self.last_frame_time = datetime.now()
 
             # Drop partially-decoded frames (packet loss under WiFi contention
@@ -400,9 +414,12 @@ class RTSPRecorder:
                             interval = 1.0 / self._record_fps
                             if self._next_write_time == 0.0:
                                 self._next_write_time = nowm
-                            elif nowm - self._next_write_time > 3.0:
-                                # Long stall (camera hiccup): resync instead of
-                                # burst-filling hundreds of duplicate frames.
+                            elif nowm - self._next_write_time > 20.0:
+                                # Gap longer than the reconnect tolerance — resync
+                                # instead of burst-filling. Shorter hiccups (the
+                                # common WiFi blip) ARE filled below with the last
+                                # frame, keeping the segment one continuous
+                                # real-time file instead of fragmenting.
                                 self._next_write_time = nowm
                             wrote = 0
                             while nowm >= self._next_write_time:
