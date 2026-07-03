@@ -2612,125 +2612,63 @@
             const startMs = new Date(playbackState.startTime).getTime();
             const endMs = new Date(playbackState.endTime).getTime();
             const rangeMs = endMs - startMs;
-            const percent = ((timestampMs - startMs) / rangeMs) * 100;
 
-            const clickedDate = new Date(timestampMs);
-
-            updateTimelinePosition(percent);
+            updateTimelinePosition(((timestampMs - startMs) / rangeMs) * 100);
             playbackState.currentTime = (timestampMs - startMs) / 1000;
 
-            // For each camera, load the appropriate segment and seek within it
             selectedCameras.forEach(cameraName => {
                 const video = videoElements[cameraName];
-                if (!video || !currentRecordings[cameraName]) return;
-
                 const segments = currentRecordings[cameraName];
+                if (!video || !segments) return;
 
-                // Find segment that contains this timestamp
-                // Prefer segment that starts exactly at the timestamp (avoids boundary issues)
-                let matchingSegment = segments.find(seg => {
-                    const segStart = new Date(seg.start_time).getTime();
-                    return segStart === timestampMs;
+                // Segment whose wall-clock span contains the clicked time.
+                const seg = segments.find(s => {
+                    const ss = new Date(s.start_time).getTime();
+                    const se = new Date(s.end_time).getTime();
+                    return timestampMs >= ss && timestampMs < se;
                 });
-
-                // If no exact start match, find segment that contains the timestamp
-                // Use exclusive end boundary to avoid matching two segments at boundary
-                if (!matchingSegment) {
-                    matchingSegment = segments.find(seg => {
-                        const segStart = new Date(seg.start_time).getTime();
-                        const segEnd = new Date(seg.end_time).getTime();
-                        return timestampMs >= segStart && timestampMs < segEnd;
-                    });
+                if (!seg) {
+                    // True gap for this camera — nothing to show here.
+                    video.pause();
+                    return;
                 }
 
-                if (matchingSegment) {
-                    const segmentStart = matchingSegment.start_time.replace(' ', 'T');
-                    const segmentEnd = matchingSegment.end_time.replace(' ', 'T');
-                    const segmentStartMs = new Date(matchingSegment.start_time).getTime();
+                const segStartMs = new Date(seg.start_time).getTime();
+                const offsetSeconds = Math.max(0, (timestampMs - segStartMs) / 1000);
+                const segmentStart = seg.start_time.replace(' ', 'T');
+                const segmentEnd = seg.end_time.replace(' ', 'T');
+                const newSrc = `/api/playback/video/${encodeURIComponent(cameraName)}` +
+                    `?start_time=${encodeURIComponent(segmentStart)}&end_time=${encodeURIComponent(segmentEnd)}`;
 
-                    // Calculate offset within this segment (in seconds)
-                    const offsetSeconds = (timestampMs - segmentStartMs) / 1000;
+                // Already showing this exact segment?
+                let sameSegment = false;
+                const m = (video.src || '').match(/start_time=([^&]+)/);
+                if (m) {
+                    const curMs = new Date(decodeURIComponent(m[1])).getTime();
+                    sameSegment = Math.abs(curMs - segStartMs) <= 1000;
+                }
 
-                    // Build URL for this specific segment
-                    const cacheBuster = Date.now();
-                    const newSrc = `/api/playback/video/${encodeURIComponent(cameraName)}?start_time=${encodeURIComponent(segmentStart)}&end_time=${encodeURIComponent(segmentEnd)}&_=${cacheBuster}`;
+                // Seek then play. CLAMP the offset to what the file actually holds
+                // and ALWAYS keep playing — never freeze. If the file is shorter
+                // than the timeline claims (imperfect old data), play the closest
+                // available frame instead of pausing on a frozen frame.
+                const doSeek = () => {
+                    const d = video.duration;
+                    const target = (isFinite(d) && d > 0) ? Math.min(offsetSeconds, Math.max(0, d - 0.1)) : offsetSeconds;
+                    try { video.currentTime = Math.max(0, target); } catch (e) { /* seek before ready */ }
+                    video.playbackRate = playbackState.speed;
+                    playbackState.playing = true;
+                    video.play().catch(() => {});
+                    if (typeof updatePlayPauseButton === 'function') updatePlayPauseButton();
+                };
 
-                    // Check if we're already showing this segment by comparing timestamps
-                    const currentSrc = video.src;
-                    let needsReload = true;
-
-                    if (currentSrc) {
-                        const currentSegmentMatch = currentSrc.match(/start_time=([^&]+)/);
-                        if (currentSegmentMatch) {
-                            const currentSegmentStart = decodeURIComponent(currentSegmentMatch[1]);
-                            // Normalize both times to timestamps for accurate comparison
-                            const currentSegmentStartMs = new Date(currentSegmentStart).getTime();
-
-                            // If timestamps match (within 1 second tolerance), it's the same segment
-                            needsReload = Math.abs(currentSegmentStartMs - segmentStartMs) > 1000;
-                        }
-                    }
-
-                    if (!needsReload) {
-                        // Same segment — seek within the current video. If the
-                        // requested offset is past the segment's REAL playable
-                        // length (overstated metadata / dropped frames), treat it
-                        // as a gap: pause and leave the playhead where the user
-                        // clicked rather than playing from a wrong position.
-                        const seekWithin = () => {
-                            if (!isFinite(video.duration) || video.duration <= 0) return false;
-                            if (offsetSeconds > video.duration + 0.5) {
-                                video.pause();
-                                playbackState.playing = false;
-                                updatePlayPauseButton();
-                                return true;
-                            }
-                            video.currentTime = Math.max(0, Math.min(offsetSeconds, video.duration));
-                            playbackState.playing = true;
-                            video.play().catch(err => console.warn(`Failed to start playback for ${cameraName}:`, err));
-                            updatePlayPauseButton();
-                            return true;
-                        };
-                        if (!seekWithin()) {
-                            video.addEventListener('loadedmetadata', () => seekWithin(), { once: true });
-                        }
-                    } else {
-                        // Different segment, need to load it
-                        video.src = newSrc;
-                        video.playbackRate = playbackState.speed;
-
-                        // Seek to the correct position once metadata is loaded
-                        video.onloadedmetadata = () => {
-                            if (isFinite(video.duration) && video.duration > 0) {
-                                // Check if offset exceeds actual video duration (segment mismatch)
-                                if (offsetSeconds > video.duration + 1) {
-                                    const nextSegment = findNextSegmentForTime(cameraName, timestampMs, segments);
-                                    if (nextSegment && nextSegment !== matchingSegment) {
-                                        loadSegmentAndSeek(cameraName, video, nextSegment, timestampMs);
-                                        return;
-                                    } else {
-                                        console.warn(`  No next segment found, playing from start of next segment or end of current`);
-                                        video.currentTime = 0; // Start from beginning if we can't find exact position
-                                    }
-                                } else {
-                                    const seekTime = Math.max(0, Math.min(offsetSeconds, video.duration));
-                                    video.currentTime = seekTime;
-                                }
-                            } else {
-                                console.warn(`Duration invalid for ${cameraName}: ${video.duration}, seeking to ${offsetSeconds}s anyway`);
-                                video.currentTime = offsetSeconds;
-                            }
-
-                            // Auto-start playback after loading new segment
-                            playbackState.playing = true;
-                            video.play().catch(err => console.warn(`Failed to start playback for ${cameraName}:`, err));
-                            updatePlayPauseButton();
-                        };
-                    }
+                if (sameSegment) {
+                    if (video.readyState >= 1) doSeek();
+                    else video.onloadedmetadata = doSeek;
                 } else {
-                    console.warn(`⚠️  No segment found for ${cameraName} at timestamp ${timestampMs} (${clickedDate.toLocaleString()})`);
-                    console.warn(`  Timeline range: ${startMs} to ${endMs}`);
-                    console.warn(`  Clicked is ${timestampMs < startMs ? 'BEFORE' : 'AFTER'} timeline range`);
+                    video.src = newSrc;
+                    video.playbackRate = playbackState.speed;
+                    video.onloadedmetadata = doSeek;
                 }
             });
         }
