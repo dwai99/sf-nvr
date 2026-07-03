@@ -436,6 +436,40 @@
             pointer-events: auto;
         }
 
+        /* 5-minute time tick guides — visual only, never intercept seeks */
+        #timeline-ticks {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 10px;
+            right: 10px;
+            z-index: 2;
+            pointer-events: none;
+        }
+
+        #timeline-ticks .timeline-tick {
+            position: absolute;
+            top: 6px;
+            bottom: 20px;
+            width: 1px;
+            background: rgba(255, 255, 255, 0.18);
+            transform: translateX(-0.5px);
+        }
+
+        #timeline-ticks .timeline-tick.hour {
+            background: rgba(255, 255, 255, 0.4);
+        }
+
+        #timeline-ticks .timeline-tick-label {
+            position: absolute;
+            bottom: 2px;
+            transform: translateX(-50%);
+            font-size: 10px;
+            color: rgba(255, 255, 255, 0.55);
+            white-space: nowrap;
+            pointer-events: none;
+        }
+
         .timeline-segment {
             position: absolute;
             top: 0;
@@ -1139,6 +1173,8 @@
                      onmousedown="startDrag(event)"
                      onmousemove="handleDrag(event)"
                      onmouseleave="hideTooltip()">
+                    <!-- 5-minute time tick guides (below markers, above track) -->
+                    <div id="timeline-ticks"></div>
                     <!-- Markers layer above track -->
                     <div id="timeline-markers"></div>
                     <!-- Main timeline track with segments -->
@@ -2009,6 +2045,46 @@
             }
         }
 
+        function renderTimeTicks(startMs, endMs, rangeMs) {
+            const ticks = document.getElementById('timeline-ticks');
+            if (!ticks) return;
+            ticks.innerHTML = '';
+            if (!(rangeMs > 0)) return;
+
+            // Tick every 5 minutes, but thin out labels on wide ranges so they
+            // don't overlap. Aim for a label roughly every ~9% of the width.
+            const stepMs = 5 * 60 * 1000;
+            const rangeMin = rangeMs / 60000;
+            const labelEveryMin = rangeMin <= 20 ? 5 : rangeMin <= 60 ? 15 : rangeMin <= 180 ? 30 : 60;
+
+            // First 5-min boundary at or after startMs.
+            let t = Math.ceil(startMs / stepMs) * stepMs;
+            for (; t <= endMs; t += stepMs) {
+                const pct = ((t - startMs) / rangeMs) * 100;
+                if (pct < 0 || pct > 100) continue;
+                const d = new Date(t);
+                const onHour = d.getMinutes() === 0;
+
+                const line = document.createElement('div');
+                line.className = 'timeline-tick' + (onHour ? ' hour' : '');
+                line.style.left = pct + '%';
+                ticks.appendChild(line);
+
+                // Label on the chosen cadence (always label the top of the hour).
+                if (onHour || d.getMinutes() % labelEveryMin === 0) {
+                    const label = document.createElement('div');
+                    label.className = 'timeline-tick-label';
+                    label.style.left = pct + '%';
+                    let h = d.getHours();
+                    const ampm = h >= 12 ? 'PM' : 'AM';
+                    h = h % 12 || 12;
+                    const mm = String(d.getMinutes()).padStart(2, '0');
+                    label.textContent = `${h}:${mm}`;
+                    ticks.appendChild(label);
+                }
+            }
+        }
+
         function updateTimeline() {
             const markersContainer = document.getElementById('timeline-markers');
             const timelineTrack = document.querySelector('.timeline-track');
@@ -2024,6 +2100,8 @@
             const startMs = new Date(playbackState.startTime).getTime();
             const endMs = new Date(playbackState.endTime).getTime();
             const rangeMs = endMs - startMs;
+
+            renderTimeTicks(startMs, endMs, rangeMs);
 
             // Render segments and gaps for each selected camera
             selectedCameras.forEach(cameraId => {
