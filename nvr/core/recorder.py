@@ -108,6 +108,13 @@ class RTSPRecorder:
         # Consecutive corrupt-frame drops; fail-open past a cap so a false
         # positive can't freeze the stream.
         self._consecutive_corrupt = 0
+        # Actual measured capture rate (frames/sec). The camera reports 15fps but
+        # WiFi often delivers far fewer, so writing at the reported fps produced
+        # sped-up, time-compressed video whose timeline didn't match wall-clock
+        # (breaking seek + motion-marker alignment). We write each segment at the
+        # rate the PREVIOUS segment actually captured, so video plays real-time.
+        self._segment_frame_count = 0
+        self._measured_fps = None
         self.frame_lock = threading.Lock()
         # Shared live-view render cache: viewers requesting the same
         # (raw, quality, realtime) share one decode/resize/encode per source
@@ -384,6 +391,7 @@ class RTSPRecorder:
                         if self.writer:
                             self.writer.write(frame)
                             self._frames_written_total += 1
+                            self._segment_frame_count += 1
                             # _check_segment_growth() updates write_failed based on
                             # whether the file is actually growing on disk (catches
                             # silent mid-segment write loss, e.g. volume read-only).
@@ -511,9 +519,23 @@ class RTSPRecorder:
         """
         self.has_motion = has_motion
 
+    def _update_measured_fps(self) -> None:
+        """Record the actual capture rate of the segment just finished, so the
+        next segment's VideoWriter is created at a real-time rate. Ignores tiny
+        samples (too noisy) and smooths with an EMA. Clamped to a sane range."""
+        elapsed = time.monotonic() - self._segment_start_monotonic
+        if self._segment_frame_count >= 30 and elapsed >= 20:
+            actual = self._segment_frame_count / elapsed
+            actual = max(1.0, min(30.0, actual))
+            if self._measured_fps is None:
+                self._measured_fps = actual
+            else:
+                self._measured_fps = 0.5 * self._measured_fps + 0.5 * actual
+
     def _close_current_segment(self):
         """Close the current recording segment"""
         if self.writer and self.current_segment_path and self.playback_db:
+            self._update_measured_fps()
             self.writer.release()
             self.writer = None
 
@@ -618,6 +640,7 @@ class RTSPRecorder:
         """Start a new recording segment"""
         # Finalize previous segment in database
         if self.writer and self.current_segment_path and self.playback_db:
+            self._update_measured_fps()
             self.writer.release()
 
             # Calculate actual segment duration and size (monotonic, clamped)
@@ -650,6 +673,7 @@ class RTSPRecorder:
 
         self.current_segment_start = datetime(now.year, now.month, now.day, boundary_hour, boundary_minute, 0)
         self._segment_start_monotonic = time.monotonic()
+        self._segment_frame_count = 0
         timestamp = self.current_segment_start.strftime("%Y%m%d_%H%M%S")
         filename = f"{timestamp}.{self.container}"
         filepath = self.camera_storage / filename
@@ -664,6 +688,15 @@ class RTSPRecorder:
                 n += 1
         self.current_segment_path = filepath
 
+        # Record at the actual measured capture rate, not the camera's reported
+        # fps. WiFi often delivers far fewer frames than reported (e.g. 6 vs 15),
+        # and writing at the reported rate produced sped-up, time-compressed
+        # video whose length didn't match wall-clock — which broke seeking and
+        # made motion markers land in gaps. Using the measured rate keeps video
+        # real-time and the timeline accurate. Falls back to reported fps until a
+        # segment has been measured.
+        writer_fps = self._measured_fps if self._measured_fps else fps
+
         # Create video writer
         fourcc = cv2.VideoWriter_fourcc(*self._get_fourcc())
 
@@ -675,20 +708,23 @@ class RTSPRecorder:
             fourcc = cv2.VideoWriter_fourcc(*"mp4v")
             logger.info("Using mp4v codec for macOS compatibility")
 
-        logger.info(f"Creating VideoWriter: {filepath}, fps={fps}, dimensions={width}x{height}, fourcc={fourcc}")
+        logger.info(
+            f"Creating VideoWriter: {filepath}, fps={writer_fps:.1f} (reported {fps}), "
+            f"dimensions={width}x{height}, fourcc={fourcc}"
+        )
 
-        self.writer = cv2.VideoWriter(str(filepath), fourcc, fps, (width, height))
+        self.writer = cv2.VideoWriter(str(filepath), fourcc, writer_fps, (width, height))
 
         logger.info(f"VideoWriter created, isOpened={self.writer.isOpened()}")
 
         # Verify writer opened successfully
         if not self.writer.isOpened():
             logger.error(f"Failed to open VideoWriter for {filepath}")
-            logger.error(f"Attempted codec: {fourcc}, fps: {fps}, dimensions: {width}x{height}")
+            logger.error(f"Attempted codec: {fourcc}, fps: {writer_fps}, dimensions: {width}x{height}")
             # Try fallback to mjpeg
             logger.info("Trying fallback to MJPG codec...")
             fourcc = cv2.VideoWriter_fourcc(*"MJPG")
-            self.writer = cv2.VideoWriter(str(filepath), fourcc, fps, (width, height))
+            self.writer = cv2.VideoWriter(str(filepath), fourcc, writer_fps, (width, height))
             if not self.writer.isOpened():
                 logger.error("VideoWriter failed to open with MJPG fallback!")
                 self.writer = None
@@ -701,7 +737,7 @@ class RTSPRecorder:
                 camera_id=self.camera_id,
                 file_path=str(filepath),
                 start_time=self.current_segment_start,
-                fps=fps,
+                fps=writer_fps,
                 width=width,
                 height=height,
             )
@@ -1003,10 +1039,13 @@ class RecorderManager:
             if not camera_dir.is_dir():
                 continue
 
-            for video_file in camera_dir.glob(f"*.{self.container}"):
+            # RecorderManager has no single container attr (that's per-recorder);
+            # segments are .mp4. Match the timestamp prefix and skip uniquified
+            # (_1) / transcoded (_h264) suffixes that don't parse as a timestamp.
+            for video_file in camera_dir.glob("*.mp4"):
                 try:
-                    # Parse timestamp from filename
-                    timestamp_str = video_file.stem
+                    # Parse timestamp from filename (strict prefix: YYYYmmdd_HHMMSS)
+                    timestamp_str = video_file.stem[:15]
                     file_time = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
 
                     if file_time < cutoff:
