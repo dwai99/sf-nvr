@@ -30,7 +30,7 @@ class HighResEventRecorder:
         cooldown_seconds: float = 5.0,
         max_duration_seconds: float = 60.0,
         output_width: int = 1920,
-        budget_seconds_per_hour: float = 600.0,
+        max_seconds_per_hour: float = 600.0,
     ):
         self.storage_path = Path(storage_path)
         self.playback_db = playback_db
@@ -42,7 +42,7 @@ class HighResEventRecorder:
         # record per rolling hour. Without this, a scene with near-constant motion
         # (trees, traffic, a busy patio) records essentially continuously and
         # fills the disk — which is exactly what happened.
-        self.budget_seconds_per_hour = budget_seconds_per_hour
+        self.max_seconds_per_hour = max_seconds_per_hour
         self._lock = threading.Lock()
         self._active = set()  # camera_ids currently capturing
         self._sem = threading.Semaphore(max_concurrent)
@@ -54,10 +54,10 @@ class HighResEventRecorder:
         with self._lock:
             if camera_id in self._active:
                 return  # already capturing; the running loop extends with continued motion
-            if self._spent_last_hour(camera_id) >= self.budget_seconds_per_hour:
+            if self._spent_last_hour(camera_id) >= self.max_seconds_per_hour:
                 logger.debug(
-                    f"High-res event skipped for {camera_name}: hourly budget "
-                    f"({self.budget_seconds_per_hour:.0f}s) exhausted"
+                    f"High-res event skipped for {camera_name}: hourly limit "
+                    f"({self.max_seconds_per_hour:.0f}s) reached"
                 )
                 return
             if not self._sem.acquire(blocking=False):
