@@ -687,11 +687,16 @@ async def disk_monitor_task():
 # Web Routes
 
 
+# These pages carry inline JS/CSS, so a cached copy silently runs stale UI code.
+# Force revalidation so a browser reload always picks up the current build.
+NO_CACHE_HEADERS = {"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache", "Expires": "0"}
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     """Main dashboard page"""
     cameras = config.cameras
-    return templates.TemplateResponse("index.html", {"request": request, "cameras": cameras})
+    return templates.TemplateResponse("index.html", {"request": request, "cameras": cameras}, headers=NO_CACHE_HEADERS)
 
 
 @app.get("/fullscreen/{camera_id}", response_class=HTMLResponse)
@@ -704,20 +709,22 @@ async def fullscreen_view(request: Request, camera_id: str):
             camera_name = camera["name"]
             break
     return templates.TemplateResponse(
-        "fullscreen.html", {"request": request, "camera_id": camera_id, "camera_name": camera_name}
+        "fullscreen.html",
+        {"request": request, "camera_id": camera_id, "camera_name": camera_name},
+        headers=NO_CACHE_HEADERS,
     )
 
 
 @app.get("/playback", response_class=HTMLResponse)
 async def playback_view(request: Request):
     """Playback/archive view"""
-    return templates.TemplateResponse("playback.html", {"request": request})
+    return templates.TemplateResponse("playback.html", {"request": request}, headers=NO_CACHE_HEADERS)
 
 
 @app.get("/settings", response_class=HTMLResponse)
 async def settings_view(request: Request):
     """Settings/configuration view"""
-    return templates.TemplateResponse("settings.html", {"request": request})
+    return templates.TemplateResponse("settings.html", {"request": request}, headers=NO_CACHE_HEADERS)
 
 
 @app.get("/api/cameras")
