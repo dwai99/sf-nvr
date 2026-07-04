@@ -520,21 +520,22 @@ async def stream_video_segment(
         if file:
             from nvr.core.config import config as nvr_config
 
-            storage_path = nvr_config.storage_path
-            req_path = Path(file)
+            storage_root = Path(nvr_config.storage_path).resolve()
             try:
-                resolved = req_path.resolve()
-                if not str(resolved).startswith(str(Path(storage_path).resolve())):
-                    raise HTTPException(status_code=403, detail="Access denied")
-            except HTTPException:
-                raise
-            except Exception:
-                raise HTTPException(status_code=400, detail="Invalid file path")
-            if not req_path.exists():
+                resolved = Path(file).resolve()
+                # Containment check via relative_to (not a string prefix, which
+                # would also match sibling dirs like "<root>_evil").
+                resolved.relative_to(storage_root)
+            except (ValueError, RuntimeError, OSError):
+                raise HTTPException(status_code=403, detail="Access denied")
+            # Only ever serve recording files, never anything else under the root.
+            if resolved.suffix.lower() != ".mp4":
+                raise HTTPException(status_code=403, detail="Access denied")
+            if not resolved.exists():
                 raise HTTPException(status_code=404, detail="Recording file not found")
             # file_path already holds the transcoded (real-time) content once the
             # transcoder has run (it replaces the original in place).
-            return range_requests_response(req_path, request, content_type="video/mp4")
+            return range_requests_response(resolved, request, content_type="video/mp4")
 
         start_dt = datetime.fromisoformat(start_time)
 
