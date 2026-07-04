@@ -295,7 +295,10 @@ class RTSPRecorder:
                 retry_delay = min(retry_delay * 2, max_retry_delay)
 
             finally:
-                self._cleanup()
+                # While still recording (a reconnect), keep the current segment
+                # open so a brief drop doesn't split the slot into a new file.
+                # On stop (is_recording False), finalize and release everything.
+                self._cleanup(keep_segment=self.is_recording)
 
     def _record_frames(self, fps: float, width: int, height: int) -> None:
         """Record frames from stream"""
@@ -343,7 +346,10 @@ class RTSPRecorder:
 
         # Track when the next segment should start (aligned to clock intervals)
         next_segment_time = self._get_next_segment_boundary()
-        current_segment_started = False
+        # If a segment is already open (kept alive across a reconnect), continue
+        # writing to it rather than starting a new file. It still rolls over at
+        # the next boundary via the now >= next_segment_time check below.
+        current_segment_started = self.writer is not None
 
         while self.is_recording:
             ret, frame = self.capture.read()
@@ -766,26 +772,34 @@ class RTSPRecorder:
         codec_map = {"h264": "H264", "h265": "HEVC", "mjpeg": "MJPG", "mpeg4": "MP4V"}
         return codec_map.get(self.codec.lower(), "H264")
 
-    def _cleanup(self) -> None:
+    def _cleanup(self, keep_segment: bool = False) -> None:
         """Clean up resources.
 
-        Finalizes any open segment first so a disconnect/stop doesn't leave an
-        orphaned NULL-end DB row and an untranscoded file. This matters for
-        flaky cameras (e.g. weak wifi) that reconnect frequently.
-        _close_current_segment() is idempotent (guards on self.writer).
+        keep_segment=True (used between reconnects while still recording) releases
+        only the dead capture and LEAVES the current segment's writer open, so a
+        brief WiFi drop resumes into the SAME file instead of splitting the 5-min
+        slot into many overlapping fragments. The segment is finalized later at
+        the next boundary or on stop.
+
+        keep_segment=False (stop / shutdown) finalizes any open segment first so a
+        disconnect/stop doesn't leave an orphaned NULL-end DB row and an
+        untranscoded file. _close_current_segment() is idempotent (guards on
+        self.writer).
         """
-        try:
-            if self.writer and self.current_segment_path and self.playback_db:
-                self._close_current_segment()
-        except Exception as e:
-            logger.warning(f"Error finalizing segment on cleanup for {self.camera_name}: {e}")
+        if not keep_segment:
+            try:
+                if self.writer and self.current_segment_path and self.playback_db:
+                    self._close_current_segment()
+            except Exception as e:
+                logger.warning(f"Error finalizing segment on cleanup for {self.camera_name}: {e}")
 
-        self.actively_writing = False
+            self.actively_writing = False
 
-        if self.writer:
-            self.writer.release()
-            self.writer = None
+            if self.writer:
+                self.writer.release()
+                self.writer = None
 
+        # Always release the (now-dead) capture — it must be re-opened on reconnect.
         if self.capture:
             self.capture.release()
             self.capture = None
