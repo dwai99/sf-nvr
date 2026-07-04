@@ -2085,6 +2085,24 @@
             }
         }
 
+        // A segment's TRUE content window on the timeline. start_time is the
+        // 5-minute boundary, but after a reconnect the file holds only
+        // duration_seconds of footage, ending at end_time (its close time). So
+        // the content actually occupies [end_time - duration, end_time]. Using
+        // this everywhere (drawing + seeking) makes the timeline match the file:
+        // segments are drawn where the footage is, and a click maps to a real
+        // frame instead of empty space that freezes the video.
+        function segStartMs(seg) {
+            if (seg.duration_seconds && seg.duration_seconds > 0 && seg.end_time) {
+                return new Date(seg.end_time.replace(' ', 'T')).getTime() - seg.duration_seconds * 1000;
+            }
+            return new Date((seg.start_time || '').replace(' ', 'T')).getTime();
+        }
+        function segEndMs(seg) {
+            if (seg.end_time) return new Date(seg.end_time.replace(' ', 'T')).getTime();
+            return new Date((seg.start_time || '').replace(' ', 'T')).getTime() + 300000;
+        }
+
         function updateTimeline() {
             const markersContainer = document.getElementById('timeline-markers');
             const timelineTrack = document.querySelector('.timeline-track');
@@ -2110,15 +2128,13 @@
 
                 const segments = currentRecordings[cameraId];
 
-                // Sort segments by start time
-                const sortedSegments = [...segments].sort((a, b) =>
-                    new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
-                );
+                // Sort by true content start
+                const sortedSegments = [...segments].sort((a, b) => segStartMs(a) - segStartMs(b));
 
                 // Render each segment
                 sortedSegments.forEach((segment, index) => {
-                    const segmentStartMs = new Date(segment.start_time).getTime();
-                    const segmentEndMs = new Date(segment.end_time).getTime();
+                    const segmentStartMs = segStartMs(segment);
+                    const segmentEndMs = segEndMs(segment);
 
                     // Calculate position and width as percentage
                     const startPercent = Math.max(0, ((segmentStartMs - startMs) / rangeMs) * 100);
@@ -2584,13 +2600,13 @@
             // load/seek, so it can't snap back to the currently-playing video.
             seekSettleUntil = Date.now() + 1200;
 
-            // Does any selected camera have footage at the clicked time?
+            // Does any selected camera have footage at the clicked time? Use the
+            // content window (matches how segments are drawn) so a click on a
+            // drawn segment always seeks instead of being treated as a gap.
             let hasValidSegment = false;
             selectedCameras.forEach(cameraName => {
                 (currentRecordings[cameraName] || []).forEach(seg => {
-                    const segStart = new Date(seg.start_time).getTime();
-                    const segEnd = new Date(seg.end_time).getTime();
-                    if (targetTimeMs >= segStart && targetTimeMs < segEnd) hasValidSegment = true;
+                    if (targetTimeMs >= segStartMs(seg) && targetTimeMs < segEndMs(seg)) hasValidSegment = true;
                 });
             });
 
@@ -2621,31 +2637,31 @@
                 const segments = currentRecordings[cameraName];
                 if (!video || !segments) return;
 
-                // Segment whose wall-clock span contains the clicked time.
-                const seg = segments.find(s => {
-                    const ss = new Date(s.start_time).getTime();
-                    const se = new Date(s.end_time).getTime();
-                    return timestampMs >= ss && timestampMs < se;
-                });
+                // Segment whose CONTENT window contains the clicked time.
+                const seg = segments.find(s => timestampMs >= segStartMs(s) && timestampMs < segEndMs(s));
                 if (!seg) {
                     // True gap for this camera — nothing to show here.
                     video.pause();
                     return;
                 }
 
-                const segStartMs = new Date(seg.start_time).getTime();
-                const offsetSeconds = Math.max(0, (timestampMs - segStartMs) / 1000);
+                // Offset into the FILE = clicked time minus the content start.
+                const contentStartMs = segStartMs(seg);
+                const offsetSeconds = Math.max(0, (timestampMs - contentStartMs) / 1000);
                 const segmentStart = seg.start_time.replace(' ', 'T');
                 const segmentEnd = seg.end_time.replace(' ', 'T');
+                // Load by EXACT file path — start_time alone is ambiguous when a
+                // slot fragmented into multiple files (each stored with the same
+                // boundary start_time).
                 const newSrc = `/api/playback/video/${encodeURIComponent(cameraName)}` +
-                    `?start_time=${encodeURIComponent(segmentStart)}&end_time=${encodeURIComponent(segmentEnd)}`;
+                    `?start_time=${encodeURIComponent(segmentStart)}&end_time=${encodeURIComponent(segmentEnd)}` +
+                    (seg.file_path ? `&file=${encodeURIComponent(seg.file_path)}` : '');
 
-                // Already showing this exact segment?
+                // Already showing this exact file?
                 let sameSegment = false;
-                const m = (video.src || '').match(/start_time=([^&]+)/);
-                if (m) {
-                    const curMs = new Date(decodeURIComponent(m[1])).getTime();
-                    sameSegment = Math.abs(curMs - segStartMs) <= 1000;
+                const fm = (video.src || '').match(/file=([^&]+)/);
+                if (fm && seg.file_path) {
+                    sameSegment = decodeURIComponent(fm[1]) === seg.file_path;
                 }
 
                 // Seek then play. CLAMP the offset to what the file actually holds
@@ -3535,7 +3551,8 @@
             if (Object.keys(videoElements).length === 0) return;
 
             // Get first video's current time as reference
-            const firstVideo = Object.values(videoElements)[0];
+            const firstCam = Object.keys(videoElements)[0];
+            const firstVideo = videoElements[firstCam];
             // Only let the loop drive the handle from a video that is actually
             // playing, and not during the post-seek settle window. Otherwise a
             // paused/just-sought video would yank the handle off the clicked spot.
@@ -3545,16 +3562,33 @@
 
                 // Update progress bar - calculate position within ENTIRE TIMELINE RANGE
                 if (duration > 0 && playbackState.startTime && playbackState.endTime) {
-                    // Get the segment's start time from the video source URL
+                    // Get the segment start/end/file from the video source URL
                     const videoSrc = firstVideo.src;
                     const startTimeMatch = videoSrc.match(/start_time=([^&]+)/);
+                    const endTimeMatch = videoSrc.match(/end_time=([^&]+)/);
+                    const fileMatch = videoSrc.match(/file=([^&]+)/);
 
                     if (startTimeMatch) {
-                        const segmentStartTime = decodeURIComponent(startTimeMatch[1]);
-                        const segmentStartMs = new Date(segmentStartTime).getTime();
+                        const srcBoundaryMs = new Date(decodeURIComponent(startTimeMatch[1])).getTime();
+                        const srcEndMs = endTimeMatch ? new Date(decodeURIComponent(endTimeMatch[1])).getTime() : null;
+                        const srcFile = fileMatch ? decodeURIComponent(fileMatch[1]) : null;
 
-                        // Calculate actual timestamp = segment start + video current time
-                        const currentTimestampMs = segmentStartMs + (videoCurrentTime * 1000);
+                        // Map file position to wall-clock via the segment's CONTENT
+                        // start (start_time is the boundary; content may begin later
+                        // after a reconnect). Match by exact file when available,
+                        // else by start+end.
+                        const segs = currentRecordings[firstCam] || [];
+                        let contentStartMs = srcBoundaryMs;
+                        const match = segs.find(s => {
+                            if (srcFile) return s.file_path === srcFile;
+                            const sb = new Date((s.start_time || '').replace(' ', 'T')).getTime();
+                            const se = new Date((s.end_time || '').replace(' ', 'T')).getTime();
+                            return Math.abs(sb - srcBoundaryMs) <= 1000 && (srcEndMs === null || Math.abs(se - srcEndMs) <= 1000);
+                        });
+                        if (match) contentStartMs = segStartMs(match);
+
+                        // Calculate actual timestamp = content start + video current time
+                        const currentTimestampMs = contentStartMs + (videoCurrentTime * 1000);
 
                         // Calculate percentage within timeline range
                         const startMs = new Date(playbackState.startTime).getTime();
@@ -3564,34 +3598,26 @@
                         if (rangeMs > 0) {
                             const percent = ((currentTimestampMs - startMs) / rangeMs) * 100;
 
-                            // Only advance the handle when the playing video maps
-                            // INSIDE the visible range. Right after a seek the video
-                            // src is briefly stale (old segment), which yields an
-                            // out-of-range value; applying it would yank the handle
-                            // off the track and undo a click-to-seek the user just did.
-                            const handleEl = document.getElementById('timeline-handle');
-                            const currentHandlePct = parseFloat(handleEl.style.left) || 0;
-                            // Advance the handle ONLY for smooth forward playback.
-                            // Never let a stale or mis-seeked video position jump
-                            // the handle away from where the user clicked — broken
-                            // recordings (dropped frames / wrong fps) report wildly
-                            // inconsistent times that would otherwise yank it around.
-                            const smoothForward = percent >= currentHandlePct - 0.3 && percent <= currentHandlePct + 5;
-                            if (percent >= 0 && percent <= 100 && smoothForward) {
-                                updateTimelinePosition(percent);
+                            // The handle simply FOLLOWS the playing video. No
+                            // "smooth-forward" gate: that stranded the handle the
+                            // moment the video ran more than a few percent ahead of
+                            // it (and froze the clock, since the displays only
+                            // updated inside that gate). updateTimelinePosition
+                            // clamps to [0,100]. The post-click settle window
+                            // (seekSettleUntil) is what protects a fresh seek.
+                            updateTimelinePosition(percent);
 
-                                // Update playbackState.currentTime as offset from timeline start
-                                playbackState.currentTime = (currentTimestampMs - startMs) / 1000;
+                            // Update playbackState.currentTime as offset from timeline start
+                            playbackState.currentTime = (currentTimestampMs - startMs) / 1000;
 
-                                // Update timestamp display (actual recording time)
-                                const currentDate = new Date(currentTimestampMs);
-                                document.getElementById('timestamp-display').textContent =
-                                    currentDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+                            // Update timestamp display (actual recording time)
+                            const currentDate = new Date(currentTimestampMs);
+                            document.getElementById('timestamp-display').textContent =
+                                currentDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
 
-                                // Update elapsed time display (time since start of selected range)
-                                const elapsedSeconds = (currentTimestampMs - startMs) / 1000;
-                                document.getElementById('current-time-display').textContent = formatDuration(elapsedSeconds);
-                            }
+                            // Update elapsed time display (time since start of selected range)
+                            const elapsedSeconds = (currentTimestampMs - startMs) / 1000;
+                            document.getElementById('current-time-display').textContent = formatDuration(elapsedSeconds);
                         }
                     }
                 } else {

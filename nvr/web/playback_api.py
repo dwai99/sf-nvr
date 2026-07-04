@@ -501,6 +501,7 @@ async def stream_video_segment(
     start_time: str = Query(..., description="ISO format datetime"),
     end_time: Optional[str] = Query(None, description="ISO format datetime"),
     speed: float = Query(1.0, description="Playback speed (1.0 = normal, 4.0 = 4x, 8.0 = 8x)"),
+    file: Optional[str] = Query(None, description="Exact segment file path (unambiguous; preferred)"),
 ):
     """Stream video for a time range (may concatenate multiple segments).
 
@@ -511,6 +512,30 @@ async def stream_video_segment(
     from nvr.web.api import playback_db
 
     try:
+        # Preferred path: serve an EXACT file. Multiple segments can share a
+        # start_time (a 5-min slot fragmented by reconnects), so resolving by time
+        # is ambiguous and can serve the wrong file. When the client passes the
+        # segment's file_path we serve exactly that (with the same path-traversal
+        # guard and transcoded-variant preference used elsewhere).
+        if file:
+            from nvr.core.config import config as nvr_config
+
+            storage_path = nvr_config.storage_path
+            req_path = Path(file)
+            try:
+                resolved = req_path.resolve()
+                if not str(resolved).startswith(str(Path(storage_path).resolve())):
+                    raise HTTPException(status_code=403, detail="Access denied")
+            except HTTPException:
+                raise
+            except Exception:
+                raise HTTPException(status_code=400, detail="Invalid file path")
+            if not req_path.exists():
+                raise HTTPException(status_code=404, detail="Recording file not found")
+            # file_path already holds the transcoded (real-time) content once the
+            # transcoder has run (it replaces the original in place).
+            return range_requests_response(req_path, request, content_type="video/mp4")
+
         start_dt = datetime.fromisoformat(start_time)
 
         if end_time:
