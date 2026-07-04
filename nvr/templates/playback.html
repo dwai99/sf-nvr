@@ -2530,9 +2530,13 @@
         let mouseDownX = 0;
         let mouseDownTime = 0;
         let isDragging = false;
-        // Until this time, the progress-sync loop leaves the handle alone so a
-        // fresh click/seek isn't immediately overwritten by the playing video.
+        // Adaptive seek settle: after a click we hold the handle at the clicked
+        // time until the video ACTUALLY reaches it (pendingSeekTargetMs), with a
+        // hard timeout (seekSettleUntil) as a backstop. A fixed window was too
+        // short on a slow seek — the loop would briefly snap the handle to the
+        // newly-loaded segment's start (ct=0) before the seek landed.
         let seekSettleUntil = 0;
+        let pendingSeekTargetMs = null;
 
         function startDrag(event) {
             mouseDownX = event.clientX;
@@ -2595,10 +2599,12 @@
             // I clicked"; whether footage exists there is handled below.
             updateTimelinePosition(percent);
             playbackState.currentTime = (targetTimeMs - startMs) / 1000;
+            setClockDisplays(targetTimeMs, startMs);
 
-            // Briefly stop the progress-sync loop from moving the handle while we
-            // load/seek, so it can't snap back to the currently-playing video.
-            seekSettleUntil = Date.now() + 1200;
+            // Hold the handle at the clicked time until the video actually reaches
+            // it (checked in the sync loop); seekSettleUntil is the hard backstop.
+            pendingSeekTargetMs = targetTimeMs;
+            seekSettleUntil = Date.now() + 4000;
 
             // Does any selected camera have footage at the clicked time? Use the
             // content window (matches how segments are drawn) so a click on a
@@ -2771,6 +2777,16 @@
             const handle = document.getElementById('timeline-handle');
             progress.style.width = clamped + '%';
             handle.style.left = clamped + '%';
+        }
+
+        // Set the clock/elapsed displays to a wall-clock time immediately (so a
+        // click shows the target time at once instead of a stale value while the
+        // video loads).
+        function setClockDisplays(timestampMs, startMs) {
+            const ts = document.getElementById('timestamp-display');
+            if (ts) ts.textContent = new Date(timestampMs).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+            const cur = document.getElementById('current-time-display');
+            if (cur) cur.textContent = formatDuration((timestampMs - startMs) / 1000);
         }
 
         function showTooltip(event) {
@@ -3554,9 +3570,9 @@
             const firstCam = Object.keys(videoElements)[0];
             const firstVideo = videoElements[firstCam];
             // Only let the loop drive the handle from a video that is actually
-            // playing, and not during the post-seek settle window. Otherwise a
-            // paused/just-sought video would yank the handle off the clicked spot.
-            if (firstVideo && !firstVideo.paused && !playbackState.isDragging && Date.now() >= seekSettleUntil) {
+            // playing and not being dragged. The pending-seek hold (below) keeps
+            // it off the handle until a fresh seek lands.
+            if (firstVideo && !firstVideo.paused && !playbackState.isDragging) {
                 const duration = firstVideo.duration || 0;
                 const videoCurrentTime = firstVideo.currentTime || 0;
 
@@ -3589,6 +3605,19 @@
 
                         // Calculate actual timestamp = content start + video current time
                         const currentTimestampMs = contentStartMs + (videoCurrentTime * 1000);
+
+                        // Adaptive seek hold: after a click, DON'T follow the video
+                        // until it has actually reached the clicked time (or a hard
+                        // timeout). This stops the handle from briefly snapping to
+                        // the newly-loaded segment's start while the seek completes.
+                        if (pendingSeekTargetMs !== null) {
+                            const reached = Math.abs(currentTimestampMs - pendingSeekTargetMs) <= 1500;
+                            if (reached || Date.now() >= seekSettleUntil) {
+                                pendingSeekTargetMs = null; // seek landed (or gave up) — resume following
+                            } else {
+                                return; // hold the handle where the user clicked
+                            }
+                        }
 
                         // Calculate percentage within timeline range
                         const startMs = new Date(playbackState.startTime).getTime();
