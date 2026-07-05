@@ -1087,7 +1087,7 @@
 <body>
     <div class="header">
         <div>
-            <h1>📼 Playback Archive <span style="font-size:0.5em; color:#4a9eff; vertical-align:middle;" id="build-badge">build 2026-07-04b</span></h1>
+            <h1>📼 Playback Archive <span style="font-size:0.5em; color:#4a9eff; vertical-align:middle;" id="build-badge">build 2026-07-04c · event-nav</span></h1>
         </div>
         <div class="stats">
             <div class="stat">
@@ -1164,9 +1164,9 @@
 
     <div class="timeline-panel">
         <div class="playback-controls">
-            <button class="speed-btn" onclick="stepFrame(-1)" title="Previous frame (,)" style="font-size: 1em; padding: 4px 6px;">⏮</button>
+            <button class="speed-btn" onclick="jumpToEvent(-1)" title="Previous event (P) — jump to the prior clip; frame-step is , key" style="font-size: 1em; padding: 4px 6px;">⏮</button>
             <button class="play-button paused" id="play-button" onclick="togglePlayPause()" disabled></button>
-            <button class="speed-btn" onclick="stepFrame(1)" title="Next frame (.)" style="font-size: 1em; padding: 4px 6px;">⏭</button>
+            <button class="speed-btn" onclick="jumpToEvent(1)" title="Next event (N) — jump to the next clip; frame-step is . key" style="font-size: 1em; padding: 4px 6px;">⏭</button>
 
             <div class="timeline-container">
                 <div class="timeline-slider-wrapper" id="timeline-slider"
@@ -2348,64 +2348,35 @@
             }
         }
 
+        // Auto-advance to the next event when the current segment ends or a
+        // segment can't load. Delegates to jumpToEvent so it uses the same
+        // content-window + exact-file seek logic; debounced so multiple videos'
+        // onended/onerror don't stampede.
         function skipToNextSegment(cameraName) {
-            // Get segments for this camera
-            const segments = currentRecordings[cameraName];
-            if (!segments || segments.length === 0) {
-                return;
-            }
+            const nowT = Date.now();
+            if (nowT - lastEventJump < 600) return; // already advanced just now
+            lastEventJump = nowT;
 
-            // Get current video element
-            const video = videoElements[cameraName];
-            if (!video) return;
+            // Is there any event after the current playhead?
+            const startMs = new Date(playbackState.startTime).getTime();
+            const endMs = new Date(playbackState.endTime).getTime();
+            const nowMs = startMs + (playbackState.currentTime * 1000);
+            let hasNext = false;
+            selectedCameras.forEach(cam => (currentRecordings[cam] || []).forEach(seg => {
+                if (segStartMs(seg) > nowMs + 750 && segStartMs(seg) <= endMs) hasNext = true;
+            }));
 
-            // Parse current segment start time from video source
-            const videoSrc = video.src;
-            const startTimeMatch = videoSrc.match(/start_time=([^&]+)/);
-            if (!startTimeMatch) {
-                return;
-            }
-
-            const currentSegmentStart = decodeURIComponent(startTimeMatch[1]);
-            const currentSegmentMs = new Date(currentSegmentStart).getTime();
-
-            // Find next segment after current one
-            const sortedSegments = [...segments].sort((a, b) =>
-                new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
-            );
-
-            let nextSegment = null;
-            for (const segment of sortedSegments) {
-                const segmentMs = new Date(segment.start_time).getTime();
-                if (segmentMs > currentSegmentMs) {
-                    nextSegment = segment;
-                    break;
-                }
-            }
-
-            if (nextSegment) {
-                // Calculate gap duration
-                const gapStart = new Date(videoSrc.match(/end_time=([^&]+)/)?.[1] || currentSegmentStart);
-                const gapEnd = new Date(nextSegment.start_time);
-                const gapSeconds = Math.round((gapEnd - gapStart) / 1000);
-
-                // Load next segment
-                const cacheBuster = Date.now();
-                const endDateTime = playbackState.endTime;
-                const newSrc = `/api/playback/video/${encodeURIComponent(cameraName)}?start_time=${encodeURIComponent(nextSegment.start_time)}&end_time=${encodeURIComponent(endDateTime)}&_=${cacheBuster}`;
-
-                // Update video source and play
-                video.src = newSrc;
-                video.playbackRate = playbackState.speed;
-                if (playbackState.playing) {
-                    video.play();
-                }
+            if (hasNext) {
+                jumpToEvent(1);
             } else {
-                // Pause playback when we reach the end
+                // Nothing left to play — stop cleanly.
                 playbackState.playing = false;
                 const playButton = document.getElementById('play-button');
-                playButton.classList.remove('playing');
-                playButton.classList.add('paused');
+                if (playButton) {
+                    playButton.classList.remove('playing');
+                    playButton.classList.add('paused');
+                }
+                document.querySelectorAll('video').forEach(v => v.pause());
             }
         }
 
@@ -2695,6 +2666,52 @@
             });
         }
 
+        // Jump to the previous/next recorded EVENT (segment). For motion-only
+        // cameras each segment IS a motion event, so this hops event-to-event and
+        // skips the empty gaps — the key to a usable motion timeline. direction:
+        // +1 = next, -1 = previous.
+        let lastEventJump = 0;
+        function jumpToEvent(direction) {
+            if (!playbackState.startTime || !playbackState.endTime) return;
+            const startMs = new Date(playbackState.startTime).getTime();
+            const endMs = new Date(playbackState.endTime).getTime();
+
+            // Content-start times of all segments across the selected cameras.
+            let starts = [];
+            selectedCameras.forEach(cam => (currentRecordings[cam] || []).forEach(seg => {
+                const s = segStartMs(seg);
+                if (!isNaN(s) && s >= startMs - 1000 && s <= endMs) starts.push(s);
+            }));
+            starts = [...new Set(starts)].sort((a, b) => a - b);
+            if (!starts.length) return;
+
+            const nowMs = startMs + (playbackState.currentTime * 1000);
+            let target;
+            if (direction > 0) {
+                target = starts.find(s => s > nowMs + 750);
+            } else {
+                // Standard transport behavior: restart the current event if we're
+                // >1.5s into it, otherwise go to the previous event.
+                const before = starts.filter(s => s <= nowMs - 1500);
+                target = before.length ? before[before.length - 1] : starts[0];
+            }
+            if (target === undefined || target === null) {
+                if (typeof showNotification === 'function') {
+                    showNotification(direction > 0 ? 'No later events' : 'No earlier events', 'info');
+                }
+                return;
+            }
+
+            // Move the playhead + clock immediately and hold there until the seek
+            // lands (pendingSeekTargetMs), then play from the event.
+            updateTimelinePosition(((target - startMs) / (endMs - startMs)) * 100);
+            setClockDisplays(target, startMs);
+            playbackState.currentTime = (target - startMs) / 1000;
+            pendingSeekTargetMs = target;
+            seekSettleUntil = Date.now() + 4000;
+            seekToTime(target);
+        }
+
         // Helper function to find the next segment that contains or follows the timestamp
         function findNextSegmentForTime(cameraName, timestampMs, segments) {
             // Sort segments by start time
@@ -2933,6 +2950,18 @@
                 case '.':  // . - next frame
                     e.preventDefault();
                     stepFrame(1);
+                    break;
+
+                case 'p':  // p - previous event (clip)
+                case 'P':
+                    e.preventDefault();
+                    jumpToEvent(-1);
+                    break;
+
+                case 'n':  // n - next event (clip)
+                case 'N':
+                    e.preventDefault();
+                    jumpToEvent(1);
                     break;
 
                 case '<':  // < - slow down
