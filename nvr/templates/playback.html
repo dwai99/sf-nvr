@@ -1087,7 +1087,7 @@
 <body>
     <div class="header">
         <div>
-            <h1>📼 Playback Archive <span style="font-size:0.5em; color:#4a9eff; vertical-align:middle;" id="build-badge">build 2026-07-04c · event-nav</span></h1>
+            <h1>📼 Playback Archive <span style="font-size:0.5em; color:#4a9eff; vertical-align:middle;" id="build-badge">build 2026-07-04d · event-nav</span></h1>
         </div>
         <div class="stats">
             <div class="stat">
@@ -3590,6 +3590,31 @@
 
         // Initialize on load
         init();
+
+        // Optional on-screen click debug — add ?debug to the URL, no DevTools
+        // needed. Shows where each timeline click landed and the resulting state.
+        if (location.search.indexOf('debug') !== -1) {
+            const ov = document.createElement('div');
+            ov.id = 'click-debug';
+            ov.style.cssText = 'position:fixed;bottom:10px;left:10px;z-index:99999;background:rgba(0,0,0,0.88);color:#0f0;font:12px/1.5 monospace;padding:10px 12px;border:1px solid #0f0;border-radius:5px;white-space:pre;pointer-events:none;';
+            ov.textContent = 'click-debug ready — click the timeline';
+            document.body.appendChild(ov);
+            const sl = document.getElementById('timeline-slider');
+            if (sl) sl.addEventListener('mousedown', (ev) => {
+                const r = sl.getBoundingClientRect(), pad = 10, tw = r.width - pad * 2;
+                const cp = ((ev.clientX - r.left - pad) / tw) * 100;
+                const hEl = document.getElementById('timeline-handle');
+                const hb = parseFloat(hEl.style.left) || 0;
+                setTimeout(() => {
+                    const v = Array.from(document.querySelectorAll('video')).find(x => x.src) || {};
+                    ov.textContent =
+                        'clicked:  ' + cp.toFixed(1) + '%\n' +
+                        'handle:   ' + hb.toFixed(1) + '%  ->  ' + (parseFloat(hEl.style.left) || 0).toFixed(1) + '%\n' +
+                        'time:     ' + (document.getElementById('timestamp-display')?.textContent || '-') + '\n' +
+                        'video:    ' + (v.paused === false ? 'PLAYING' : 'paused') + '  @ ' + (v.currentTime ? v.currentTime.toFixed(1) + 's' : '-');
+                }, 1600);
+            }, true);
+        }
 
         // Update timeline and current time display as the video plays.
         setInterval(() => {
