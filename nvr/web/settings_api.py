@@ -263,8 +263,16 @@ async def update_camera_recording_settings(camera_id: str, settings: CameraRecor
 
                 if recording_mode_manager:
                     mode = RecordingMode(settings.recording_mode)
-                    recording_mode_manager.set_camera_mode(camera_name, mode)
-                    logger.info(f"Updated recording mode manager for {camera_name}: {mode.value}")
+                    # Preserve the configured post-motion window (global default +
+                    # optional per-camera override) instead of resetting it to the
+                    # library default when the mode is toggled from the UI.
+                    default_post_motion = config.get("recording.post_motion_seconds", 45)
+                    cam_cfg = next((c for c in config.cameras if c.get("name") == camera_name), {})
+                    post_motion = cam_cfg.get("post_motion_seconds", default_post_motion)
+                    recording_mode_manager.set_camera_mode(camera_name, mode, post_motion_seconds=post_motion)
+                    logger.info(
+                        f"Updated recording mode manager for {camera_name}: {mode.value} (post_motion: {post_motion}s)"
+                    )
             except Exception as e:
                 logger.warning(f"Could not update recording mode manager: {e}")
 

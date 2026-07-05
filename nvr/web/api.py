@@ -364,7 +364,13 @@ async def startup_event():
             except ValueError:
                 logger.warning(f"Invalid recording mode '{mode_str}' for {camera_name}")
 
-    # Configure per-camera modes from camera settings (new format)
+    # Configure per-camera modes from camera settings (new format). Each camera's
+    # recording_mode (continuous | motion_only) is set here, so continuous vs
+    # motion-only is fully per-camera. post_motion_seconds (how long motion-only
+    # keeps recording after motion stops) comes from a global default with an
+    # optional per-camera override; a larger value merges nearby motion clips
+    # into fewer, longer segments instead of many tiny fragments.
+    default_post_motion = config.get("recording.post_motion_seconds", 45)
     cameras = config.get("cameras", [])
     for cam in cameras:
         cam_name = cam.get("name")
@@ -372,9 +378,11 @@ async def startup_event():
         if cam_name and mode_str:
             try:
                 mode = RecordingMode(mode_str)
-                recording_mode_manager.set_camera_mode(cam_name, mode)
+                post_motion = cam.get("post_motion_seconds", default_post_motion)
+                recording_mode_manager.set_camera_mode(cam_name, mode, post_motion_seconds=post_motion)
                 logger.info(
-                    f"Recording mode for {cam_name}: {mode.value} (resolution: {cam.get('resolution', 'default')}p)"
+                    f"Recording mode for {cam_name}: {mode.value} "
+                    f"(resolution: {cam.get('resolution', 'default')}p, post_motion: {post_motion}s)"
                 )
             except ValueError:
                 logger.warning(f"Invalid recording mode '{mode_str}' for {cam_name}")
